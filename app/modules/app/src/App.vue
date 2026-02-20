@@ -13,6 +13,7 @@ onMounted(async () => {
   log.debug('App.vue mounted');
   try {
     status.value = await invoke<GameStatus>('get_game_status');
+    log.debug('Game status received:', status.value.installed ? 'installed' : 'not found');
   } catch (err) {
     error.value = String(err);
     log.error(`Failed to get game status: ${err}`);
