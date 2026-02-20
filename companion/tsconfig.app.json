@@ -5,7 +5,6 @@
     "baseUrl": ".",
     "paths": {
       "@app/*": ["modules/app/src/*"],
-      "@common/*": ["modules/common/src/*"],
       "@resources/*": ["resources/*"]
     },
     "types": ["vite/client"],
@@ -18,7 +17,6 @@
   },
   "include": [
     "modules/app/src/**/*.ts",
-    "modules/app/src/**/*.vue",
-    "modules/common/src/**/*.ts"
+    "modules/app/src/**/*.vue"
   ]
 }
