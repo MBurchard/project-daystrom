@@ -15,7 +15,7 @@ coverage
 .xmake
 
 # Generated Tauri icons
-companion/modules/backend/icons
+app/modules/backend/icons
 
 # Editor directories and files
 .idea

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    skynet_companion_lib::run();
+    skynet_lib::run();
 }

@@ -1,6 +1,6 @@
-# Skynet — STFC Companion
+# Skynet — STFC Assistant
 
-A companion app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
+An assistant app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
 built on top of the fantastic [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
 
 ## What is this?
@@ -9,7 +9,7 @@ Skynet picks up where the Community Mod leaves off. The mod already provides ess
 improvements — hotkeys, UI tweaks, zoom presets, data sync, and more. Skynet builds on that foundation
 and adds:
 
-- **A native companion app** (Tauri 2 + Vue 3) that runs alongside the game on macOS and Windows
+- **A native app** (Tauri 2 + Vue 3) that runs alongside the game on macOS and Windows
 - **A cross-platform launcher** replacing the platform-specific launchers (Swift on macOS, proxy DLL on Windows)
   with a single unified solution
 - **Dashboard, alerts, and advisor plugins** for live fleet overview, event notifications, and upgrade
@@ -28,7 +28,7 @@ skynet/
 │   ├── macos-dylib/        #   macOS injection helper
 │   ├── win-proxy-dll/      #   Windows proxy DLL loader
 │   └── xmake.lua           #   Build configuration
-├── companion/              # Skynet companion app
+├── app/                    # Skynet app (Tauri 2 + Vue 3)
 │   ├── modules/
 │   │   ├── app/            #   Vue 3 frontend
 │   │   ├── backend/        #   Tauri/Rust backend
@@ -52,7 +52,7 @@ as practical, so that improvements can be shared with the community.
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - [XMake](https://xmake.io/) (for building the mod)
 
-## Companion App
+## App (Tauri + Vue 3 + Vite)
 
 ### Setup
 
@@ -95,7 +95,7 @@ formatted in the style of [bit-log](https://github.com/AmerBiro/bit-log):
 Example output:
 
 ```
-2026-02-20T16:50:03.399+01:00 INFO  [skynet_companion_lib] (Backend : lib.rs   :  120): Skynet 0.1.0 initialised
+2026-02-20T16:50:03.399+01:00 INFO  [Startup             ] (Backend : lib.rs   :   28): Skynet 0.1.0 initialised
 2026-02-20T16:50:04.112+01:00 DEBUG [Main                ] (Frontend: main.ts  :   13): Connected to backend
 ```
 

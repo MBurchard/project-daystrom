@@ -1,10 +1,10 @@
 [package]
-name = "skynet-companion"
+name = "skynet"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "skynet_companion_lib"
+name = "skynet_lib"
 crate-type = [
   "lib",
   "cdylib",
