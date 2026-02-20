@@ -1,0 +1,6 @@
+build/
+.xmake/
+.DS_Store
+*.swp
+*~
+.idea/

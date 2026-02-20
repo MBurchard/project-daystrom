@@ -1,0 +1,3 @@
+[submodule "stfc-mod"]
+	path = stfc-mod
+	url = git@github.com:netniV/stfc-mod.git
