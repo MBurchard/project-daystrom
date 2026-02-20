@@ -1,0 +1,21 @@
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.vs/
+/.idea/
+/out/
+*/build/*
+/build/
+*.code-workspace
+/.cache/
+compile_commands.json
+version.aps
+*.vars
+debug.log
+/app/
+/.xmake/
+/vsxmake*/
+.DS_Store
+
+# Generated Info.plist files (generated from templates)
+**/Info.plist
