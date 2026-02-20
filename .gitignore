@@ -8,6 +8,9 @@ gen
 # Log files
 pnpm-debug.log*
 
+# Test coverage
+coverage
+
 # Build tools
 .xmake
 

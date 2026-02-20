@@ -9,6 +9,11 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "vue-tsc --build --force",
     "typecheck:rust": "cargo check --manifest-path modules/backend/Cargo.toml",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:backend": "cargo test --manifest-path modules/backend/Cargo.toml",
+    "test:backend:coverage": "cargo llvm-cov --manifest-path modules/backend/Cargo.toml",
     "dev": "TAURI_APP_PATH=./modules/backend tauri dev",
     "dev:web": "vite",
     "icons": "TAURI_APP_PATH=./modules/backend tauri icon resources/skynet.png",
@@ -28,10 +33,12 @@
     "@tauri-apps/cli": "^2.10.0",
     "@types/node": "^24.10.13",
     "@vitejs/plugin-vue": "^6.0.4",
+    "@vitest/coverage-v8": "^4.0.18",
     "@vue/tsconfig": "^0.8.1",
     "eslint": "^9.39.2",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
+    "vitest": "^4.0.18",
     "vue-tsc": "^3.2.4"
   }
 }
