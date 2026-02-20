@@ -1,6 +1,24 @@
-build/
-.xmake/
 .DS_Store
-*.swp
+node_modules
+dist
+build
+target
+gen
+
+# Log files
+pnpm-debug.log*
+
+# Build tools
+.xmake
+
+# Generated Tauri icons
+companion/modules/backend/icons
+
+# Editor directories and files
+.idea
+*.sw?
 *~
-.idea/
+
+# Local env files
+.env.local
+.env.*.local

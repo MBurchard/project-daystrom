@@ -1,0 +1,24 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "baseUrl": ".",
+    "paths": {
+      "@app/*": ["modules/app/src/*"],
+      "@common/*": ["modules/common/src/*"],
+      "@resources/*": ["resources/*"]
+    },
+    "types": ["vite/client"],
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": [
+    "modules/app/src/**/*.ts",
+    "modules/app/src/**/*.vue",
+    "modules/common/src/**/*.ts"
+  ]
+}

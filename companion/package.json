@@ -1,0 +1,35 @@
+{
+  "name": "skynet-companion",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.30.1+sha512.3590e550d5384caa39bd5c7c739f72270234b2f6059e13018f975c313b1eb9fefcc09714048765d4d9efe961382c312e624572c0420762bdc5d5940cdf9be73a",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "vue-tsc --build --force",
+    "typecheck:rust": "cargo check --manifest-path modules/backend/Cargo.toml",
+    "dev": "TAURI_APP_PATH=./modules/backend tauri dev",
+    "dev:web": "vite",
+    "icons": "TAURI_APP_PATH=./modules/backend tauri icon resources/skynet.png",
+    "build:web": "pnpm icons && vue-tsc --build && vite build",
+    "preview:web": "vite preview",
+    "tauri": "TAURI_APP_PATH=./modules/backend tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.28"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^7.4.3",
+    "@tauri-apps/cli": "^2.10.0",
+    "@types/node": "^24.10.13",
+    "@vitejs/plugin-vue": "^6.0.4",
+    "@vue/tsconfig": "^0.8.1",
+    "eslint": "^9.39.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vue-tsc": "^3.2.4"
+  }
+}
