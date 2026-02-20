@@ -56,9 +56,9 @@ const FILE_PATH_WIDTH: usize = 30;
 /// Pad or left-truncate a string to exactly `width` characters.
 /// Truncates from the left (keeps the end), pads on the right.
 fn fit(s: &str, width: usize) -> String {
-    let len = s.len();
-    if len > width {
-        s[len - width..].to_string()
+    let char_count = s.chars().count();
+    if char_count > width {
+        s.chars().skip(char_count - width).collect()
     } else {
         format!("{s:<width$}")
     }
@@ -68,15 +68,17 @@ fn fit(s: &str, width: usize) -> String {
 /// Keeps the beginning and end of the path, replaces the middle with "...".
 /// Short strings are right-padded with spaces.
 fn fit_path(s: &str, width: usize) -> String {
-    let len = s.len();
-    if len <= width {
+    let char_count = s.chars().count();
+    if char_count <= width {
         return format!("{s:<width$}");
     }
     // 3 chars for "...", split remaining space: more at end (filename matters most)
     let available = width - 3;
     let end_len = (available + 1) / 2;
     let start_len = available - end_len;
-    format!("{}...{}", &s[..start_len], &s[len - end_len..])
+    let start: String = s.chars().take(start_len).collect();
+    let end: String = s.chars().skip(char_count - end_len).collect();
+    format!("{start}...{end}")
 }
 
 /// Format the current local time as ISO 8601 with milliseconds and timezone offset.
@@ -159,6 +161,17 @@ mod tests {
         assert_eq!(fit("", 5), "     ");
     }
 
+    #[test]
+    fn fit_multibyte_truncates_left() {
+        // "über" = 4 chars but 5 bytes — must not panic
+        assert_eq!(fit("über", 3), "ber");
+    }
+
+    #[test]
+    fn fit_multibyte_pads_right() {
+        assert_eq!(fit("ü", 3), "ü  ");
+    }
+
     // -- fit_path --
 
     #[test]
@@ -189,6 +202,14 @@ mod tests {
     #[test]
     fn fit_path_empty_string() {
         assert_eq!(fit_path("", 10), "          ");
+    }
+
+    #[test]
+    fn fit_path_multibyte_middle_truncates() {
+        // "src/müll/datei.rs" = 17 chars, width=15 — must not panic
+        let result = fit_path("src/müll/datei.rs", 15);
+        assert_eq!(result.chars().count(), 15);
+        assert!(result.contains("..."), "expected '...' in '{result}'");
     }
 }
 
