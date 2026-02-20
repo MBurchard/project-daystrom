@@ -3176,6 +3176,7 @@ name = "skynet-companion"
 version = "0.1.0"
 dependencies = [
  "colored 3.1.1",
+ "dirs",
  "log",
  "serde",
  "serde_json",
