@@ -89,7 +89,7 @@ pub fn detect() -> Option<GameInfo> {
 
     // Xsolla quirk: path may start with "//" instead of "/"
     let normalised = if raw_path.starts_with("//") {
-        &raw_path[1..]
+        raw_path.strip_prefix('/').unwrap_or(raw_path)
     } else {
         raw_path
     };

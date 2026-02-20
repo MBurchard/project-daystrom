@@ -7,7 +7,7 @@ import {TauriAppender} from './TauriAppender';
  * - CONSOLE: formats and writes to browser DevTools
  * - TAURI: forwards structured events to the Rust backend via IPC
  *
- * Must be called once at app startup before any `useLog()` calls.
+ * Must be called once at app startup before any `getLogger()` calls.
  */
 configureLogging({
   appender: {
@@ -27,4 +27,4 @@ configureLogging({
   },
 });
 
-export {useLog};
+export const getLogger = useLog;

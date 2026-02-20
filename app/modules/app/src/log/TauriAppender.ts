@@ -73,7 +73,7 @@ export class TauriAppender extends AbstractBaseAppender {
     }
 
     const levelStr = typeof event.level === 'string' ? event.level : 'INFO';
-    const fn = levelFunctions[levelStr] ?? info;
+    const logFn = levelFunctions[levelStr] ?? info;
 
     // Build the message string from the payload
     let message: string;
@@ -85,7 +85,7 @@ export class TauriAppender extends AbstractBaseAppender {
       }
     } else {
       message = event.payload
-        .map(item => resolvePayloadItem(item, this.formatAny))
+        .map(item => resolvePayloadItem(item, v => this.formatAny(v)))
         .join(' ');
     }
 
@@ -98,7 +98,7 @@ export class TauriAppender extends AbstractBaseAppender {
       undefined;
 
     try {
-      await fn(text, options);
+      await logFn(text, options);
     } catch {
       // Tauri not available — disable permanently to avoid repeated failures
       this.disabled = true;
