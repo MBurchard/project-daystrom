@@ -6,12 +6,18 @@ import App from './App.vue';
 
 const log = createLogger('Main');
 
+/**
+ * Create the Vue application, register plugins, and mount it to the DOM.
+ */
 function initApp() {
   const app = createApp(App);
   app.use(createPinia());
   app.mount('#app');
 }
 
+/**
+ * Attach the Tauri log console bridge, then bootstrap the app.
+ */
 async function init() {
   try {
     await attachConsole();
@@ -21,4 +27,4 @@ async function init() {
   }
 }
 
-init();
+init().catch(err => log.error('Unexpected init failure', err));
