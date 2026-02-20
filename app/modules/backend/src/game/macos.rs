@@ -88,7 +88,11 @@ pub fn detect() -> Option<GameInfo> {
     log_debug!("Raw GAME_PATH value: {raw_path}");
 
     // Xsolla quirk: path may start with "//" instead of "/"
-    let normalised = raw_path.strip_prefix('/').unwrap_or(raw_path);
+    let normalised = if raw_path.starts_with("//") {
+        &raw_path[1..]
+    } else {
+        raw_path
+    };
 
     let install_dir = PathBuf::from(normalised);
     let executable = install_dir.join(EXECUTABLE_REL);
