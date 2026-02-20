@@ -1,21 +1,67 @@
 # Skynet — STFC Companion
 
-Companion app for Star Trek Fleet Command, built with Tauri 2 + Vue 3.
+A companion app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
+built on top of the fantastic [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
+
+## What is this?
+
+Skynet picks up where the Community Mod leaves off. The mod already provides essential quality-of-life
+improvements — hotkeys, UI tweaks, zoom presets, data sync, and more. Skynet builds on that foundation
+and adds:
+
+- **A native companion app** (Tauri 2 + Vue 3) that runs alongside the game on macOS and Windows
+- **A cross-platform launcher** replacing the platform-specific launchers (Swift on macOS, proxy DLL on Windows)
+  with a single unified solution
+- **Dashboard, alerts, and advisor plugins** for live fleet overview, event notifications, and upgrade
+  recommendations
+
+The mod code lives in `mod/` and is kept in sync with the upstream Community Mod. Improvements and bug
+fixes flow both ways — anything useful to the broader community gets contributed back.
+
+## Project Structure
+
+```
+skynet/
+├── mod/                    # STFC Community Mod (from netniV/stfc-mod)
+│   ├── mods/               #   Mod patches (C++23, IL2CPP hooks)
+│   ├── macos-launcher/     #   Original Swift launcher (being replaced)
+│   ├── macos-dylib/        #   macOS injection helper
+│   ├── win-proxy-dll/      #   Windows proxy DLL loader
+│   └── xmake.lua           #   Build configuration
+├── companion/              # Skynet companion app
+│   ├── modules/
+│   │   ├── app/            #   Vue 3 frontend
+│   │   ├── backend/        #   Tauri/Rust backend
+│   │   └── plugins/        #   Feature plugins (dashboard, alerts, advisor)
+│   ├── resources/          #   Shared assets (logo, icons)
+│   └── package.json
+└── README.md
+```
+
+## Acknowledgements
+
+This project would not exist without the work of [netniV](https://github.com/netniV),
+[tashcan](https://github.com/tashcan), and the entire STFC Community Mod team. The mod code in `mod/`
+is imported from [netniV/stfc-mod](https://github.com/netniV/stfc-mod) and kept as close to upstream
+as practical, so that improvements can be shared with the community.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 24 (pinned via `.nvmrc`)
 - [pnpm](https://pnpm.io/) >= 10 (pinned via `packageManager` in `package.json`)
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
+- [XMake](https://xmake.io/) (for building the mod)
 
-## Setup
+## Companion App
+
+### Setup
 
 ```sh
 nvm use
 pnpm install
 ```
 
-## Scripts
+### Scripts
 
 | Script                | Description                                      |
 |-----------------------|--------------------------------------------------|
@@ -30,35 +76,14 @@ pnpm install
 | `pnpm preview:web`    | Preview production build in browser              |
 | `pnpm tauri <cmd>`    | Run any Tauri CLI command                        |
 
-## Project Structure
-
-```
-companion/
-├── modules/
-│   ├── app/                 # Vue 3 frontend
-│   │   ├── index.html
-│   │   └── src/
-│   ├── backend/             # Tauri/Rust backend
-│   │   └── src/
-│   └── plugins/             # Plugin modules (see below)
-│       ├── dashboard/
-│       ├── alerts/
-│       └── advisor/
-├── resources/               # Shared assets (logo, icons)
-├── eslint.config.js
-├── vite.config.ts
-├── tsconfig.json
-└── package.json
-```
-
-## Path Aliases
+### Path Aliases
 
 | Alias          | Resolves to         |
 |----------------|---------------------|
 | `@app/*`       | `modules/app/src/*` |
 | `@resources/*` | `resources/*`       |
 
-## Logging
+### Logging
 
 Unified logging across frontend (TypeScript) and backend (Rust) via `tauri-plugin-log`,
 formatted in the style of [bit-log](https://github.com/AmerBiro/bit-log):
@@ -74,7 +99,7 @@ Example output:
 2026-02-20T16:50:04.112+01:00 DEBUG [Main                ] (Frontend: main.ts  :   13): Connected to backend
 ```
 
-### Frontend usage
+#### Frontend usage
 
 ```typescript
 import {createLogger} from '@app/log';
@@ -85,7 +110,7 @@ log.debug('Session details:', {token: '...'});
 log.error('Login failed');
 ```
 
-### Log output targets
+#### Log output targets
 
 | Target          | Description                                                |
 |-----------------|------------------------------------------------------------|
@@ -106,12 +131,12 @@ All runtime data uses platform-standard locations based on the app identifier `m
 
 Adjustable in `modules/backend/src/lib.rs`:
 
-| Constant            | Default | Description                                    |
-|---------------------|---------|------------------------------------------------|
-| `LOGGER_NAME_WIDTH` | 20      | Display width for the `[loggerName]` column    |
-| `FILE_PATH_WIDTH`   | 30      | Display width for the file path (mid-truncated)|
+| Constant            | Default | Description                                     |
+|---------------------|---------|-------------------------------------------------|
+| `LOGGER_NAME_WIDTH` | 20      | Display width for the `[loggerName]` column     |
+| `FILE_PATH_WIDTH`   | 30      | Display width for the file path (mid-truncated) |
 
-## Plugins
+### Plugins
 
 The app is designed around a plugin architecture. Each plugin is a self-contained Vue module
 that provides a specific feature set:
@@ -125,8 +150,13 @@ that provides a specific feature set:
 Plugins live in `modules/plugins/` and are loaded by the main app. The architecture is
 intentionally modular so that individual plugins can be developed and published independently.
 
-## Environment Variables
+### Environment Variables
 
 | Variable          | Default | Description                                              |
 |-------------------|---------|----------------------------------------------------------|
 | `SKYNET_DEVTOOLS` | `1`     | Set to `0` to suppress DevTools in debug builds          |
+
+## License
+
+This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html),
+the same license as the STFC Community Mod it builds upon.
