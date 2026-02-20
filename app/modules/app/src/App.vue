@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type {GameStatus} from '@generated/GameStatus';
-import {createLogger} from '@app/log';
+import {useLog} from '@app/log';
 import {invoke} from '@tauri-apps/api/core';
 import {onMounted, ref} from 'vue';
 
-const log = createLogger('App');
+const log = useLog('App');
 
 const status = ref<GameStatus | null>(null);
 const error = ref<string | null>(null);

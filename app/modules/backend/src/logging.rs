@@ -202,7 +202,6 @@ pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
         .format(format_log)
         .targets([
             Target::new(TargetKind::Stdout),
-            Target::new(TargetKind::Webview),
             Target::new(TargetKind::LogDir { file_name: None }),
         ])
         .build()

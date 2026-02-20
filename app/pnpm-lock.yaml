@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@mburchard/bit-log':
+        specifier: ^1.0.0
+        version: 1.0.0
       '@tauri-apps/api':
         specifier: ^2.10.1
         version: 2.10.1
@@ -17,9 +20,6 @@ importers:
       pinia:
         specifier: ^3.0.4
         version: 3.0.4(typescript@5.9.3)(vue@3.5.28(typescript@5.9.3))
-      source-map-js:
-        specifier: ^1.2.1
-        version: 1.2.1
       vue:
         specifier: ^3.5.28
         version: 3.5.28(typescript@5.9.3)
@@ -416,6 +416,10 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@mburchard/bit-log@1.0.0':
+    resolution: {integrity: sha512-Ilnf0vVBhfCRKuFqigO9zcwTvNueWax3h9KjGit74PWPl24A0bbTt5qo4YznhRHWZYzMMJKPdUNekWEwiG1kzA==}
+    engines: {node: '>=22', npm: '>=11', pnpm: '>=10'}
 
   '@ota-meshi/ast-token-store@0.2.1':
     resolution: {integrity: sha512-+8oB1wcOSWJCR6vAm2ioSLas7SoPwp+8tZ1Tcy8DSVEHMip6jxxlGu6EsRzJLAYVCyzKQ38B5pAqSbon1l1rmA==}
@@ -2365,6 +2369,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@mburchard/bit-log@1.0.0': {}
 
   '@ota-meshi/ast-token-store@0.2.1(@eslint/markdown@7.5.1)(eslint@9.39.2)':
     dependencies:
