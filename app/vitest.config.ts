@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@app': resolve(__dirname, 'modules/app/src'),
+      '@generated': resolve(__dirname, 'modules/app/src/generated'),
     },
   },
   test: {

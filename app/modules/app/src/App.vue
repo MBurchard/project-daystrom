@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type {GameStatus} from '@app/types';
+import type {GameStatus} from '@generated/GameStatus';
 import {createLogger} from '@app/log';
 import {invoke} from '@tauri-apps/api/core';
 import {onMounted, ref} from 'vue';
@@ -22,7 +22,7 @@ onMounted(async () => {
 
 <template>
   <main>
-    <h1>Skynet Companion</h1>
+    <h1>Skynet</h1>
 
     <p v-if="error">
       Failed to load game status: {{ error }}

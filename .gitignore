@@ -17,6 +17,9 @@ coverage
 # Generated Tauri icons
 app/modules/backend/icons
 
+# Generated TypeScript bindings (ts-rs)
+app/modules/app/src/generated
+
 # Editor directories and files
 .idea
 *.sw?

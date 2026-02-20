@@ -11,6 +11,7 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       '@app': resolve(__dirname, 'modules/app/src'),
+      '@generated': resolve(__dirname, 'modules/app/src/generated'),
       '@resources': resolve(__dirname, 'resources'),
     },
   },

@@ -1,9 +1,11 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::game;
 
 /// STFC installation and entitlement status as returned to the frontend.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct GameStatus {
     /// Whether STFC was found on this machine.
     pub installed: bool,
