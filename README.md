@@ -108,8 +108,9 @@ import type {GameStatus} from '@generated/GameStatus';
 
 ### Logging
 
-Unified logging across frontend (TypeScript) and backend (Rust) via `tauri-plugin-log`,
-formatted in the style of [bit-log](https://github.com/AmerBiro/bit-log):
+Unified logging across frontend (TypeScript) and backend (Rust). The frontend uses
+[@mburchard/bit-log](https://www.npmjs.com/package/@mburchard/bit-log) with a custom `TauriAppender`
+that forwards log events to the Rust backend via `tauri-plugin-log` IPC:
 
 ```
 {ISO 8601 timestamp} {LEVEL} [{loggerName}] ({origin}: {filePath}: {line}): {message}
@@ -125,9 +126,9 @@ Example output:
 #### Frontend usage
 
 ```typescript
-import {createLogger} from '@app/log';
+import {getLogger} from '@app/log';
 
-const log = createLogger('Auth');
+const log = getLogger('Auth');
 log.info('User logged in');
 log.debug('Session details:', {token: '...'});
 log.error('Login failed');
@@ -135,11 +136,11 @@ log.error('Login failed');
 
 #### Log output targets
 
-| Target          | Description                                                |
-|-----------------|------------------------------------------------------------|
-| Stdout          | Terminal / IDE console                                     |
-| Browser console | Via `attachConsole()` — Rust and frontend logs in DevTools |
-| Log file        | Platform log directory (see below)                         |
+| Target          | Description                                                    |
+|-----------------|----------------------------------------------------------------|
+| Stdout          | Terminal / IDE console (frontend + backend via Rust formatter) |
+| Browser console | Via bit-log `ConsoleAppender` (frontend logs only)             |
+| Log file        | Platform log directory (see below)                             |
 
 ### App directories
 
