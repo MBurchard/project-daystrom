@@ -22,6 +22,13 @@ fixes flow both ways — anything useful to the broader community gets contribut
 
 ```
 skynet/
+├── package.json            # Workspace root (orchestrating scripts)
+├── pnpm-workspace.yaml     # Workspace config (members: app, scripts)
+├── eslint.config.js        # Shared ESLint config (lints entire project)
+├── tsconfig.base.json      # Shared TypeScript base config
+├── scripts/                # Build and tooling scripts
+│   ├── build.ts            #   Mod + app build orchestration
+│   └── package.json        #   Script dependencies
 ├── mod/                    # STFC Community Mod (from netniV/stfc-mod)
 │   ├── mods/               #   Mod patches (C++23, IL2CPP hooks)
 │   ├── macos-launcher/     #   Original Swift launcher (being replaced)
@@ -34,7 +41,7 @@ skynet/
 │   │   ├── backend/        #   Tauri/Rust backend
 │   │   └── plugins/        #   Feature plugins (dashboard, alerts, advisor)
 │   ├── resources/          #   Shared assets (logo, icons)
-│   └── package.json
+│   └── package.json        #   App dependencies + app-local scripts
 └── README.md
 ```
 
@@ -48,19 +55,24 @@ as practical, so that improvements can be shared with the community.
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 24 (pinned via `.nvmrc`)
-- [pnpm](https://pnpm.io/) >= 10 (pinned via `packageManager` in `package.json`)
+- [pnpm](https://pnpm.io/) >= 10 (pinned via `packageManager` in root `package.json`)
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - [XMake](https://xmake.io/) (for building the mod)
 - [CMake](https://cmake.org/) (required by xmake to build C++ dependencies like spud)
+
+## Setup
+
+```sh
+nvm use
+pnpm install
+```
+
+All commands run from the **workspace root** unless noted otherwise.
 
 ## Building the mod (dylib)
 
 The mod code lives in `mod/` and produces `libstfc-community-patch.dylib` — the shared library
 that gets injected into the game via `DYLD_INSERT_LIBRARIES`.
-
-### Building
-
-From the `app/` directory:
 
 ```sh
 pnpm build:mod
@@ -78,35 +90,37 @@ xmake build -y stfc-community-patch
 
 The built dylib lands at `mod/build/macosx/arm64/release/libstfc-community-patch.dylib` (~8 MB).
 
-## App (Tauri + Vue 3 + Vite)
+## Scripts
 
-### Setup
+### Workspace root (run from project root)
 
-```sh
-nvm use
-pnpm install
-```
+| Script                            | Description                                          |
+|-----------------------------------|------------------------------------------------------|
+| `pnpm install:all`                | Force-install all workspace dependencies             |
+| `pnpm lint`                       | Run ESLint across the entire project                 |
+| `pnpm lint:fix`                   | Run ESLint with auto-fix                             |
+| `pnpm typecheck`                  | TypeScript + Rust type checks                        |
+| `pnpm test`                       | Run all tests (frontend + backend)                   |
+| `pnpm test:app`                   | Run all app tests (frontend + backend)               |
+| `pnpm test:app:frontend`          | Run frontend tests only (vitest)                     |
+| `pnpm test:app:backend`           | Run backend tests only (cargo test + ts-rs bindings) |
+| `pnpm test:app:frontend:watch`    | Run frontend tests in watch mode                     |
+| `pnpm test:app:frontend:coverage` | Run frontend tests with v8 coverage                  |
+| `pnpm test:app:backend:coverage`  | Run backend tests with llvm-cov coverage             |
+| `pnpm build`                      | Build everything (mod dylib → Tauri app)             |
+| `pnpm build:mod`                  | Build mod dylib and copy to `app/resources/mod/`     |
+| `pnpm build:app`                  | Build Tauri app bundle (includes mod build)          |
 
-### Scripts
+### App-local (run from `app/` or via `pnpm --filter skynet-app`)
 
-| Script                       | Description                                             |
-|------------------------------|---------------------------------------------------------|
-| `pnpm lint`                  | Run ESLint                                              |
-| `pnpm lint:fix`              | Run ESLint with auto-fix                                |
-| `pnpm typecheck`             | TypeScript check (Vue + TS)                             |
-| `pnpm typecheck:rust`        | Rust type check (`cargo check`)                         |
-| `pnpm test`                  | Run frontend tests (vitest)                             |
-| `pnpm test:watch`            | Run frontend tests in watch mode                        |
-| `pnpm test:coverage`         | Run frontend tests with v8 coverage                     |
-| `pnpm test:backend`          | Run Rust tests + generate TypeScript bindings via ts-rs |
-| `pnpm test:backend:coverage` | Run Rust tests with llvm-cov coverage                   |
-| `pnpm build:mod`             | Build mod dylib and copy to `resources/mod/`            |
-| `pnpm dev`                   | Start Tauri app (Vite + Rust) with hot reload           |
-| `pnpm dev:web`               | Start Vite dev server only (browser on :1420)           |
-| `pnpm icons`                 | Generate Tauri icons from `resources/skynet.png`        |
-| `pnpm build:web`             | Production build (icons + typecheck + Vite)             |
-| `pnpm preview:web`           | Preview production build in browser                     |
-| `pnpm tauri <cmd>`           | Run any Tauri CLI command                               |
+| Script              | Description                                        |
+|---------------------|----------------------------------------------------|
+| `dev`               | Start Tauri app (Vite + Rust) with hot reload      |
+| `dev:frontend`      | Start Vite dev server only (browser on :1420)      |
+| `preview:frontend`  | Preview production build in browser                |
+| `build:frontend`    | Production build (icons + typecheck + Vite)        |
+| `icons`             | Generate Tauri icons from `resources/skynet.png`   |
+| `tauri <cmd>`       | Run any Tauri CLI command                          |
 
 ### Path Aliases
 
@@ -116,12 +130,14 @@ pnpm install
 | `@generated/*` | `modules/app/src/generated/*` |
 | `@resources/*` | `resources/*`                 |
 
+## App (Tauri + Vue 3 + Vite)
+
 ### Type generation (ts-rs)
 
 Shared types between Rust backend and TypeScript frontend are auto-generated by
 [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Rust structs annotated with `#[derive(TS)]` produce
-TypeScript interfaces in `modules/app/src/generated/` whenever `pnpm test:backend` runs. Rust doc
-comments are carried over as JSDoc.
+TypeScript interfaces in `app/modules/app/src/generated/` whenever `pnpm test:app:backend` runs.
+Rust doc comments are carried over as JSDoc.
 
 ```rust
 #[derive(Serialize, TS)]

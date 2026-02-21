@@ -1,0 +1,27 @@
+{
+  "name": "skynet-workspace",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@10.30.1+sha512.3590e550d5384caa39bd5c7c739f72270234b2f6059e13018f975c313b1eb9fefcc09714048765d4d9efe961382c312e624572c0420762bdc5d5940cdf9be73a",
+  "scripts": {
+    "install:all": "pnpm install --force",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "pnpm --filter skynet-app typecheck:frontend && pnpm --filter skynet-app typecheck:backend",
+    "test": "pnpm --filter skynet-app test:frontend && pnpm --filter skynet-app test:backend",
+    "test:app": "pnpm --filter skynet-app test:frontend && pnpm --filter skynet-app test:backend",
+    "test:app:frontend": "pnpm --filter skynet-app test:frontend",
+    "test:app:backend": "pnpm --filter skynet-app test:backend",
+    "test:app:frontend:watch": "pnpm --filter skynet-app test:frontend:watch",
+    "test:app:frontend:coverage": "pnpm --filter skynet-app test:frontend:coverage",
+    "test:app:backend:coverage": "pnpm --filter skynet-app test:backend:coverage",
+    "build": "node scripts/build.ts mod && node scripts/build.ts app",
+    "build:app": "node scripts/build.ts app",
+    "build:mod": "node scripts/build.ts mod"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^7.4.3",
+    "eslint": "^9.39.2",
+    "typescript": "~5.9.3"
+  }
+}

@@ -1,13 +1,30 @@
-import { cpSync, existsSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
-import { basename, join, resolve } from 'node:path';
+import {execSync} from 'node:child_process';
+import {cpSync, existsSync, mkdirSync} from 'node:fs';
+import {basename, join, resolve} from 'node:path';
+import process from 'node:process';
+import {configureLogging, useLog} from '@mburchard/bit-log';
+import {ConsoleAppender} from '@mburchard/bit-log/appender/ConsoleAppender';
+
+configureLogging({
+  appender: {
+    CONSOLE: {
+      Class: ConsoleAppender,
+    },
+  },
+  root: {
+    level: 'DEBUG',
+    appender: ['CONSOLE'],
+  },
+});
+
+const log = useLog('Build');
 
 const ROOT = resolve(import.meta.dirname, '..');
 const APP_DIR = join(ROOT, 'app');
 const MOD_DIR = join(ROOT, 'mod');
 const MOD_OUTPUT_DIR = join(APP_DIR, 'resources', 'mod');
 
-const PLATFORM_CONFIG: Record<string, { target: string; dylib: string }> = {
+const PLATFORM_CONFIG: Record<string, {target: string; dylib: string}> = {
   darwin: {
     target: 'stfc-community-patch',
     dylib: 'build/macosx/arm64/release/libstfc-community-patch.dylib',
@@ -24,22 +41,22 @@ const PLATFORM_CONFIG: Record<string, { target: string; dylib: string }> = {
 function buildMod(): void {
   const config = PLATFORM_CONFIG[process.platform];
   if (!config) {
-    console.error(`Unsupported platform: ${process.platform}`);
+    log.error(`Unsupported platform: ${process.platform}`);
     process.exit(1);
   }
 
   if (!existsSync(MOD_OUTPUT_DIR)) {
-    mkdirSync(MOD_OUTPUT_DIR, { recursive: true });
-    console.log(`Created ${MOD_OUTPUT_DIR}`);
+    mkdirSync(MOD_OUTPUT_DIR, {recursive: true});
+    log.info(`Created ${MOD_OUTPUT_DIR}`);
   }
 
-  console.log(`Building ${config.target}...`);
-  execSync(`xmake build -y ${config.target}`, { cwd: MOD_DIR, stdio: 'inherit' });
+  log.info(`Building ${config.target}...`);
+  execSync(`xmake build -y ${config.target}`, {cwd: MOD_DIR, stdio: 'inherit'});
 
   const src = join(MOD_DIR, config.dylib);
   const dest = join(MOD_OUTPUT_DIR, basename(src));
   cpSync(src, dest);
-  console.log(`Copied ${dest}`);
+  log.info(`Copied ${dest}`);
 }
 
 /**
@@ -48,8 +65,8 @@ function buildMod(): void {
 function buildApp(): void {
   buildMod();
 
-  console.log('Building Skynet app...');
-  execSync('pnpm tauri build', { cwd: APP_DIR, stdio: 'inherit' });
+  log.info('Building Skynet app...');
+  execSync('pnpm tauri build', {cwd: APP_DIR, stdio: 'inherit'});
 }
 
 const command = process.argv[2];
@@ -62,6 +79,6 @@ switch (command) {
     buildApp();
     break;
   default:
-    console.error('Usage: node scripts/build.ts <mod|app>');
+    log.error('Usage: node scripts/build.ts <mod|app>');
     process.exit(1);
 }

@@ -1,0 +1,11 @@
+{
+  "name": "skynet-scripts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@mburchard/bit-log": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.13"
+  }
+}

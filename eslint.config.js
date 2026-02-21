@@ -1,9 +1,11 @@
 import antfu from '@antfu/eslint-config';
 
 export default antfu({
+  vue: true,
   ignores: [
-    'modules/backend/**',
+    'app/modules/backend/**',
     '**/generated/**',
+    'mod/**',
   ],
   stylistic: {
     semi: true,
@@ -26,7 +28,7 @@ export default antfu({
     'style/max-len': 'off',
   },
 }, {
-  files: ['**/package.json'],
+  files: ['**/*.json'],
   rules: {
     'style/max-len': 'off',
   },
