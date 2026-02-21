@@ -35,8 +35,9 @@ function refreshStatus(): void {
  * Start polling game status every 5 seconds.
  */
 function startPolling(): void {
-  if (pollTimer)
+  if (pollTimer) {
     return;
+  }
   pollTimer = setInterval(refreshStatus, 5000);
 }
 
@@ -44,8 +45,9 @@ function startPolling(): void {
  * Stop polling game status.
  */
 function stopPolling(): void {
-  if (!pollTimer)
+  if (!pollTimer) {
     return;
+  }
   clearInterval(pollTimer);
   pollTimer = null;
   log.debug('Game process ended — polling stopped');

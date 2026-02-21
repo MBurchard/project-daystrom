@@ -10,7 +10,7 @@ export default antfu({
   },
 }, {
   rules: {
-    curly: 'off',
+    curly: ['error', 'all'],
     'regexp/strict': 'off',
     'style/block-spacing': ['error', 'never'],
     'style/brace-style': ['error', '1tbs'],
