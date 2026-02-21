@@ -1,5 +1,7 @@
 # Project Daystrom
 
+[![CI](https://github.com/MBurchard/project-daystrom/actions/workflows/ci-mac.yml/badge.svg)](https://github.com/MBurchard/project-daystrom/actions/workflows/ci-mac.yml)
+
 An assistant app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
 built on top of the fantastic [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
 
