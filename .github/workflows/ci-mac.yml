@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint, Typecheck & Test
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo artefacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/modules/backend -> target
+      - name: Create mod dylib stub for Tauri build script
+        run: mkdir -p app/resources/mod && touch app/resources/mod/libstfc-community-patch.dylib
+      - name: Generate Tauri icons
+        run: pnpm icons
+      - name: Run backend tests and generate TypeScript bindings
+        run: pnpm test:app:backend
+      - name: Lint (ESLint)
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Run frontend tests
+        run: pnpm test:app:frontend

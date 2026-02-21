@@ -18,6 +18,7 @@
     "build": "node scripts/build.ts build",
     "build:app": "node scripts/build.ts build:app",
     "build:mod": "node scripts/build.ts build:mod",
+    "icons": "node scripts/build.ts icons",
     "dev": "node scripts/build.ts dev"
   },
   "devDependencies": {
