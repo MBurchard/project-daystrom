@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -136,4 +137,67 @@ pub fn check(executable: &Path) -> EntitlementStatus {
     }
 
     EntitlementStatus { granted, missing }
+}
+
+/// XML plist containing the four required entitlements for mod injection.
+const ENTITLEMENTS_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>"#;
+
+/// Re-sign the game executable with the four required entitlements for mod injection.
+///
+/// Writes a temporary plist file, runs `codesign --force --sign -` with it, then verifies
+/// the result by calling `check()` again.
+pub fn patch(executable: &Path) -> Result<(), String> {
+    log_info!("Patching entitlements on {}", executable.display());
+
+    let plist_path = std::env::temp_dir().join("skynet-entitlements.plist");
+
+    fs::write(&plist_path, ENTITLEMENTS_PLIST)
+        .map_err(|e| format!("Failed to write entitlements plist: {e}"))?;
+
+    let output = Command::new("codesign")
+        .args([
+            "--force",
+            "--sign",
+            "-",
+            "--options",
+            "runtime",
+            "--entitlements",
+        ])
+        .arg(&plist_path)
+        .arg(executable)
+        .output()
+        .map_err(|e| format!("Failed to run codesign: {e}"))?;
+
+    // Clean up temp file regardless of outcome
+    let _ = fs::remove_file(&plist_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("codesign failed: {stderr}"));
+    }
+
+    // Verify the patch worked
+    let status = check(executable);
+    if status.all_granted() {
+        log_info!("Entitlements patched successfully");
+        Ok(())
+    } else {
+        let names: Vec<_> = status.missing.iter()
+            .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
+            .collect();
+        Err(format!("Entitlements still missing after patch: {}", names.join(", ")))
+    }
 }

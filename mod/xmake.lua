@@ -20,11 +20,8 @@ end
 
 if is_plat("macosx") then
     add_requires("inifile-cpp")
-    add_requires("librsync")
-    add_requires("PLzmaSDK")
     includes("macos-dylib")
     includes("macos-loader")
-    includes("macos-launcher")
 end
 
 add_rules("mode.debug")

@@ -14,6 +14,8 @@
     "test:coverage": "vitest run --coverage",
     "test:backend": "TS_RS_EXPORT_DIR=$PWD/modules/app/src/generated cargo test --manifest-path modules/backend/Cargo.toml",
     "test:backend:coverage": "TS_RS_EXPORT_DIR=$PWD/modules/app/src/generated cargo llvm-cov --manifest-path modules/backend/Cargo.toml",
+    "build:app": "node ../scripts/build.ts app",
+    "build:mod": "node ../scripts/build.ts mod",
     "dev": "TAURI_APP_PATH=./modules/backend tauri dev",
     "dev:web": "vite",
     "icons": "TAURI_APP_PATH=./modules/backend tauri icon resources/skynet.png",

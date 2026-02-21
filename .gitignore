@@ -14,6 +14,9 @@ coverage
 # Build tools
 .xmake
 
+# Mod resources (populated by build:mod script)
+app/resources/mod
+
 # Generated Tauri icons
 app/modules/backend/icons
 

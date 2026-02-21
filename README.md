@@ -51,6 +51,32 @@ as practical, so that improvements can be shared with the community.
 - [pnpm](https://pnpm.io/) >= 10 (pinned via `packageManager` in `package.json`)
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - [XMake](https://xmake.io/) (for building the mod)
+- [CMake](https://cmake.org/) (required by xmake to build C++ dependencies like spud)
+
+## Building the mod (dylib)
+
+The mod code lives in `mod/` and produces `libstfc-community-patch.dylib` — the shared library
+that gets injected into the game via `DYLD_INSERT_LIBRARIES`.
+
+### Building
+
+From the `app/` directory:
+
+```sh
+pnpm build:mod
+```
+
+This builds only the dylib target (`stfc-community-patch`) and copies the result to
+`app/resources/mod/`. The full `xmake build` would also try to build the original Swift launcher,
+which we don't need — Skynet replaces it.
+
+Alternatively, from the `mod/` directory directly:
+
+```sh
+xmake build -y stfc-community-patch
+```
+
+The built dylib lands at `mod/build/macosx/arm64/release/libstfc-community-patch.dylib` (~8 MB).
 
 ## App (Tauri + Vue 3 + Vite)
 
@@ -74,6 +100,7 @@ pnpm install
 | `pnpm test:coverage`         | Run frontend tests with v8 coverage                     |
 | `pnpm test:backend`          | Run Rust tests + generate TypeScript bindings via ts-rs |
 | `pnpm test:backend:coverage` | Run Rust tests with llvm-cov coverage                   |
+| `pnpm build:mod`             | Build mod dylib and copy to `resources/mod/`            |
 | `pnpm dev`                   | Start Tauri app (Vite + Rust) with hot reload           |
 | `pnpm dev:web`               | Start Vite dev server only (browser on :1420)           |
 | `pnpm icons`                 | Generate Tauri icons from `resources/skynet.png`        |

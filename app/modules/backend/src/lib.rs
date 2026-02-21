@@ -1,3 +1,4 @@
+#[cfg(debug_assertions)]
 use tauri::Manager;
 
 mod commands;
@@ -35,6 +36,11 @@ pub fn run() {
                 None => log_warn!("STFC not found — game features will be unavailable"),
             }
 
+            match game::find_mod_library(&app.handle()) {
+                Some(path) => log_info!("Mod library found: {}", path.display()),
+                None => log_warn!("Mod library not bundled — run pnpm build:mod"),
+            }
+
             #[cfg(debug_assertions)]
             if std::env::var("SKYNET_DEVTOOLS").as_deref() != Ok("0") {
                 let window = app.get_webview_window("main").unwrap();
@@ -44,7 +50,11 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::get_game_status])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_game_status,
+            commands::patch_entitlements,
+            commands::launch_game,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
