@@ -109,18 +109,17 @@ The built dylib lands at `mod/build/macosx/arm64/release/libstfc-community-patch
 | `pnpm test:app:backend:coverage`  | Run backend tests with llvm-cov coverage             |
 | `pnpm build`                      | Build everything (mod dylib → Tauri app)             |
 | `pnpm build:mod`                  | Build mod dylib and copy to `app/resources/mod/`     |
-| `pnpm build:app`                  | Build Tauri app bundle (includes mod build)          |
+| `pnpm build:app`                  | Build mod dylib + Tauri app bundle                   |
+| `pnpm icons`                      | Generate Tauri icons from `resources/skynet.png`     |
+| `pnpm dev`                        | Start Tauri app (Vite + Rust) with hot reload        |
 
 ### App-local (run from `app/` or via `pnpm --filter skynet-app`)
 
-| Script              | Description                                        |
-|---------------------|----------------------------------------------------|
-| `dev`               | Start Tauri app (Vite + Rust) with hot reload      |
-| `dev:frontend`      | Start Vite dev server only (browser on :1420)      |
-| `preview:frontend`  | Preview production build in browser                |
-| `build:frontend`    | Production build (icons + typecheck + Vite)        |
-| `icons`             | Generate Tauri icons from `resources/skynet.png`   |
-| `tauri <cmd>`       | Run any Tauri CLI command                          |
+| Script             | Description                                         |
+|--------------------|-----------------------------------------------------|
+| `dev:frontend`     | Start Vite dev server only (browser on :1420)       |
+| `preview:frontend` | Preview production build in browser                 |
+| `build:frontend`   | Production build (icons + typecheck + Vite)         |
 
 ### Path Aliases
 

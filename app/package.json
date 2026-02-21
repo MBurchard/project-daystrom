@@ -5,18 +5,17 @@
   "private": true,
   "scripts": {
     "typecheck:frontend": "vue-tsc --build --force",
-    "typecheck:backend": "cargo check --manifest-path modules/backend/Cargo.toml",
+    "typecheck:backend": "node ../scripts/build.ts typecheck:backend",
     "test:frontend": "vitest run",
     "test:frontend:watch": "vitest",
     "test:frontend:coverage": "vitest run --coverage",
-    "test:backend": "TS_RS_EXPORT_DIR=$PWD/modules/app/src/generated cargo test --manifest-path modules/backend/Cargo.toml",
-    "test:backend:coverage": "TS_RS_EXPORT_DIR=$PWD/modules/app/src/generated cargo llvm-cov --manifest-path modules/backend/Cargo.toml",
-    "dev": "TAURI_APP_PATH=./modules/backend tauri dev",
+    "test:backend": "node ../scripts/build.ts test:backend",
+    "test:backend:coverage": "node ../scripts/build.ts test:backend:coverage",
+    "dev": "node ../scripts/build.ts dev",
     "dev:frontend": "vite",
-    "icons": "TAURI_APP_PATH=./modules/backend tauri icon resources/skynet.png",
-    "build:frontend": "pnpm icons && vue-tsc --build && vite build",
-    "preview:frontend": "vite preview",
-    "tauri": "TAURI_APP_PATH=./modules/backend tauri"
+    "icons": "node ../scripts/build.ts icons",
+    "build:frontend": "node ../scripts/build.ts icons && vue-tsc --build && vite build",
+    "preview:frontend": "vite preview"
   },
   "dependencies": {
     "@mburchard/bit-log": "^1.0.0",
