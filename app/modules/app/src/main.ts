@@ -11,7 +11,7 @@ const log = getLogger('Main');
  */
 async function initApp() {
   const version = await getVersion();
-  log.info(`Skynet ${version} frontend started`);
+  log.info(`Project Daystrom ${version} frontend started`);
   const app = createApp(App);
   app.use(createPinia());
   app.mount('#app');

@@ -125,7 +125,7 @@ onUnmounted(() => {
 
 <template>
   <main>
-    <h1>Skynet</h1>
+    <h1>Project Daystrom</h1>
 
     <p v-if="error">
       Failed to load game status: {{ error }}

@@ -17,7 +17,7 @@ pub fn run() {
         .plugin(logging::build_plugin())
         .setup(|app| {
             let version = &app.package_info().version;
-            log_info!("Skynet {version} initialised");
+            log_info!("Project Daystrom {version} initialised");
 
             match game::detect() {
                 Some(info) => {
@@ -42,7 +42,7 @@ pub fn run() {
             }
 
             #[cfg(debug_assertions)]
-            if std::env::var("SKYNET_DEVTOOLS").as_deref() != Ok("0") {
+            if std::env::var("DAYSTROM_DEVTOOLS").as_deref() != Ok("0") {
                 let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
                 log_debug!("DevTools opened");

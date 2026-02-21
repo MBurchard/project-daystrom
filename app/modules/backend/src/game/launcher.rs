@@ -8,7 +8,7 @@ use_log!("Launcher");
 
 /// Launch the game with the mod library injected via DYLD environment variables.
 ///
-/// The child process is spawned but not awaited — the game runs independently of Skynet.
+/// The child process is spawned but not awaited — the game runs independently of Project Daystrom.
 /// Returns an error if the game is already running or the process fails to spawn.
 pub fn launch(game: &GameInfo, dylib: &Path) -> Result<(), String> {
     if super::is_running(&game.executable) {

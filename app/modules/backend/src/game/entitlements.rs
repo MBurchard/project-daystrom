@@ -162,7 +162,7 @@ const ENTITLEMENTS_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 pub fn patch(executable: &Path) -> Result<(), String> {
     log_info!("Patching entitlements on {}", executable.display());
 
-    let plist_path = std::env::temp_dir().join("skynet-entitlements.plist");
+    let plist_path = std::env::temp_dir().join("daystrom-entitlements.plist");
 
     fs::write(&plist_path, ENTITLEMENTS_PLIST)
         .map_err(|e| format!("Failed to write entitlements plist: {e}"))?;

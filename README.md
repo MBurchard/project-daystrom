@@ -1,12 +1,12 @@
-# Skynet — STFC Assistant
+# Project Daystrom
 
 An assistant app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
 built on top of the fantastic [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
 
 ## What is this?
 
-Skynet picks up where the Community Mod leaves off. The mod already provides essential quality-of-life
-improvements — hotkeys, UI tweaks, zoom presets, data sync, and more. Skynet builds on that foundation
+Project Daystrom picks up where the Community Mod leaves off. The mod already provides essential quality-of-life
+improvements — hotkeys, UI tweaks, zoom presets, data sync, and more. Project Daystrom builds on that foundation
 and adds:
 
 - **A native app** (Tauri 2 + Vue 3) that runs alongside the game on macOS and Windows
@@ -21,7 +21,7 @@ fixes flow both ways — anything useful to the broader community gets contribut
 ## Project Structure
 
 ```
-skynet/
+project-daystrom/
 ├── package.json            # Workspace root (orchestrating scripts)
 ├── pnpm-workspace.yaml     # Workspace config (members: app, scripts)
 ├── eslint.config.js        # Shared ESLint config (lints entire project)
@@ -35,7 +35,7 @@ skynet/
 │   ├── macos-dylib/        #   macOS injection helper
 │   ├── win-proxy-dll/      #   Windows proxy DLL loader
 │   └── xmake.lua           #   Build configuration
-├── app/                    # Skynet app (Tauri 2 + Vue 3)
+├── app/                    # Project Daystrom app (Tauri 2 + Vue 3)
 │   ├── modules/
 │   │   ├── app/            #   Vue 3 frontend
 │   │   ├── backend/        #   Tauri/Rust backend
@@ -80,7 +80,7 @@ pnpm build:mod
 
 This builds only the dylib target (`stfc-community-patch`) and copies the result to
 `app/resources/mod/`. The full `xmake build` would also try to build the original Swift launcher,
-which we don't need — Skynet replaces it.
+which we don't need — Project Daystrom replaces it.
 
 Alternatively, from the `stfc-mod/` directory directly:
 
@@ -110,10 +110,10 @@ The built dylib lands at `stfc-mod/build/macosx/arm64/release/libstfc-community-
 | `pnpm build`                      | Build everything (mod dylib → Tauri app)             |
 | `pnpm build:mod`                  | Build mod dylib and copy to `app/resources/mod/`     |
 | `pnpm build:app`                  | Build mod dylib + Tauri app bundle                   |
-| `pnpm icons`                      | Generate Tauri icons from `resources/skynet.png`     |
+| `pnpm icons`                      | Generate Tauri icons from `resources/daystrom.png`   |
 | `pnpm dev`                        | Start Tauri app (Vite + Rust) with hot reload        |
 
-### App-local (run from `app/` or via `pnpm --filter skynet-app`)
+### App-local (run from `app/` or via `pnpm --filter daystrom-app`)
 
 | Script             | Description                                         |
 |--------------------|-----------------------------------------------------|
@@ -161,7 +161,7 @@ that forwards log events to the Rust backend via `tauri-plugin-log` IPC:
 Example output:
 
 ```
-2026-02-20T16:50:03.399+01:00 INFO  [Startup             ] (Backend : lib.rs   :   28): Skynet 0.1.0 initialised
+2026-02-20T16:50:03.399+01:00 INFO  [Startup             ] (Backend : lib.rs   :   28): Project Daystrom 0.1.0 initialised
 2026-02-20T16:50:04.112+01:00 DEBUG [Main                ] (Frontend: main.ts  :   13): Connected to backend
 ```
 
@@ -186,12 +186,12 @@ log.error('Login failed');
 
 ### App directories
 
-All runtime data uses platform-standard locations based on the app identifier `mbur.skynet`:
+All runtime data uses platform-standard locations based on the app identifier `mbur.project-daystrom`:
 
-| Purpose | macOS                                        | Windows                            |
-|---------|----------------------------------------------|------------------------------------|
-| Logs    | `~/Library/Logs/mbur.skynet/`                | `%LOCALAPPDATA%\mbur.skynet\logs\` |
-| Config  | `~/Library/Application Support/mbur.skynet/` | `%APPDATA%\mbur.skynet\`           |
+| Purpose | macOS                                                | Windows                                    |
+|---------|------------------------------------------------------|--------------------------------------------|
+| Logs    | `~/Library/Logs/mbur.project-daystrom/`              | `%LOCALAPPDATA%\mbur.project-daystrom\logs\` |
+| Config  | `~/Library/Application Support/mbur.project-daystrom/` | `%APPDATA%\mbur.project-daystrom\`         |
 
 ### Format constants (backend)
 
@@ -218,9 +218,9 @@ intentionally modular so that individual plugins can be developed and published 
 
 ### Environment Variables
 
-| Variable          | Default | Description                                              |
-|-------------------|---------|----------------------------------------------------------|
-| `SKYNET_DEVTOOLS` | `1`     | Set to `0` to suppress DevTools in debug builds          |
+| Variable            | Default | Description                                              |
+|---------------------|---------|----------------------------------------------------------|
+| `DAYSTROM_DEVTOOLS` | `1`     | Set to `0` to suppress DevTools in debug builds          |
 
 ## License
 

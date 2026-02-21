@@ -8,8 +8,8 @@
 ///
 /// ```ignore
 /// use_log!("Startup");
-/// log_info!("Skynet {version} initialised");
-/// // → ... INFO [Startup] (Backend: lib.rs: 14): Skynet 0.1.0 initialised
+/// log_info!("Project Daystrom {version} initialised");
+/// // → ... INFO [Startup] (Backend: lib.rs: 14): Project Daystrom 0.1.0 initialised
 /// ```
 #[macro_export]
 macro_rules! use_log {

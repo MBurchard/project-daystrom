@@ -71,7 +71,7 @@ function appRun(script: string): void {
 
 /**
  * Run a Tauri CLI command with the correct TAURI_APP_PATH.
- * @param args - tauri sub-command and flags, e.g. "dev" or "icon resources/skynet.png"
+ * @param args - tauri sub-command and flags, e.g. "dev" or "icon resources/daystrom.png"
  */
 function tauri(args: string): void {
   execSync(`pnpm exec tauri ${args}`, {
@@ -200,7 +200,7 @@ function buildMod(): void {
  */
 function buildApp(): void {
   buildMod();
-  log.info('Building Skynet app...');
+  log.info('Building Project Daystrom app...');
   tauri('build');
 }
 
@@ -209,7 +209,7 @@ function buildApp(): void {
  */
 function icons(): void {
   log.info('Generating icons...');
-  tauri('icon resources/skynet.png');
+  tauri('icon resources/daystrom.png');
 }
 
 // -- dev --------------------------------------------------------------------
@@ -218,7 +218,7 @@ function icons(): void {
  * Start the Tauri app with Vite hot reload.
  */
 function dev(): void {
-  log.info('Starting Skynet in dev mode...');
+  log.info('Starting Project Daystrom in dev mode...');
   tauri('dev');
 }
 
