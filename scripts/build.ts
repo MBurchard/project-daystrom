@@ -23,7 +23,7 @@ const log = useLog('Build');
 
 const ROOT = resolve(import.meta.dirname, '..');
 const APP_DIR = join(ROOT, 'app');
-const MOD_DIR = join(ROOT, 'mod');
+const MOD_DIR = join(ROOT, 'stfc-mod');
 const MOD_OUTPUT_DIR = join(APP_DIR, 'resources', 'mod');
 const MANIFEST_PATH = join(APP_DIR, 'modules', 'backend', 'Cargo.toml');
 const TS_RS_EXPORT_DIR = join(APP_DIR, 'modules', 'app', 'src', 'generated');

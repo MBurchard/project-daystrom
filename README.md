@@ -15,7 +15,7 @@ and adds:
 - **Dashboard, alerts, and advisor plugins** for live fleet overview, event notifications, and upgrade
   recommendations
 
-The mod code lives in `mod/` and is kept in sync with the upstream Community Mod. Improvements and bug
+The mod code lives in `stfc-mod/` and is kept in sync with the upstream Community Mod. Improvements and bug
 fixes flow both ways — anything useful to the broader community gets contributed back.
 
 ## Project Structure
@@ -29,7 +29,7 @@ skynet/
 ├── scripts/                # Build and tooling scripts
 │   ├── build.ts            #   Mod + app build orchestration
 │   └── package.json        #   Script dependencies
-├── mod/                    # STFC Community Mod (from netniV/stfc-mod)
+├── stfc-mod/               # STFC Community Mod (from netniV/stfc-mod)
 │   ├── mods/               #   Mod patches (C++23, IL2CPP hooks)
 │   ├── macos-launcher/     #   Original Swift launcher (being replaced)
 │   ├── macos-dylib/        #   macOS injection helper
@@ -48,7 +48,7 @@ skynet/
 ## Acknowledgements
 
 This project would not exist without the work of [netniV](https://github.com/netniV),
-[tashcan](https://github.com/tashcan), and the entire STFC Community Mod team. The mod code in `mod/`
+[tashcan](https://github.com/tashcan), and the entire STFC Community Mod team. The mod code in `stfc-mod/`
 is imported from [netniV/stfc-mod](https://github.com/netniV/stfc-mod) and kept as close to upstream
 as practical, so that improvements can be shared with the community.
 
@@ -71,7 +71,7 @@ All commands run from the **workspace root** unless noted otherwise.
 
 ## Building the mod (dylib)
 
-The mod code lives in `mod/` and produces `libstfc-community-patch.dylib` — the shared library
+The mod code lives in `stfc-mod/` and produces `libstfc-community-patch.dylib` — the shared library
 that gets injected into the game via `DYLD_INSERT_LIBRARIES`.
 
 ```sh
@@ -82,13 +82,13 @@ This builds only the dylib target (`stfc-community-patch`) and copies the result
 `app/resources/mod/`. The full `xmake build` would also try to build the original Swift launcher,
 which we don't need — Skynet replaces it.
 
-Alternatively, from the `mod/` directory directly:
+Alternatively, from the `stfc-mod/` directory directly:
 
 ```sh
 xmake build -y stfc-community-patch
 ```
 
-The built dylib lands at `mod/build/macosx/arm64/release/libstfc-community-patch.dylib` (~8 MB).
+The built dylib lands at `stfc-mod/build/macosx/arm64/release/libstfc-community-patch.dylib` (~8 MB).
 
 ## Scripts
 

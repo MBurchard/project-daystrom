@@ -5,7 +5,7 @@ export default antfu({
   ignores: [
     'app/modules/backend/**',
     '**/generated/**',
-    'mod/**',
+    'stfc-mod/**',
   ],
   stylistic: {
     semi: true,
