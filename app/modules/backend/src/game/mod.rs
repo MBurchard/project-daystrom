@@ -9,6 +9,36 @@ use crate::use_log;
 mod macos;
 #[cfg(target_os = "macos")]
 pub mod entitlements;
+
+#[cfg(not(target_os = "macos"))]
+pub mod entitlements {
+    use std::path::Path;
+
+    /// Result of checking the game executable's code-signing entitlements.
+    pub struct EntitlementStatus {
+        /// Entitlement keys that are present and set to `true`.
+        pub granted: Vec<&'static str>,
+        /// Entitlement keys that are absent or not `true`.
+        pub missing: Vec<&'static str>,
+    }
+
+    impl EntitlementStatus {
+        /// Returns `true` when all four required entitlements are granted.
+        pub fn all_granted(&self) -> bool {
+            self.missing.is_empty()
+        }
+    }
+
+    /// Stub — entitlements are a macOS concept; always returns empty on other platforms.
+    pub fn check(_executable: &Path) -> EntitlementStatus {
+        EntitlementStatus { granted: vec![], missing: vec![] }
+    }
+
+    /// Stub — entitlement patching is only available on macOS.
+    pub fn patch(_executable: &Path) -> Result<(), String> {
+        Err("Entitlement patching is only supported on macOS".to_string())
+    }
+}
 pub mod launcher;
 
 use_log!("Game");
