@@ -1,6 +1,6 @@
 # Project Daystrom
 
-[![CI](https://github.com/MBurchard/project-daystrom/actions/workflows/ci-mac.yml/badge.svg)](https://github.com/MBurchard/project-daystrom/actions/workflows/ci-mac.yml)
+[![CI](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml/badge.svg)](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml)
 
 An assistant app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
 built on top of the fantastic [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
@@ -61,6 +61,7 @@ as practical, so that improvements can be shared with the community.
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - [XMake](https://xmake.io/) (for building the mod)
 - [CMake](https://cmake.org/) (required by xmake to build C++ dependencies like spud)
+- **macOS on Apple Silicon** — local development assumes arm64; the CI handles universal builds
 
 ## Setup
 
