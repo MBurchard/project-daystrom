@@ -224,6 +224,53 @@ intentionally modular so that individual plugins can be developed and published 
 |---------------------|---------|----------------------------------------------------------|
 | `DAYSTROM_DEVTOOLS` | `1`     | Set to `0` to suppress DevTools in debug builds          |
 
+## Code Style
+
+### File structure
+
+Every source file follows a consistent top-to-bottom layout:
+
+1. **Imports** — alphabetically sorted
+2. **Module-level constants** — values that help understand the file at a glance
+3. **Code** — ordered by logical flow (entry points first, then implementation details top-down);
+   constants that only belong to a single function/class live directly above it, not at the top
+4. **Re-exports** — clearly marked with a section comment
+5. **Tests** — always last, clearly marked with a section comment
+
+Larger files use section comments (`// ---- Section Name ----`) to separate logical areas.
+
+When a section grows complex enough to stand on its own, extract it into a separate file.
+
+### Import order
+
+**TypeScript** (enforced by ESLint / @antfu/eslint-config):
+
+```typescript
+import type {Foo} from '@generated/Foo';        // 1. Type imports
+import {bar} from '@app/utils';                  // 2. Packages (node:*, npm, path aliases — alphabetical)
+import {createApp} from 'vue';
+import {helper} from './helper';                 // 3. Relative imports
+```
+
+**Rust:**
+
+```rust
+use std::fs;                                     // 1. Standard library
+
+use serde::Serialize;                            // 2. External crates (alphabetical)
+use tauri::plugin::TauriPlugin;
+
+use crate::config::Settings;                     // 3. Crate-local
+```
+
+### Documentation comments
+
+Every public and non-trivial function, method, and type gets a doc comment following the language's
+convention:
+
+- **TypeScript:** JSDoc blocks (never single-line), with `@param` and `@returns`
+- **Rust:** `///` doc comments directly above the item
+
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html),
