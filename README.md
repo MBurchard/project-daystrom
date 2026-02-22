@@ -246,10 +246,10 @@ When a section grows complex enough to stand on its own, extract it into a separ
 **TypeScript** (enforced by ESLint / @antfu/eslint-config):
 
 ```typescript
-import type {Foo} from '@generated/Foo';        // 1. Type imports
-import {bar} from '@app/utils';                  // 2. Packages (node:*, npm, path aliases — alphabetical)
+import type {Foo} from '@generated/Foo'; // 1. Type imports
+import {bar} from '@app/utils'; // 2. Packages (node:*, npm, path aliases — alphabetical)
 import {createApp} from 'vue';
-import {helper} from './helper';                 // 3. Relative imports
+import {helper} from './helper'; // 3. Relative imports
 ```
 
 **Rust:**
