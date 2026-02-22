@@ -185,6 +185,12 @@ onUnmounted(() => {
   </main>
 </template>
 
+<style>
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+}
+</style>
+
 <style scoped>
 .checklist {
   list-style: none;
