@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type {GameStatus} from '@generated/GameStatus';
 import {getLogger} from '@app/log';
+import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
 import {computed, onMounted, onUnmounted, ref} from 'vue';
 
 const log = getLogger('App');
 
+const version = ref('');
 const status = ref<GameStatus | null>(null);
 const error = ref<string | null>(null);
 const actionError = ref<string | null>(null);
@@ -115,6 +117,13 @@ function launchGame(): void {
 
 onMounted(() => {
   log.debug('App.vue mounted');
+  getVersion()
+    .then((v) => {
+      version.value = v;
+    })
+    .catch((err) => {
+      log.error(`Failed to get app version: ${err}`);
+    });
   refreshStatus();
 });
 
@@ -125,7 +134,7 @@ onUnmounted(() => {
 
 <template>
   <main>
-    <h1>Project Daystrom</h1>
+    <h1>Project Daystrom <small v-if="version">{{ version }}</small></h1>
 
     <p v-if="error">
       Failed to load game status: {{ error }}
@@ -216,5 +225,12 @@ onUnmounted(() => {
 .error {
   color: #f44336;
   margin-top: 0.5rem;
+}
+
+h1 small {
+  font-size: 0.5em;
+  font-weight: 400;
+  color: #888;
+  margin-left: 0.25em;
 }
 </style>
