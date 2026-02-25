@@ -1,4 +1,4 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}, sync::Mutex};
 
 use colored::Colorize;
 use log::{Level, LevelFilter};
@@ -57,9 +57,11 @@ const LOG_FILE_NAME: &str = "project-daystrom";
 /// file handle in append mode — renaming afterwards would not take effect.
 pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
     rotate_logs();
+    init_runtime_rotation();
 
     Builder::new()
         .timezone_strategy(TimezoneStrategy::UseLocal)
+        .max_file_size(1_000_000) // 1 MB, plugin-internal size rotation
         .level(LevelFilter::Debug)
         .level_for("tao", LevelFilter::Warn)
         .level_for("wry", LevelFilter::Warn)
@@ -104,8 +106,33 @@ fn log_dir() -> Option<PathBuf> {
     Some(dirs::home_dir()?.join(format!("Library/Logs/{}", env!("TAURI_IDENTIFIER"))))
 }
 
-/// Number of days to keep archived log files.
-const MAX_LOG_AGE_DAYS: i64 = 30;
+// ---- Runtime rotation state -----------------------------------------------------
+
+/// Tracks the current date so [`check_runtime_rotation`] can detect midnight crossings.
+struct RotationState {
+    current_date: time::Date,
+    log_dir: PathBuf,
+}
+
+/// Global state for runtime log rotation, initialised by [`init_runtime_rotation`].
+static ROTATION_STATE: Mutex<Option<RotationState>> = Mutex::new(None);
+
+/// Initialise the runtime rotation state with today's date and the log directory.
+///
+/// Called once from [`build_plugin`] after the startup rotation has completed.
+/// On platforms without a log directory (non-macOS), this is a no-op.
+fn init_runtime_rotation() {
+    let Some(dir) = log_dir() else { return };
+    let today = time::OffsetDateTime::now_local()
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        .date();
+    *ROTATION_STATE.lock().unwrap() = Some(RotationState {
+        current_date: today,
+        log_dir: dir,
+    });
+}
+
+// ---- Log cleanup & rotation -----------------------------------------------------
 
 /// Core rotation logic, separated from [`rotate_logs`] for testability.
 fn rotate_logs_in(dir: &Path) {
@@ -120,7 +147,11 @@ fn rotate_logs_in(dir: &Path) {
         match last_log_date(&log_file) {
             Some(last_date) if last_date < today => {
                 if let Ok(date_str) = last_date.format(&date_fmt) {
-                    let archive_name = format!("{LOG_FILE_NAME}_{date_str}.log");
+                    let time_suffix = normalize_plugin_archives(dir, &date_str);
+                    let archive_name = match &time_suffix {
+                        Some(ts) => format!("{LOG_FILE_NAME}_{date_str}_{ts}.log"),
+                        None => format!("{LOG_FILE_NAME}_{date_str}.log"),
+                    };
                     let archive_path = dir.join(&archive_name);
 
                     if archive_path.exists() {
@@ -149,9 +180,21 @@ fn rotate_logs_in(dir: &Path) {
         }
     }
 
-    // Delete archived logs older than MAX_LOG_AGE_DAYS
+    cleanup_old_archives(dir, today);
+}
+
+/// Number of days to keep archived log files.
+const MAX_LOG_AGE_DAYS: i64 = 30;
+
+/// Delete archived log files older than [`MAX_LOG_AGE_DAYS`].
+///
+/// Recognises both our date-only archives (`project-daystrom_YYYY-MM-DD.log`) and the
+/// plugin's size-rotation archives (`project-daystrom_YYYY-MM-DD_HH-MM-SS.log`) by
+/// parsing only the first 10 characters after the prefix as a date.
+fn cleanup_old_archives(dir: &Path, today: time::Date) {
+    let date_fmt = time::macros::format_description!("[year]-[month]-[day]");
     let prefix = format!("{LOG_FILE_NAME}_");
-    let entries = match fs::read_dir(&dir) {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Log rotation: cannot read {}: {e}", dir.display());
@@ -166,10 +209,10 @@ fn rotate_logs_in(dir: &Path) {
         let Some(rest) = name.strip_prefix(prefix.as_str()) else {
             continue;
         };
-        let Some(date_str) = rest.strip_suffix(".log") else {
+        if !rest.ends_with(".log") || rest.len() < 10 {
             continue;
-        };
-        let Ok(file_date) = time::Date::parse(date_str, &date_fmt) else {
+        }
+        let Ok(file_date) = time::Date::parse(&rest[..10], &date_fmt) else {
             continue;
         };
 
@@ -179,6 +222,128 @@ fn rotate_logs_in(dir: &Path) {
             }
         }
     }
+}
+
+/// Rename plugin-rotated archives so timestamps reflect content start instead of rotation time.
+///
+/// The plugin's size-based rotation creates files like `{LOG_FILE_NAME}_{date}_HH-MM-SS.log`
+/// where HH-MM-SS is the rotation (end) time. This function renames them so each file's
+/// timestamp indicates when its content begins:
+/// - The earliest file gets `_00-00-00` (midnight / start of day)
+/// - Each subsequent file gets the original timestamp of its predecessor
+///
+/// Returns the last original timestamp (used as time suffix for the copy-truncate archive),
+/// or `None` if no plugin-rotated files were found (or already normalized).
+fn normalize_plugin_archives(dir: &Path, date_str: &str) -> Option<String> {
+    let prefix = format!("{LOG_FILE_NAME}_{date_str}_");
+    let entries = fs::read_dir(dir).ok()?;
+
+    let mut times: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let rest = name.strip_prefix(prefix.as_str())?;
+            let time_part = rest.strip_suffix(".log")?;
+            // HH-MM-SS is exactly 8 characters
+            (time_part.len() == 8).then(|| time_part.to_string())
+        })
+        .collect();
+
+    if times.is_empty() {
+        return None;
+    }
+
+    times.sort();
+
+    // First file already starts at midnight — archives were already normalized
+    if times[0] == "00-00-00" {
+        return None;
+    }
+
+    // Rename from early to late: each slot is freed before it gets reused
+    let mut prev_time = "00-00-00".to_string();
+    for time in &times {
+        let old_name = format!("{LOG_FILE_NAME}_{date_str}_{time}.log");
+        let new_name = format!("{LOG_FILE_NAME}_{date_str}_{prev_time}.log");
+
+        if let Err(e) = fs::rename(dir.join(&old_name), dir.join(&new_name)) {
+            eprintln!("Log rotation: failed to rename {old_name} to {new_name}: {e}");
+        }
+        prev_time = time.clone();
+    }
+
+    Some(prev_time)
+}
+
+/// Copy-truncate the current log file into a dated archive.
+///
+/// Uses `fs::copy` + `set_len(0)` instead of rename because the logging plugin holds
+/// the file handle open. When `time_suffix` is provided, the archive includes a time
+/// component (`_YYYY-MM-DD_HH-MM-SS.log`); otherwise it uses date-only naming.
+/// Skips silently if the log file is missing, has no valid timestamps, or the target
+/// archive already exists.
+fn copy_truncate_rotation(dir: &Path, time_suffix: Option<&str>) {
+    let log_file = dir.join(format!("{LOG_FILE_NAME}.log"));
+    if !log_file.exists() {
+        return;
+    }
+
+    let Some(last_date) = last_log_date(&log_file) else { return };
+    let date_fmt = time::macros::format_description!("[year]-[month]-[day]");
+    let Ok(date_str) = last_date.format(&date_fmt) else { return };
+    let archive_name = match time_suffix {
+        Some(ts) => format!("{LOG_FILE_NAME}_{date_str}_{ts}.log"),
+        None => format!("{LOG_FILE_NAME}_{date_str}.log"),
+    };
+    let archive_path = dir.join(&archive_name);
+
+    if archive_path.exists() {
+        return;
+    }
+
+    if let Err(e) = fs::copy(&log_file, &archive_path) {
+        eprintln!("Runtime rotation: failed to copy log to {archive_name}: {e}");
+        return;
+    }
+
+    if let Err(e) = fs::File::options()
+        .write(true)
+        .open(&log_file)
+        .and_then(|f| f.set_len(0))
+    {
+        eprintln!("Runtime rotation: failed to truncate {}: {e}", log_file.display());
+    }
+}
+
+/// Check whether the date has changed since the last log event and rotate if needed.
+///
+/// Called at the start of every [`format_log`] invocation. The fast path (same date)
+/// is a single mutex lock + date comparison. On date change, performs a copy-truncate
+/// rotation followed by archive cleanup.
+fn check_runtime_rotation() {
+    let mut guard = match ROTATION_STATE.lock() {
+        Ok(g) => g,
+        Err(_) => return, // poisoned mutex, skip rotation
+    };
+    let Some(state) = guard.as_mut() else { return };
+
+    let today = time::OffsetDateTime::now_local()
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        .date();
+
+    // Fast path: same date, nothing to do
+    if today == state.current_date {
+        return;
+    }
+
+    let date_fmt = time::macros::format_description!("[year]-[month]-[day]");
+    let last_time = state.current_date.format(&date_fmt).ok().and_then(|date_str| {
+        normalize_plugin_archives(&state.log_dir, &date_str)
+    });
+    copy_truncate_rotation(&state.log_dir, last_time.as_deref());
+    cleanup_old_archives(&state.log_dir, today);
+    state.current_date = today;
 }
 
 /// Maximum number of bytes to read from the end of a log file when looking for the last timestamp.
@@ -243,6 +408,8 @@ fn format_log(
     message: &std::fmt::Arguments,
     record: &log::Record,
 ) {
+    check_runtime_rotation();
+
     let timestamp = format_timestamp();
     let level = coloured_level(record.level());
     let file = record.file().unwrap_or("unknown");
@@ -337,22 +504,30 @@ mod tests {
         )
     }
 
+    /// Mutex to serialise tests that read/write the global [`ROTATION_STATE`].
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Return today's date.
+    fn today_date() -> time::Date {
+        time::OffsetDateTime::now_local()
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+            .date()
+    }
+
+    /// Format a [`time::Date`] as `YYYY-MM-DD`.
+    fn format_date(date: time::Date) -> String {
+        let fmt = time::macros::format_description!("[year]-[month]-[day]");
+        date.format(&fmt).unwrap()
+    }
+
     /// Return today's date formatted as YYYY-MM-DD.
     fn today_str() -> String {
-        let today = time::OffsetDateTime::now_local()
-            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
-            .date();
-        let fmt = time::macros::format_description!("[year]-[month]-[day]");
-        today.format(&fmt).unwrap()
+        format_date(today_date())
     }
 
     /// Return a date N days ago formatted as YYYY-MM-DD.
     fn days_ago_str(n: i64) -> String {
-        let date = time::OffsetDateTime::now_local()
-            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
-            .date() - time::Duration::days(n);
-        let fmt = time::macros::format_description!("[year]-[month]-[day]");
-        date.format(&fmt).unwrap()
+        format_date(today_date() - time::Duration::days(n))
     }
 
     // -- last_log_date --
@@ -581,5 +756,239 @@ mod tests {
         let result = fit_path("src/müll/datei.rs", 15);
         assert_eq!(result.chars().count(), 15);
         assert!(result.contains("..."), "expected '...' in '{result}'");
+    }
+
+    // -- copy_truncate_rotation --
+
+    #[test]
+    fn runtime_rotation_copies_and_truncates() {
+        let dir = test_dir("runtime_copy_truncate");
+        let yesterday = days_ago_str(1);
+        let log_file = dir.join(format!("{LOG_FILE_NAME}.log"));
+        fs::write(&log_file, log_line(&yesterday)).unwrap();
+
+        copy_truncate_rotation(&dir, None);
+
+        let archive = dir.join(format!("{LOG_FILE_NAME}_{yesterday}.log"));
+        assert!(archive.exists(), "archive should exist");
+        assert_eq!(fs::read_to_string(&log_file).unwrap(), "", "log file should be truncated");
+    }
+
+    #[test]
+    fn runtime_rotation_skips_same_day() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let dir = test_dir("runtime_same_day");
+        let today = today_str();
+        let log_file = dir.join(format!("{LOG_FILE_NAME}.log"));
+        let content = log_line(&today);
+        fs::write(&log_file, &content).unwrap();
+
+        *ROTATION_STATE.lock().unwrap() = Some(RotationState {
+            current_date: today_date(),
+            log_dir: dir.clone(),
+        });
+
+        check_runtime_rotation();
+
+        // Clean up global state
+        *ROTATION_STATE.lock().unwrap() = None;
+
+        assert_eq!(fs::read_to_string(&log_file).unwrap(), content, "log file should be unchanged");
+    }
+
+    #[test]
+    fn runtime_rotation_skips_existing_archive() {
+        let dir = test_dir("runtime_skip_existing");
+        let yesterday = days_ago_str(1);
+        let log_file = dir.join(format!("{LOG_FILE_NAME}.log"));
+        fs::write(&log_file, log_line(&yesterday)).unwrap();
+
+        // Pre-create the archive with different content
+        let archive = dir.join(format!("{LOG_FILE_NAME}_{yesterday}.log"));
+        fs::write(&archive, "existing archive content").unwrap();
+
+        copy_truncate_rotation(&dir, None);
+
+        assert_eq!(
+            fs::read_to_string(&archive).unwrap(),
+            "existing archive content",
+            "existing archive should not be overwritten"
+        );
+    }
+
+    // -- cleanup_old_archives --
+
+    #[test]
+    fn cleanup_handles_plugin_rotation_format() {
+        let dir = test_dir("cleanup_plugin_format");
+        let old_date = days_ago_str(31);
+        // Plugin format: project-daystrom_YYYY-MM-DD_HH-MM-SS.log
+        let plugin_archive = dir.join(format!("{LOG_FILE_NAME}_{old_date}_14-30-45.log"));
+        fs::write(&plugin_archive, "old plugin log").unwrap();
+
+        cleanup_old_archives(&dir, today_date());
+
+        assert!(!plugin_archive.exists(), "plugin-format archive older than 30 days should be deleted");
+    }
+
+    #[test]
+    fn cleanup_deletes_both_formats() {
+        let dir = test_dir("cleanup_both_formats");
+        let old_date = days_ago_str(31);
+
+        // Our format: project-daystrom_YYYY-MM-DD.log
+        let our_archive = dir.join(format!("{LOG_FILE_NAME}_{old_date}.log"));
+        fs::write(&our_archive, "old log").unwrap();
+
+        // Plugin format: project-daystrom_YYYY-MM-DD_HH-MM-SS.log
+        let plugin_archive = dir.join(format!("{LOG_FILE_NAME}_{old_date}_14-30-45.log"));
+        fs::write(&plugin_archive, "old plugin log").unwrap();
+
+        cleanup_old_archives(&dir, today_date());
+
+        assert!(!our_archive.exists(), "our archive older than 30 days should be deleted");
+        assert!(!plugin_archive.exists(), "plugin archive older than 30 days should be deleted");
+    }
+
+    // -- normalize_plugin_archives --
+
+    #[test]
+    fn normalize_no_plugin_files() {
+        let dir = test_dir("normalize_empty");
+        assert_eq!(normalize_plugin_archives(&dir, "2026-01-15"), None);
+    }
+
+    #[test]
+    fn normalize_renames_single_file() {
+        let dir = test_dir("normalize_single");
+        let date = "2026-01-15";
+        fs::write(
+            dir.join(format!("{LOG_FILE_NAME}_{date}_09-00-00.log")),
+            "log content",
+        )
+        .unwrap();
+
+        let result = normalize_plugin_archives(&dir, date);
+        assert_eq!(result.as_deref(), Some("09-00-00"));
+
+        assert!(
+            dir.join(format!("{LOG_FILE_NAME}_{date}_00-00-00.log")).exists(),
+            "file should be renamed to _00-00-00"
+        );
+        assert!(
+            !dir.join(format!("{LOG_FILE_NAME}_{date}_09-00-00.log")).exists(),
+            "original file should no longer exist"
+        );
+    }
+
+    #[test]
+    fn normalize_renames_chain() {
+        let dir = test_dir("normalize_chain");
+        let date = "2026-01-15";
+        for time in ["09-00-00", "13-00-00", "21-00-00"] {
+            fs::write(
+                dir.join(format!("{LOG_FILE_NAME}_{date}_{time}.log")),
+                format!("content from {time}"),
+            )
+            .unwrap();
+        }
+
+        let result = normalize_plugin_archives(&dir, date);
+        assert_eq!(result.as_deref(), Some("21-00-00"));
+
+        // Verify renamed files exist with correct content
+        assert_eq!(
+            fs::read_to_string(dir.join(format!("{LOG_FILE_NAME}_{date}_00-00-00.log"))).unwrap(),
+            "content from 09-00-00"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(format!("{LOG_FILE_NAME}_{date}_09-00-00.log"))).unwrap(),
+            "content from 13-00-00"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(format!("{LOG_FILE_NAME}_{date}_13-00-00.log"))).unwrap(),
+            "content from 21-00-00"
+        );
+        assert!(
+            !dir.join(format!("{LOG_FILE_NAME}_{date}_21-00-00.log")).exists(),
+            "_21-00-00 should no longer exist"
+        );
+    }
+
+    #[test]
+    fn normalize_skips_other_dates() {
+        let dir = test_dir("normalize_other_dates");
+        let target = "2026-01-15";
+        let other = "2026-01-14";
+        fs::write(
+            dir.join(format!("{LOG_FILE_NAME}_{target}_09-00-00.log")),
+            "target",
+        )
+        .unwrap();
+        fs::write(
+            dir.join(format!("{LOG_FILE_NAME}_{other}_12-00-00.log")),
+            "other",
+        )
+        .unwrap();
+
+        normalize_plugin_archives(&dir, target);
+
+        assert!(
+            dir.join(format!("{LOG_FILE_NAME}_{other}_12-00-00.log")).exists(),
+            "other date's file should remain unchanged"
+        );
+    }
+
+    // -- copy_truncate_rotation with time suffix --
+
+    #[test]
+    fn copy_truncate_with_time_suffix() {
+        let dir = test_dir("copy_truncate_time_suffix");
+        let yesterday = days_ago_str(1);
+        let log_file = dir.join(format!("{LOG_FILE_NAME}.log"));
+        fs::write(&log_file, log_line(&yesterday)).unwrap();
+
+        copy_truncate_rotation(&dir, Some("21-00-00"));
+
+        let archive = dir.join(format!("{LOG_FILE_NAME}_{yesterday}_21-00-00.log"));
+        assert!(archive.exists(), "archive should include time suffix");
+        assert_eq!(fs::read_to_string(&log_file).unwrap(), "", "log file should be truncated");
+    }
+
+    // -- rotate_logs_in with plugin archives --
+
+    #[test]
+    fn rotate_startup_normalizes_archives() {
+        let dir = test_dir("startup_normalize");
+        let yesterday = days_ago_str(1);
+        let log_file = dir.join(format!("{LOG_FILE_NAME}.log"));
+        fs::write(&log_file, log_line(&yesterday)).unwrap();
+
+        // Create plugin-rotated files for yesterday
+        for time in ["09-00-00", "13-00-00"] {
+            fs::write(
+                dir.join(format!("{LOG_FILE_NAME}_{yesterday}_{time}.log")),
+                format!("plugin content {time}"),
+            )
+            .unwrap();
+        }
+
+        rotate_logs_in(&dir);
+
+        // Plugin files should be normalized
+        assert!(
+            dir.join(format!("{LOG_FILE_NAME}_{yesterday}_00-00-00.log")).exists(),
+            "first plugin file should be renamed to _00-00-00"
+        );
+        assert!(
+            dir.join(format!("{LOG_FILE_NAME}_{yesterday}_09-00-00.log")).exists(),
+            "second plugin file should be renamed to _09-00-00"
+        );
+        // Main log file should be archived with the last original time
+        assert!(
+            dir.join(format!("{LOG_FILE_NAME}_{yesterday}_13-00-00.log")).exists(),
+            "main log should be archived with last plugin time"
+        );
+        assert!(!log_file.exists(), "original log file should be gone");
     }
 }
