@@ -117,6 +117,7 @@ function launchGame(): void {
 
 onMounted(() => {
   log.debug('App.vue mounted');
+
   getVersion()
     .then((v) => {
       version.value = v;

@@ -22,7 +22,7 @@ fixes flow both ways — anything useful to the broader community gets contribut
 
 ## Project Structure
 
-```
+```text
 project-daystrom/
 ├── package.json            # Workspace root (orchestrating scripts)
 ├── pnpm-workspace.yaml     # Workspace config (members: app, scripts)
@@ -157,15 +157,15 @@ Unified logging across frontend (TypeScript) and backend (Rust). The frontend us
 [@mburchard/bit-log](https://www.npmjs.com/package/@mburchard/bit-log) with a custom `TauriAppender`
 that forwards log events to the Rust backend via `tauri-plugin-log` IPC:
 
-```
+```text
 {ISO 8601 timestamp} {LEVEL} [{loggerName}] ({origin}: {filePath}: {line}): {message}
 ```
 
 Example output:
 
-```
-2026-02-20T16:50:03.399+01:00 INFO  [Startup             ] (Backend : lib.rs   :   28): Project Daystrom 0.1.0 initialised
-2026-02-20T16:50:04.112+01:00 DEBUG [Main                ] (Frontend: main.ts  :   13): Connected to backend
+```text
+2026-02-25T18:04:22.487+01:00 INFO  [Startup             ] (Backend : lib.rs                        :   20): Project Daystrom 0.2.0 initialised
+2026-02-25T18:04:22.649+01:00 INFO  [Main                ] (Frontend: main.ts                       :   14): Project Daystrom 0.2.0 frontend started
 ```
 
 #### Frontend usage
@@ -191,10 +191,10 @@ log.error('Login failed');
 
 All runtime data uses platform-standard locations based on the app identifier `mbur.project-daystrom`:
 
-| Purpose | macOS                                                | Windows                                    |
-|---------|------------------------------------------------------|--------------------------------------------|
-| Logs    | `~/Library/Logs/mbur.project-daystrom/`              | `%LOCALAPPDATA%\mbur.project-daystrom\logs\` |
-| Config  | `~/Library/Application Support/mbur.project-daystrom/` | `%APPDATA%\mbur.project-daystrom\`         |
+| Purpose | macOS                                                  | Windows                                      |
+|---------|--------------------------------------------------------|----------------------------------------------|
+| Logs    | `~/Library/Logs/mbur.project-daystrom/`                | `%LOCALAPPDATA%\mbur.project-daystrom\logs\` |
+| Config  | `~/Library/Application Support/mbur.project-daystrom/` | `%APPDATA%\mbur.project-daystrom\`           |
 
 ### Format constants (backend)
 
