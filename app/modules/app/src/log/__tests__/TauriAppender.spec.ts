@@ -1,6 +1,6 @@
 import type {ILogEvent} from '@mburchard/bit-log/definitions';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {TauriAppender} from './TauriAppender';
+import {TauriAppender} from '../TauriAppender';
 
 // Mock @tauri-apps/plugin-log — all five IPC functions
 const {mockTrace, mockDebug, mockInfo, mockWarn, mockError} = vi.hoisted(() => ({

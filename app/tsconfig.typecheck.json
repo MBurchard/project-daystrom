@@ -1,20 +1,18 @@
 {
   "extends": ["../tsconfig.base.json", "@vue/tsconfig/tsconfig.dom.json"],
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
       "@app/*": ["modules/app/src/*"],
       "@generated/*": ["modules/app/src/generated/*"],
       "@resources/*": ["resources/*"]
     },
-    "types": ["vite/client"]
+    "types": ["vite/client", "vitest"]
   },
   "include": [
     "modules/app/src/**/*.ts",
-    "modules/app/src/**/*.vue"
-  ],
-  "exclude": [
-    "**/__tests__/**/*.spec.ts"
+    "modules/app/src/**/*.vue",
+    "vitest.config.ts",
+    "vite.config.ts"
   ]
 }

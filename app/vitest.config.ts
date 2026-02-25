@@ -9,11 +9,11 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['modules/app/src/**/*.test.ts'],
+    include: ['**/__tests__/**/*.spec.ts'],
     coverage: {
       provider: 'v8',
       include: ['modules/app/src/**/*.ts'],
-      exclude: ['**/*.test.ts', '**/*.d.ts'],
+      exclude: ['**/*.spec.ts', '**/*.d.ts'],
     },
   },
 });
