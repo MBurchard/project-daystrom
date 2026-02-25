@@ -5,9 +5,12 @@ import {defineConfig} from 'vite';
 
 const host = process.env.TAURI_DEV_HOST;
 
-export default defineConfig(async () => ({
+export default defineConfig({
   root: 'modules/app',
   plugins: [vue()],
+  build: {
+    sourcemap: 'inline',
+  },
   resolve: {
     alias: {
       '@app': resolve(__dirname, 'modules/app/src'),
@@ -31,4 +34,4 @@ export default defineConfig(async () => ({
       ignored: ['**/modules/backend/**'],
     },
   },
-}));
+});
