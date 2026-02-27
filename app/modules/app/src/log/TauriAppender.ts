@@ -2,7 +2,7 @@ import type {ILogEvent} from '@mburchard/bit-log/definitions';
 import {AbstractBaseAppender} from '@mburchard/bit-log/appender/AbstractBaseAppender';
 import {debug, error, info, trace, warn} from '@tauri-apps/plugin-log';
 
-// Unit Separator (U+001F) as delimiter between logger name and message.
+// Unit Separator (U+001F) as a delimiter between the logger name and message.
 // The Rust formatter splits on this to extract the logger name.
 const SEP = '\x1F';
 
@@ -67,11 +67,10 @@ export class TauriAppender extends AbstractBaseAppender {
    * Forward a log event to the Rust backend via the appropriate plugin-log function.
    * @param event - the log event from bit-log
    */
-  async handle(event: ILogEvent): Promise<void> {
+  async doHandle(event: ILogEvent): Promise<void> {
     if (this.disabled || !this.willHandle(event)) {
       return;
     }
-
     const levelStr = typeof event.level === 'string' ? event.level : 'INFO';
     const logFn = levelFunctions[levelStr] ?? info;
 

@@ -3,9 +3,9 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "@mburchard/bit-log": "^1.0.0"
+    "@mburchard/bit-log": "^1.2.2"
   },
   "devDependencies": {
-    "@types/node": "^24.10.13"
+    "@types/node": "^24.10.15"
   }
 }

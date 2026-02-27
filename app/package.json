@@ -17,21 +17,21 @@
     "preview:frontend": "vite preview"
   },
   "dependencies": {
-    "@mburchard/bit-log": "^1.2.0",
+    "@mburchard/bit-log": "^1.2.2",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-log": "^2.8.0",
     "pinia": "^3.0.4",
-    "vue": "^3.5.28"
+    "vue": "^3.5.29"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",
-    "@types/node": "^24.10.13",
+    "@types/node": "^24.10.15",
     "@vitejs/plugin-vue": "^6.0.4",
     "@vitest/coverage-v8": "^4.0.18",
     "@vue/tsconfig": "^0.8.1",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.18",
-    "vue-tsc": "^3.2.4"
+    "vue-tsc": "^3.2.5"
   }
 }
