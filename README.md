@@ -1,9 +1,19 @@
 # Project Daystrom
 
+![Crafted with Rust](https://img.shields.io/badge/Crafted_with-Rust-000000?logo=rust&logoColor=white)
+![Crafted with TypeScript](https://img.shields.io/badge/Crafted_with-TypeScript-3178C6?logo=typescript&logoColor=white)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?logo=gnu&logoColor=white)](https://www.gnu.org/licenses/gpl-3.0)
 [![CI](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml/badge.svg)](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml)
 
 An assistant app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
-built on top of the fantastic [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
+built on top of the [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
+
+## Acknowledgements
+
+This project would not exist without the work of [netniV](https://github.com/netniV),
+[tashcan](https://github.com/tashcan), and the entire STFC Community Mod team. The mod code in `stfc-mod/`
+is imported from [netniV/stfc-mod](https://github.com/netniV/stfc-mod) and kept as close to upstream
+as practical, so that improvements can be shared with the community.
 
 ## What is this?
 
@@ -11,14 +21,24 @@ Project Daystrom picks up where the Community Mod leaves off. The mod already pr
 improvements — hotkeys, UI tweaks, zoom presets, data sync, and more. Project Daystrom builds on that foundation
 and adds:
 
-- **A native app** (Tauri 2 + Vue 3) that runs alongside the game on macOS and Windows
-- **A cross-platform launcher** replacing the platform-specific launchers (Swift on macOS, proxy DLL on Windows)
-  with a single unified solution
-- **Dashboard, alerts, and advisor plugins** for live fleet overview, event notifications, and upgrade
-  recommendations
+- **A native app** (Tauri 2 + Vue 3) that runs alongside the game on macOS (Windows planned)
+- **A cross-platform launcher** replacing the platform-specific launchers (Swift on macOS,
+  proxy DLL on Windows) with a single unified solution that handles entitlement patching,
+  mod injection, and game launch
+- **Game update detection** via the Scopely update API, with in-app update prompts
+- **Process monitoring** that automatically detects game and launcher activity
+- **System tray integration** with minimize-to-tray and quit protection
+- **Dashboard, alerts, and advisor plugins** (planned) for live fleet overview, event
+  notifications, and upgrade recommendations
 
 The mod code lives in `stfc-mod/` and is kept in sync with the upstream Community Mod. Improvements and bug
 fixes flow both ways — anything useful to the broader community gets contributed back.
+
+## Built with
+
+- [Tauri 2](https://tauri.app/) (Rust backend)
+- [Vue 3](https://vuejs.org/) + [Vite](https://vite.dev/) (frontend)
+- [@mburchard/bit-log](https://www.npmjs.com/package/@mburchard/bit-log) (structured logging)
 
 ## Project Structure
 
@@ -47,17 +67,10 @@ project-daystrom/
 └── README.md
 ```
 
-## Acknowledgements
-
-This project would not exist without the work of [netniV](https://github.com/netniV),
-[tashcan](https://github.com/tashcan), and the entire STFC Community Mod team. The mod code in `stfc-mod/`
-is imported from [netniV/stfc-mod](https://github.com/netniV/stfc-mod) and kept as close to upstream
-as practical, so that improvements can be shared with the community.
-
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) >= 24 (pinned via `.nvmrc`)
-- [pnpm](https://pnpm.io/) >= 10 (pinned via `packageManager` in root `package.json`)
+- [Node.js](https://nodejs.org/) >= 24
+- [pnpm](https://pnpm.io/) >= 10
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - [XMake](https://xmake.io/) (for building the mod)
 - [CMake](https://cmake.org/) (required by xmake to build C++ dependencies like spud)
@@ -116,14 +129,6 @@ The built dylib lands at `stfc-mod/build/macosx/arm64/release/libstfc-community-
 | `pnpm icons`                      | Generate Tauri icons from `resources/daystrom.png`   |
 | `pnpm dev`                        | Start Tauri app (Vite + Rust) with hot reload        |
 
-### App-local (run from `app/` or via `pnpm --filter daystrom-app`)
-
-| Script             | Description                                         |
-|--------------------|-----------------------------------------------------|
-| `dev:frontend`     | Start Vite dev server only (browser on :1420)       |
-| `preview:frontend` | Preview production build in browser                 |
-| `build:frontend`   | Production build (icons + typecheck + Vite)         |
-
 ### Path Aliases
 
 | Alias          | Resolves to                   |
@@ -151,70 +156,6 @@ pub struct GameStatus { /* ... */ }
 import type {GameStatus} from '@generated/GameStatus';
 ```
 
-### Logging
-
-Unified logging across frontend (TypeScript) and backend (Rust). The frontend uses
-[@mburchard/bit-log](https://www.npmjs.com/package/@mburchard/bit-log) with a custom `TauriAppender`
-that forwards log events to the Rust backend via `tauri-plugin-log` IPC:
-
-```text
-{ISO 8601 timestamp} {LEVEL} [{loggerName}] ({origin}: {filePath}: {line}): {message}
-```
-
-Example output:
-
-```text
-2026-02-25T18:04:22.487+01:00 INFO  [Startup             ] (Backend : lib.rs                        :   20): Project Daystrom 0.2.0 initialised
-2026-02-25T18:04:22.649+01:00 INFO  [Main                ] (Frontend: main.ts                       :   14): Project Daystrom 0.2.0 frontend started
-```
-
-#### Frontend usage
-
-```typescript
-import {getLogger} from '@app/log';
-
-const log = getLogger('Auth');
-log.info('User logged in');
-log.debug('Session details:', {token: '...'});
-log.error('Login failed');
-```
-
-#### Log output targets
-
-| Target          | Description                                                    |
-|-----------------|----------------------------------------------------------------|
-| Stdout          | Terminal / IDE console (frontend + backend via Rust formatter) |
-| Browser console | Via bit-log `ConsoleAppender` (frontend logs only)             |
-| Log file        | Platform log directory (see below)                             |
-
-### App directories
-
-All runtime data uses platform-standard locations based on the app identifier `mbur.project-daystrom`:
-
-| Purpose | macOS                                                  | Windows                                      |
-|---------|--------------------------------------------------------|----------------------------------------------|
-| Logs    | `~/Library/Logs/mbur.project-daystrom/`                | `%LOCALAPPDATA%\mbur.project-daystrom\logs\` |
-| Config  | `~/Library/Application Support/mbur.project-daystrom/` | `%APPDATA%\mbur.project-daystrom\`           |
-
-### Format constants (backend)
-
-Adjustable in `modules/backend/src/logging.rs`:
-
-| Constant            | Default | Description                                     |
-|---------------------|---------|-------------------------------------------------|
-| `LOGGER_NAME_WIDTH` | 20      | Display width for the `[loggerName]` column     |
-| `FILE_PATH_WIDTH`   | 30      | Display width for the file path (mid-truncated) |
-
-### Plugins
-
-The app is designed around a plugin architecture. Each plugin is a self-contained Vue module
-that provides a specific feature set:
-
-| Plugin        | Purpose                                                          |
-|---------------|------------------------------------------------------------------|
-| **dashboard** | Live overview of fleet, resources, and base status               |
-| **alerts**    | Configurable notifications for in-game events                    |
-| **advisor**   | Recommendations for research, officer assignments, and upgrades  |
 
 Plugins live in `modules/plugins/` and are loaded by the main app. The architecture is
 intentionally modular so that individual plugins can be developed and published independently.
@@ -225,54 +166,6 @@ intentionally modular so that individual plugins can be developed and published 
 |---------------------|---------|----------------------------------------------------------|
 | `DAYSTROM_DEVTOOLS` | `1`     | Set to `0` to suppress DevTools in debug builds          |
 
-## Code Style
-
-### File structure
-
-Every source file follows a consistent top-to-bottom layout:
-
-1. **Imports** — alphabetically sorted
-2. **Module-level constants** — values that help understand the file at a glance
-3. **Code** — ordered by logical flow (entry points first, then implementation details top-down);
-   constants that only belong to a single function/class live directly above it, not at the top
-4. **Re-exports** — clearly marked with a section comment
-5. **Tests** — always last, clearly marked with a section comment
-
-Larger files use section comments (`// ---- Section Name ----`) to separate logical areas.
-
-When a section grows complex enough to stand on its own, extract it into a separate file.
-
-### Import order
-
-**TypeScript** (enforced by ESLint / @antfu/eslint-config):
-
-```typescript
-import type {Foo} from '@generated/Foo'; // 1. Type imports
-import {bar} from '@app/utils'; // 2. Packages (node:*, npm, path aliases — alphabetical)
-import {createApp} from 'vue';
-import {helper} from './helper'; // 3. Relative imports
-```
-
-**Rust:**
-
-```rust
-use std::fs;                                     // 1. Standard library
-
-use serde::Serialize;                            // 2. External crates (alphabetical)
-use tauri::plugin::TauriPlugin;
-
-use crate::config::Settings;                     // 3. Crate-local
-```
-
-### Documentation comments
-
-Every public and non-trivial function, method, and type gets a doc comment following the language's
-convention:
-
-- **TypeScript:** JSDoc blocks (never single-line), with `@param` and `@returns`
-- **Rust:** `///` doc comments directly above the item
-
 ## License
 
-This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html),
-the same license as the STFC Community Mod it builds upon.
+This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).

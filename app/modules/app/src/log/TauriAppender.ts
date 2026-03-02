@@ -1,5 +1,6 @@
-import type {ILogEvent} from '@mburchard/bit-log/definitions';
+import type {ILogEvent, LogLevel} from '@mburchard/bit-log/definitions';
 import {AbstractBaseAppender} from '@mburchard/bit-log/appender/AbstractBaseAppender';
+import {toLogLevelString} from '@mburchard/bit-log/definitions';
 import {debug, error, info, trace, warn} from '@tauri-apps/plugin-log';
 
 // Unit Separator (U+001F) as a delimiter between the logger name and message.
@@ -7,9 +8,9 @@ import {debug, error, info, trace, warn} from '@tauri-apps/plugin-log';
 const SEP = '\x1F';
 
 /**
- * Map bit-log level strings to their corresponding `@tauri-apps/plugin-log` IPC functions.
+ * Map bit-log levels to their corresponding `@tauri-apps/plugin-log` IPC functions.
  */
-const levelFunctions: Record<string, typeof info> = {
+const levelFunctions: Partial<Record<LogLevel, typeof info>> = {
   TRACE: trace,
   DEBUG: debug,
   INFO: info,
@@ -68,11 +69,10 @@ export class TauriAppender extends AbstractBaseAppender {
    * @param event - the log event from bit-log
    */
   async doHandle(event: ILogEvent): Promise<void> {
-    if (this.disabled || !this.willHandle(event)) {
+    if (this.disabled) {
       return;
     }
-    const levelStr = typeof event.level === 'string' ? event.level : 'INFO';
-    const logFn = levelFunctions[levelStr] ?? info;
+    const logFn = levelFunctions[toLogLevelString(event.level) as LogLevel] ?? info;
 
     // Build the message string from the payload
     let message: string;

@@ -155,12 +155,58 @@ const ENTITLEMENTS_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>"#;
 
+/// Recursively remove leftover `.temp` files from the app bundle's `Contents` directory.
+///
+/// The Scopely updater sometimes leaves behind files like `Info.plist.temp`
+/// which cause `codesign` to fail with "code object is not signed at all".
+/// Searches the entire `Contents/` tree, matching the stfc-mod macOS launcher approach.
+fn clean_bundle_temp_files(executable: &Path) {
+    // executable is .../Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command
+    // We need .../Star Trek Fleet Command.app/Contents/
+    let contents_dir = executable
+        .parent() // .../Contents/MacOS
+        .and_then(|p| p.parent()); // .../Contents
+
+    let Some(contents_dir) = contents_dir else { return };
+
+    remove_temp_files_recursive(contents_dir);
+}
+
+/// Walk a directory tree and remove all files ending in `.temp`.
+fn remove_temp_files_recursive(dir: &Path) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            log_warn!("Could not read directory {}: {e}", dir.display());
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            remove_temp_files_recursive(&path);
+        } else {
+            let name = entry.file_name();
+            if name.to_string_lossy().ends_with(".temp") {
+                log_info!("Removing leftover temp file: {}", path.display());
+                if let Err(e) = fs::remove_file(&path) {
+                    log_warn!("Could not remove temp file {}: {e}", path.display());
+                }
+            }
+        }
+    }
+}
+
 /// Re-sign the game executable with the four required entitlements for mod injection.
 ///
-/// Writes a temporary plist file, runs `codesign --force --sign -` with it, then verifies
-/// the result by calling `check()` again.
+/// Cleans up leftover temp files from the Scopely updater first, then writes a temporary
+/// plist file, runs `codesign --force --sign -` with it, and verifies the result.
 pub fn patch(executable: &Path) -> Result<(), String> {
     log_info!("Patching entitlements on {}", executable.display());
+
+    // Clean up Scopely updater leftovers that would make codesign fail
+    clean_bundle_temp_files(executable);
 
     let plist_path = std::env::temp_dir().join("daystrom-entitlements.plist");
 
@@ -186,7 +232,8 @@ pub fn patch(executable: &Path) -> Result<(), String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("codesign failed: {stderr}"));
+        log_error!("codesign failed: {stderr}");
+        return Err("Entitlement patching failed (see log for details)".to_string());
     }
 
     // Verify the patch worked
@@ -198,6 +245,7 @@ pub fn patch(executable: &Path) -> Result<(), String> {
         let names: Vec<_> = status.missing.iter()
             .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
             .collect();
-        Err(format!("Entitlements still missing after patch: {}", names.join(", ")))
+        log_error!("Entitlements still missing after patch: {}", names.join(", "));
+        Err("Entitlement patching incomplete (see log for details)".to_string())
     }
 }

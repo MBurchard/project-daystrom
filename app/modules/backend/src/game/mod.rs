@@ -40,30 +40,49 @@ pub mod entitlements {
     }
 }
 pub mod launcher;
+pub mod version;
 
 use_log!("Game");
 
 /// Location of an STFC installation on the local machine.
 pub struct GameInfo {
-    /// Root directory of the game installation (the `GAME_PATH` from Xsolla's launcher settings).
+    /// Root directory of the game installation (the `GAME_PATH` from the Scopely launcher settings).
     pub install_dir: PathBuf,
     /// Full path to the game's main executable binary.
     pub executable: PathBuf,
+    /// Installed game version from the `.version` file, if available.
+    pub installed_version: Option<u32>,
 }
 
 /// Detect whether STFC is installed on this machine.
+///
 /// Returns `None` if the game is not found — errors are logged internally and never block startup.
+/// When found, also reads the installed version from the `.version` file.
 pub fn detect() -> Option<GameInfo> {
     #[cfg(target_os = "macos")]
-    {
-        macos::detect()
-    }
+    let base = macos::detect();
 
     #[cfg(not(target_os = "macos"))]
-    {
+    let base: Option<(PathBuf, PathBuf)> = {
         log::warn!("Game detection not implemented for this platform");
         None
-    }
+    };
+
+    let (install_dir, executable) = base?;
+    let installed_version = version::read_installed(&install_dir);
+    Some(GameInfo { install_dir, executable, installed_version })
+}
+
+/// Check whether the Scopely launcher is currently running.
+///
+/// The launcher can modify game files (updates), so game actions should be blocked while it runs.
+// TODO(windows): Detect the launcher process on Windows.
+pub fn is_launcher_running() -> bool {
+    Command::new("pgrep")
+        .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/launcher"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
 }
 
 /// Locate the bundled mod library in the app's resource directory.
@@ -78,7 +97,20 @@ pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     }
 }
 
+/// Check whether the STFC game process is currently running.
+///
+/// Uses a hardcoded process name so it can be called without filesystem I/O.
+// TODO(windows): Adapt the process name for Windows.
+pub fn is_game_running() -> bool {
+    Command::new("pgrep")
+        .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
 /// Check whether a process matching the given executable path is currently running.
+///
 /// Uses `pgrep -f` to search for the executable name.
 pub fn is_running(executable: &Path) -> bool {
     let name = executable
