@@ -44,39 +44,39 @@ describe('tauriAppender', () => {
 
   describe('level routing', () => {
     it('routes TRACE to trace()', async () => {
-      await appender.handle(makeEvent({level: 'TRACE'}));
+      await (appender as any).doHandle(makeEvent({level: 'TRACE'}));
       expect(mockTrace).toHaveBeenCalledOnce();
     });
 
     it('routes DEBUG to debug()', async () => {
-      await appender.handle(makeEvent({level: 'DEBUG'}));
+      await (appender as any).doHandle(makeEvent({level: 'DEBUG'}));
       expect(mockDebug).toHaveBeenCalledOnce();
     });
 
     it('routes INFO to info()', async () => {
-      await appender.handle(makeEvent({level: 'INFO'}));
+      await (appender as any).doHandle(makeEvent({level: 'INFO'}));
       expect(mockInfo).toHaveBeenCalledOnce();
     });
 
     it('routes WARN to warn()', async () => {
-      await appender.handle(makeEvent({level: 'WARN'}));
+      await (appender as any).doHandle(makeEvent({level: 'WARN'}));
       expect(mockWarn).toHaveBeenCalledOnce();
     });
 
     it('routes ERROR to error()', async () => {
-      await appender.handle(makeEvent({level: 'ERROR'}));
+      await (appender as any).doHandle(makeEvent({level: 'ERROR'}));
       expect(mockError).toHaveBeenCalledOnce();
     });
 
     it('routes FATAL to error()', async () => {
-      await appender.handle(makeEvent({level: 'FATAL'}));
+      await (appender as any).doHandle(makeEvent({level: 'FATAL'}));
       expect(mockError).toHaveBeenCalledOnce();
     });
   });
 
   describe('message protocol', () => {
     it('builds \\x1F-delimited message from loggerName and payload', async () => {
-      await appender.handle(makeEvent({
+      await (appender as any).doHandle(makeEvent({
         loggerName: 'Auth',
         payload: ['User logged in'],
       }));
@@ -87,7 +87,7 @@ describe('tauriAppender', () => {
     });
 
     it('joins multiple payload items with spaces', async () => {
-      await appender.handle(makeEvent({
+      await (appender as any).doHandle(makeEvent({
         payload: ['count:', 42],
       }));
       expect(mockInfo).toHaveBeenCalledWith(
@@ -97,7 +97,7 @@ describe('tauriAppender', () => {
     });
 
     it('evaluates lazy payload functions', async () => {
-      await appender.handle(makeEvent({
+      await (appender as any).doHandle(makeEvent({
         payload: [() => 'lazy value'],
       }));
       expect(mockInfo).toHaveBeenCalledWith(
@@ -107,7 +107,7 @@ describe('tauriAppender', () => {
     });
 
     it('handles top-level lazy payload function', async () => {
-      await appender.handle(makeEvent({
+      await (appender as any).doHandle(makeEvent({
         payload: () => 'top-level lazy',
       }));
       expect(mockInfo).toHaveBeenCalledWith(
@@ -119,7 +119,7 @@ describe('tauriAppender', () => {
 
   describe('call-site handling', () => {
     it('strips browser origin from call-site file path', async () => {
-      await appender.handle(makeEvent({
+      await (appender as any).doHandle(makeEvent({
         callSite: {
           file: 'http://localhost:1420/modules/app/src/App.vue',
           line: 12,
@@ -133,7 +133,7 @@ describe('tauriAppender', () => {
     });
 
     it('passes non-URL file paths through unchanged', async () => {
-      await appender.handle(makeEvent({
+      await (appender as any).doHandle(makeEvent({
         callSite: {file: 'src/App.vue', line: 7, column: 1},
       }));
       expect(mockInfo).toHaveBeenCalledWith(
@@ -143,7 +143,7 @@ describe('tauriAppender', () => {
     });
 
     it('omits LogOptions when no call-site is present', async () => {
-      await appender.handle(makeEvent({callSite: undefined}));
+      await (appender as any).doHandle(makeEvent({callSite: undefined}));
       expect(mockInfo).toHaveBeenCalledWith(
         expect.any(String),
         undefined,
@@ -155,11 +155,11 @@ describe('tauriAppender', () => {
     it('disables itself after first IPC failure', async () => {
       mockInfo.mockRejectedValueOnce(new Error('Tauri not available'));
 
-      await appender.handle(makeEvent());
+      await (appender as any).doHandle(makeEvent());
       expect(mockInfo).toHaveBeenCalledOnce();
 
-      // Second call should be silently skipped
-      await appender.handle(makeEvent());
+      // The second call should be silently skipped
+      await (appender as any).doHandle(makeEvent());
       expect(mockInfo).toHaveBeenCalledOnce();
     });
   });

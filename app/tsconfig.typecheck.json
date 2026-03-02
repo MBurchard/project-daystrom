@@ -1,6 +1,8 @@
 {
   "extends": ["../tsconfig.base.json", "@vue/tsconfig/tsconfig.dom.json"],
   "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.typecheck.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
       "@app/*": ["modules/app/src/*"],
@@ -11,8 +13,6 @@
   },
   "include": [
     "modules/app/src/**/*.ts",
-    "modules/app/src/**/*.vue",
-    "vitest.config.ts",
-    "vite.config.ts"
+    "modules/app/src/**/*.vue"
   ]
 }

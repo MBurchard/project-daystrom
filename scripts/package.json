@@ -6,6 +6,6 @@
     "@mburchard/bit-log": "^1.2.2"
   },
   "devDependencies": {
-    "@types/node": "^24.10.15"
+    "@types/node": "^24.11.0"
   }
 }
