@@ -17,6 +17,17 @@ jobs:
       HAS_SIGNING_CERT: ${{ secrets.WINDOWS_PFX_BASE64 != '' }}
 
     steps:
+      - name: Diagnose signing tools
+        if: env.HAS_SIGNING_CERT == 'true'
+        run: |
+          Write-Host "=== Windows SDK versions ==="
+          Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64' |
+            ForEach-Object { Write-Host $_.FullName }
+          Write-Host "=== signtool.exe locations ==="
+          Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\signtool.exe' -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host $_.FullName }
+        shell: pwsh
+
       - name: Checkout repository
         uses: actions/checkout@v6
 
