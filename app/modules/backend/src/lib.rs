@@ -34,8 +34,8 @@ fn warn_quit_blocked(window: &tauri::WebviewWindow) {
 
 /// Bootstrap and run the Tauri application.
 ///
-/// Sets up logging, detects the STFC installation, checks entitlements,
-/// builds the system tray, and opens DevTools in debug builds.
+/// Sets up logging, builds the system tray, and opens DevTools in debug builds.
+/// Game detection runs lazily on the first `get_game_status` command from the frontend.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -44,31 +44,6 @@ pub fn run() {
         .setup(|app| {
             let version = &app.package_info().version;
             log_info!("Project Daystrom {version} initialised");
-
-            match game::detect() {
-                Some(info) => {
-                    match info.installed_version {
-                        Some(v) => log_info!("STFC found (v{v}): {}", info.executable.display()),
-                        None => log_info!("STFC found: {}", info.executable.display()),
-                    }
-
-                    let status = game::entitlements::check(&info.executable);
-                    if status.all_granted() {
-                        log_info!("Entitlements OK, mod injection ready");
-                    } else {
-                        let names: Vec<_> = status.missing.iter()
-                            .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
-                            .collect();
-                        log_warn!("Missing entitlements: {}", names.join(", "));
-                    }
-                }
-                None => log_warn!("STFC not found, game features will be unavailable"),
-            }
-
-            match game::find_mod_library(app.handle()) {
-                Some(path) => log_info!("Mod library found: {}", path.display()),
-                None => log_warn!("Mod library not bundled, run pnpm build:mod"),
-            }
 
             // ---- System Tray --------------------------------------------------------
 
