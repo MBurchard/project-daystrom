@@ -9,9 +9,8 @@ use tauri_plugin_log::{Builder, Target, TargetKind, TimezoneStrategy, fern};
 
 /// Create a named logger for the current scope, mirroring the frontend's `createLogger('Name')`.
 ///
-/// Generates `log_trace!`, `log_debug!`, `log_info!`, `log_warn!` and `log_error!` macros
-/// that automatically set the log target to the given name. The name appears in the
-/// `[loggerName]` column of the log output.
+/// Generates `log_trace!`, `log_debug!`, `log_info!`, `log_warn!` and `log_error!` macros that automatically set
+/// the log target to the given name. The name appears in the `[loggerName]` column of the log output.
 ///
 /// # Example
 ///
@@ -27,8 +26,8 @@ macro_rules! use_log {
     };
 }
 
-/// Implementation detail of [`use_log!`]. The extra `$d` parameter receives a literal `$` token
-/// so the inner macro definitions can use `$d(...)` to produce `$(...)` in their output.
+/// Implementation detail of [`use_log!`]. The extra `$d` parameter receives a literal `$` token so the inner
+/// macro definitions can use `$d(...)` to produce `$(...)` in their output.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __define_log_macros {
@@ -53,8 +52,8 @@ const LOG_FILE_NAME: &str = "project-daystrom";
 
 /// Build the tauri-plugin-log plugin with our custom format and targets.
 ///
-/// Performs log rotation before initialising the plugin, because the plugin opens its
-/// file handle in append mode — renaming afterwards would not take effect.
+/// Performs log rotation before initializing the plugin, because the plugin opens its file handle in append mode,
+/// so renaming afterward would not take effect.
 pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
     rotate_logs();
     init_runtime_rotation();
@@ -79,13 +78,12 @@ pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
 
 /// Rotate log files before the logging plugin opens its file handle.
 ///
-/// Parses the last timestamp from the current log file to decide whether rotation
-/// is needed. If the last entry is from before today, the file gets archived as
-/// `project-daystrom_YYYY-MM-DD.log` (using the parsed date, not filesystem metadata).
-/// Empty or missing log files are left alone.
-/// Archived logs older than [`MAX_LOG_AGE_DAYS`] are deleted.
+/// Parses the last timestamp from the current log file to decide whether rotation is needed. If the last entry is
+/// from before today, the file gets archived as `project-daystrom_YYYY-MM-DD.log` (using the parsed date, not
+/// filesystem metadata). Empty or missing log files are left alone. Archived logs older than [`MAX_LOG_AGE_DAYS`]
+/// are deleted.
 ///
-/// Errors go to stderr because the logger is not yet initialised.
+/// Errors go to stderr because the logger is not yet initialized.
 fn rotate_logs() {
     let Some(dir) = log_dir() else { return };
     if !dir.is_dir() {
@@ -124,13 +122,13 @@ struct RotationState {
     log_dir: PathBuf,
 }
 
-/// Global state for runtime log rotation, initialised by [`init_runtime_rotation`].
+/// Global state for runtime log rotation, initialized by [`init_runtime_rotation`].
 static ROTATION_STATE: Mutex<Option<RotationState>> = Mutex::new(None);
 
-/// Initialise the runtime rotation state with today's date and the log directory.
+/// Initialize the runtime rotation state with today's date and the log directory.
 ///
-/// Called once from [`build_plugin`] after the startup rotation has completed.
-/// On platforms without a log directory (non-macOS), this is a no-op.
+/// Called once from [`build_plugin`] after the startup rotation has completed. On platforms without a log directory
+/// (non-macOS), this is a no-op.
 fn init_runtime_rotation() {
     let Some(dir) = log_dir() else { return };
     let today = time::OffsetDateTime::now_local()
@@ -198,9 +196,9 @@ const MAX_LOG_AGE_DAYS: i64 = 30;
 
 /// Delete archived log files older than [`MAX_LOG_AGE_DAYS`].
 ///
-/// Recognises both our date-only archives (`project-daystrom_YYYY-MM-DD.log`) and the
-/// plugin's size-rotation archives (`project-daystrom_YYYY-MM-DD_HH-MM-SS.log`) by
-/// parsing only the first 10 characters after the prefix as a date.
+/// Recognizes both our date-only archives (`project-daystrom_YYYY-MM-DD.log`) and the plugin's size-rotation
+/// archives (`project-daystrom_YYYY-MM-DD_HH-MM-SS.log`) by parsing only the first 10 characters after the
+/// prefix as a date.
 fn cleanup_old_archives(dir: &Path, today: time::Date) {
     let date_fmt = time::macros::format_description!("[year]-[month]-[day]");
     let prefix = format!("{LOG_FILE_NAME}_");
@@ -236,14 +234,13 @@ fn cleanup_old_archives(dir: &Path, today: time::Date) {
 
 /// Rename plugin-rotated archives so timestamps reflect content start instead of rotation time.
 ///
-/// The plugin's size-based rotation creates files like `{LOG_FILE_NAME}_{date}_HH-MM-SS.log`
-/// where HH-MM-SS is the rotation (end) time. This function renames them so each file's
-/// timestamp indicates when its content begins:
+/// The plugin's size-based rotation creates files like `{LOG_FILE_NAME}_{date}_HH-MM-SS.log` where HH-MM-SS is
+/// the rotation (end) time. This function renames them so each file's timestamp indicates when its content begins:
 /// - The earliest file gets `_00-00-00` (midnight / start of day)
 /// - Each subsequent file gets the original timestamp of its predecessor
 ///
-/// Returns the last original timestamp (used as time suffix for the copy-truncate archive),
-/// or `None` if no plugin-rotated files were found (or already normalized).
+/// Returns the last original timestamp (used as time suffix for the copy-truncate archive), or `None` if no
+/// plugin-rotated files were found (or already normalized).
 fn normalize_plugin_archives(dir: &Path, date_str: &str) -> Option<String> {
     let prefix = format!("{LOG_FILE_NAME}_{date_str}_");
     let entries = fs::read_dir(dir).ok()?;
@@ -288,11 +285,10 @@ fn normalize_plugin_archives(dir: &Path, date_str: &str) -> Option<String> {
 
 /// Copy-truncate the current log file into a dated archive.
 ///
-/// Uses `fs::copy` + `set_len(0)` instead of rename because the logging plugin holds
-/// the file handle open. When `time_suffix` is provided, the archive includes a time
-/// component (`_YYYY-MM-DD_HH-MM-SS.log`); otherwise it uses date-only naming.
-/// Skips silently if the log file is missing, has no valid timestamps, or the target
-/// archive already exists.
+/// Uses `fs::copy` + `set_len(0)` instead of rename because the logging plugin holds the file handle open. When
+/// `time_suffix` is provided, the archive includes a time component (`_YYYY-MM-DD_HH-MM-SS.log`); otherwise it
+/// uses date-only naming. Skips silently if the log file is missing, has no valid timestamps, or the target archive
+/// already exists.
 fn copy_truncate_rotation(dir: &Path, time_suffix: Option<&str>) {
     let log_file = dir.join(format!("{LOG_FILE_NAME}.log"));
     if !log_file.exists() {
@@ -328,9 +324,8 @@ fn copy_truncate_rotation(dir: &Path, time_suffix: Option<&str>) {
 
 /// Check whether the date has changed since the last log event and rotate if needed.
 ///
-/// Called at the start of every [`format_log`] invocation. The fast path (same date)
-/// is a single mutex lock + date comparison. On date change, performs a copy-truncate
-/// rotation followed by archive cleanup.
+/// Called at the start of every [`format_log`] invocation. The fast path (same date) is a single mutex lock + date
+/// comparison. On date change, performs a copy-truncate rotation followed by archive cleanup.
 fn check_runtime_rotation() {
     let mut guard = match ROTATION_STATE.lock() {
         Ok(g) => g,
@@ -361,10 +356,9 @@ const TAIL_READ_SIZE: u64 = 4096;
 
 /// Extract the date from the last timestamped line in a log file.
 ///
-/// Reads only the last [`TAIL_READ_SIZE`] bytes to avoid loading large files into memory.
-/// Scans backwards through those lines looking for one starting with an ISO 8601
-/// date (`YYYY-MM-DD`). Returns the parsed date, or `None` if the file is empty,
-/// missing, or contains no valid timestamp.
+/// Reads only the last [`TAIL_READ_SIZE`] bytes to avoid loading large files into memory. Scans backwards through
+/// those lines looking for one starting with an ISO 8601 date (`YYYY-MM-DD`). Returns the parsed date, or `None`
+/// if the file is empty, missing, or contains no valid timestamp.
 fn last_log_date(path: &Path) -> Option<time::Date> {
     use std::io::{Read, Seek, SeekFrom};
 
@@ -397,22 +391,20 @@ fn last_log_date(path: &Path) -> Option<time::Date> {
 
 // ---- Log formatting -------------------------------------------------------------
 
-/// Unit Separator — delimiter between logger name and message from JS frontend.
+/// Unit Separator, used as delimiter between logger name and message from the JS frontend.
 const SEP: char = '\x1F';
 
-/// Display width for the logger name in log output.
-/// Matches bit-log's default. Names are right-padded or left-truncated to this width.
+/// Display width for the logger name in log output. Matches bit-log's default. Names are right-padded or
+/// left-truncated to this width.
 const LOGGER_NAME_WIDTH: usize = 20;
 
-/// Display width for the file path in log output.
-/// Paths longer than this are middle-truncated with "...".
+/// Display width for the file path in log output. Paths longer than this are middle-truncated with "...".
 const FILE_PATH_WIDTH: usize = 30;
 
-/// Build the log line matching bit-log's format:
-/// `{timestamp} {LEVEL} [{loggerName}] ({file}:{line}): {message}`
+/// Build the log line matching bit-log's format: `{timestamp} {LEVEL} [{loggerName}] ({file}:{line}): {message}`
 ///
-/// For JS-originated logs, the logger name is embedded in the message as `name\x1Fmessage`.
-/// For Rust-originated logs, `record.target()` is used as the logger name.
+/// For JS-originated logs, the logger name is embedded in the message as `name\x1Fmessage`. For Rust-originated
+/// logs, `record.target()` is used as the logger name.
 fn format_log(
     callback: fern::FormatCallback,
     message: &std::fmt::Arguments,
@@ -451,7 +443,7 @@ fn format_timestamp() -> String {
     now.format(&format).unwrap_or_else(|_| "????-??-??T??:??:??.???+??:??".to_string())
 }
 
-/// Colourise a log level string matching bit-log's colour scheme:
+/// Colorize a log level string matching bit-log's color scheme:
 /// TRACE=dark gray, DEBUG=gray, INFO=green, WARN=yellow, ERROR=red
 fn coloured_level(level: Level) -> String {
     let tag = fit(&level.to_string(), 5);
@@ -464,8 +456,8 @@ fn coloured_level(level: Level) -> String {
     }
 }
 
-/// Pad or left-truncate a string to exactly `width` characters.
-/// Truncates from the left (keeps the end), pads on the right.
+/// Pad or left-truncate a string to exactly `width` characters. Truncates from the left (keeps the end), pads
+/// on the right.
 fn fit(s: &str, width: usize) -> String {
     let char_count = s.chars().count();
     if char_count > width {
@@ -475,9 +467,8 @@ fn fit(s: &str, width: usize) -> String {
     }
 }
 
-/// Pad or middle-truncate a path to exactly `width` characters.
-/// Keeps the beginning and end of the path, replaces the middle with "...".
-/// Short strings are right-padded with spaces.
+/// Pad or middle-truncate a path to exactly `width` characters. Keeps the beginning and end of the path, replaces
+/// the middle with "...". Short strings are right-padded with spaces.
 fn fit_path(s: &str, width: usize) -> String {
     let char_count = s.chars().count();
     if char_count <= width {
@@ -485,7 +476,7 @@ fn fit_path(s: &str, width: usize) -> String {
     }
     // 3 chars for "...", split remaining space: more at end (filename matters most)
     let available = width - 3;
-    let end_len = (available + 1) / 2;
+    let end_len = available.div_ceil(2);
     let start_len = available - end_len;
     let start: String = s.chars().take(start_len).collect();
     let end: String = s.chars().skip(char_count - end_len).collect();
@@ -514,7 +505,7 @@ mod tests {
         )
     }
 
-    /// Mutex to serialise tests that read/write the global [`ROTATION_STATE`].
+    /// Mutex to serialize tests that read/write the global [`ROTATION_STATE`].
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Return today's date.

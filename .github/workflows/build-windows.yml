@@ -24,8 +24,11 @@ jobs:
           Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64' |
             ForEach-Object { Write-Host $_.FullName }
           Write-Host "=== signtool.exe locations ==="
-          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\signtool.exe' -ErrorAction SilentlyContinue |
-            Sort-Object { [version]($_.Directory.Parent.Name) } -Descending | Select-Object -First 1
+          $signtool = Get-ChildItem `
+            'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\signtool.exe' `
+            -ErrorAction SilentlyContinue |
+            Sort-Object { [version]($_.Directory.Parent.Name) } -Descending |
+            Select-Object -First 1
           if (-not $signtool) { throw 'signtool.exe not found in any Windows SDK' }
           Write-Host "Using $($signtool.FullName)"
           "SIGNTOOL_PATH=$($signtool.FullName)" >> $env:GITHUB_ENV

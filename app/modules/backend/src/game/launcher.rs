@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::process::Command;
 
 use super::GameInfo;
 use crate::use_log;
@@ -15,8 +16,6 @@ const LAUNCHER_APP: &str = "/Applications/Star Trek Fleet Command.app";
 /// Returns an error if the game is already running or the process fails to spawn.
 #[cfg(target_os = "macos")]
 pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
-    use std::process::Command;
-
     if super::is_running(&game.executable) {
         return Err("Game is already running".to_string());
     }
@@ -48,8 +47,6 @@ pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
 /// automatically (DLL proxy injection).
 #[cfg(target_os = "windows")]
 pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
-    use std::process::Command;
-
     if super::is_running(&game.executable) {
         return Err("Game is already running".to_string());
     }
@@ -85,8 +82,6 @@ pub fn launch(_game: &GameInfo, _mod_library: &Path) -> Result<(), String> {
 /// On macOS, uses `open` to launch the `.app` bundle.
 /// On Windows, locates the launcher executable via `find_launcher()` and spawns it directly.
 pub fn open_updater() -> Result<(), String> {
-    use std::process::Command;
-
     log_info!("Opening Scopely launcher for update");
 
     #[cfg(target_os = "macos")]
