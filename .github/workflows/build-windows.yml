@@ -17,15 +17,18 @@ jobs:
       HAS_SIGNING_CERT: ${{ secrets.WINDOWS_PFX_BASE64 != '' }}
 
     steps:
-      - name: Diagnose signing tools
+      - name: Locate signtool.exe
         if: env.HAS_SIGNING_CERT == 'true'
         run: |
           Write-Host "=== Windows SDK versions ==="
           Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64' |
             ForEach-Object { Write-Host $_.FullName }
           Write-Host "=== signtool.exe locations ==="
-          Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\signtool.exe' -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host $_.FullName }
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\signtool.exe' -ErrorAction SilentlyContinue |
+            Sort-Object { [version]($_.Directory.Parent.Name) } -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found in any Windows SDK' }
+          Write-Host "Using $($signtool.FullName)"
+          "SIGNTOOL_PATH=$($signtool.FullName)" >> $env:GITHUB_ENV
         shell: pwsh
 
       - name: Checkout repository
@@ -98,11 +101,9 @@ jobs:
       - name: Sign NSIS installer
         if: env.HAS_SIGNING_CERT == 'true'
         run: |
-          $sdkDir = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64' |
-            Sort-Object Name -Descending | Select-Object -First 1
           $exe = Get-ChildItem app/modules/backend/target/release/bundle/nsis/*.exe |
             Select-Object -First 1
-          & "$($sdkDir.FullName)\signtool.exe" sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /a $exe.FullName
+          & $env:SIGNTOOL_PATH sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /a $exe.FullName
           Write-Host "Signed $($exe.Name)"
         shell: pwsh
 
