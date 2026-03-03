@@ -111,7 +111,7 @@ original Swift launcher, which we don't need — Project Daystrom replaces it.
 
 ## Scripts
 
-### Workspace root (run from project root)
+### Workspace root (run from the project root)
 
 | Script                            | Description                                          |
 |-----------------------------------|------------------------------------------------------|
@@ -139,6 +139,55 @@ original Swift launcher, which we don't need — Project Daystrom replaces it.
 | `@app/*`       | `modules/app/src/*`           |
 | `@generated/*` | `modules/app/src/generated/*` |
 | `@resources/*` | `resources/*`                 |
+
+## Windows Code Signing (optional)
+
+The GitHub workflow supports optional code signing for the NSIS installer. It requires a self-signed code signing
+certificate and two repository secrets.
+
+### Create a self-signed certificate
+
+```powershell
+New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Your Name, Code Signing" `
+  -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
+```
+
+### Export as PFX
+
+The thumbprint is shown when creating the certificate. You can also find it via:
+
+```powershell
+Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert
+```
+
+```powershell
+$cert = Get-ChildItem Cert:\CurrentUser\My\<thumbprint>
+$pw = Read-Host -AsSecureString "PFX password"
+Export-PfxCertificate -Cert $cert -FilePath daystrom.pfx -Password $pw
+```
+
+### Verify the PFX
+
+```powershell
+certutil -dump daystrom.pfx
+```
+
+### Configure GitHub Secrets
+
+Encode the PFX as Base64 and copy to the clipboard.\
+Note that PowerShell resolves relative paths from the user's home directory, not from the current working directory.\
+Use an absolute path to avoid surprises.\
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("<path-to-pfx>")) | Set-Clipboard
+```
+
+Then set these repository secrets in GitHub:
+
+| Secret                 | Value                          |
+|------------------------|--------------------------------|
+| `WINDOWS_PFX_BASE64`   | Base64-encoded PFX (clipboard) |
+| `WINDOWS_PFX_PASSWORD` | The password from the export   |
 
 ## App (Tauri + Vue 3 + Vite)
 
