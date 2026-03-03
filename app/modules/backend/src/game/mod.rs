@@ -213,6 +213,33 @@ pub fn deploy_mod(install_dir: &Path, mod_library: &Path) -> Result<(), String> 
     Ok(())
 }
 
+/// Remove the deployed mod and its runtime artifacts from the game directory.
+///
+/// Deletes `version.dll`, `community_patch.log`, and `community_patch_runtime.vars`.
+/// The settings file (`community_patch_settings.toml`) is intentionally kept.
+/// Returns an error if `version.dll` does not exist or cannot be deleted.
+#[cfg(target_os = "windows")]
+pub fn remove_mod(install_dir: &Path) -> Result<(), String> {
+    let dll = install_dir.join("version.dll");
+    std::fs::remove_file(&dll).map_err(|e| {
+        log_error!("Failed to remove mod from {}: {e}", dll.display());
+        format!("Failed to remove mod: {e}")
+    })?;
+    log_info!("Removed {}", dll.display());
+
+    // Clean up runtime artifacts (best-effort, may not exist if mod was never run)
+    for name in ["community_patch.log", "community_patch_runtime.vars"] {
+        let path = install_dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => log_info!("Removed {}", path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log_warn!("Could not remove {}: {e}", path.display()),
+        }
+    }
+
+    Ok(())
+}
+
 /// Check whether the STFC game process is currently running.
 ///
 /// Uses a hardcoded process name so it can be called without filesystem I/O.

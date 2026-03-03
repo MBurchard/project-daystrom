@@ -311,6 +311,33 @@ describe('useGameState', () => {
       });
     });
 
+    describe('canRemoveMod', () => {
+      it('returns true when installed, mod deployed, nothing running', async () => {
+        const {state} = await initWithStatus({mod_deployed: true});
+        expect(state.canRemoveMod.value).toBeTruthy();
+      });
+
+      it('returns false when not installed', async () => {
+        const {state} = await initWithStatus({installed: false});
+        expect(state.canRemoveMod.value).toBeFalsy();
+      });
+
+      it('returns false when mod is not deployed', async () => {
+        const {state} = await initWithStatus({mod_deployed: false});
+        expect(state.canRemoveMod.value).toBeFalsy();
+      });
+
+      it('returns false when game is running', async () => {
+        const {state} = await initWithStatus({mod_deployed: true, game_running: true});
+        expect(state.canRemoveMod.value).toBeFalsy();
+      });
+
+      it('returns false when launcher is running', async () => {
+        const {state} = await initWithStatus({mod_deployed: true, launcher_running: true});
+        expect(state.canRemoveMod.value).toBeFalsy();
+      });
+    });
+
     describe('canLaunchUpdater', () => {
       it('returns true when update available and launcher not running', async () => {
         const {state} = await initWithUpdateAvailable();
@@ -422,6 +449,56 @@ describe('useGameState', () => {
         // The second call succeeds
         mockInvoke.mockResolvedValue(makeGameStatus());
         state.installMod();
+        expect(state.actionError.value).toBeNull();
+      });
+    });
+
+    describe('removeMod', () => {
+      it('updates status on success', async () => {
+        const newStatus = makeGameStatus({mod_deployed: false});
+        mockInvoke.mockResolvedValue(newStatus);
+
+        const state = useGameState();
+        state.removeMod();
+        await vi.waitFor(() => {
+          expect(state.actionPending.value).toBe(false);
+        });
+
+        expect(state.status.value).toEqual(newStatus);
+        expect(state.actionError.value).toBeNull();
+      });
+
+      it('sets actionError on failure', async () => {
+        mockInvoke.mockRejectedValue(new Error('file in use'));
+
+        const state = useGameState();
+        state.removeMod();
+        await vi.waitFor(() => {
+          expect(state.actionPending.value).toBe(false);
+        });
+
+        expect(state.actionError.value).toContain('file in use');
+      });
+
+      it('manages actionPending lifecycle', () => {
+        mockInvoke.mockReturnValue(new Promise(() => {})); // never resolves
+
+        const state = useGameState();
+        expect(state.actionPending.value).toBe(false);
+        state.removeMod();
+        expect(state.actionPending.value).toBe(true);
+      });
+
+      it('clears previous actionError', async () => {
+        mockInvoke.mockRejectedValueOnce(new Error('first error'));
+        const state = useGameState();
+        state.removeMod();
+        await vi.waitFor(() => {
+          expect(state.actionError.value).toContain('first error');
+        });
+
+        mockInvoke.mockResolvedValue(makeGameStatus({mod_deployed: false}));
+        state.removeMod();
         expect(state.actionError.value).toBeNull();
       });
     });

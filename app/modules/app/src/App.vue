@@ -19,8 +19,10 @@ const {
   canLaunch,
   versionCheckClass,
   canInstallMod,
+  canRemoveMod,
   canLaunchUpdater,
   installMod,
+  removeMod,
   openUpdater,
   launchGame,
   init,
@@ -80,6 +82,9 @@ onUnmounted(() => destroy());
           <button v-if="status.mod_available" :disabled="!canInstallMod || actionPending" @click="installMod">
             {{ status.mod_deployed ? 'Reinstall' : 'Install' }}
           </button>
+          <button v-if="status.mod_deployed" :disabled="!canRemoveMod || actionPending" @click="removeMod">
+            Remove
+          </button>
         </li>
 
         <li v-if="installed" :class="gameRunning ? 'ok' : 'fail'">
@@ -103,7 +108,6 @@ onUnmounted(() => destroy());
       <p v-else-if="launcherRunning" class="info-message">
         Close the Scopely Launcher to continue. Do not start the game from there, use Daystrom instead.
       </p>
-
     </section>
   </main>
 </template>
