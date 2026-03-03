@@ -42,9 +42,9 @@ pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
 
 /// Launch the game on Windows with automatic mod DLL deployment.
 ///
-/// If `version.dll` is missing or outdated in the game directory, the bundled DLL is copied
-/// before spawning the game process. Windows loads `version.dll` from the application directory
-/// automatically (DLL proxy injection).
+/// If `version.dll` is missing or outdated in the game directory, the bundled DLL is copied before spawning
+/// the game process.
+/// Windows loads `version.dll` from the application directory automatically (DLL proxy injection).
 #[cfg(target_os = "windows")]
 pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
     if super::is_running(&game.executable) {
@@ -52,9 +52,12 @@ pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
     }
 
     // Auto-deploy: copy the bundled DLL if missing or outdated
-    if !super::check_mod_deployment(&game.install_dir, mod_library) {
-        log_info!("Deploying mod DLL to {}", game.install_dir.display());
-        super::deploy_mod(&game.install_dir, mod_library)?;
+    match super::check_mod_deployment(&game.install_dir, mod_library) {
+        super::ModDeploymentState::UpToDate => {}
+        super::ModDeploymentState::Outdated | super::ModDeploymentState::NotDeployed => {
+            log_info!("Deploying mod DLL to {}", game.install_dir.display());
+            super::deploy_mod(&game.install_dir, mod_library)?;
+        }
     }
 
     log_info!("Launching {}", game.executable.display());

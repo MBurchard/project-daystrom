@@ -51,6 +51,7 @@ function makeGameStatus(overrides: Partial<GameStatus> = {}): GameStatus {
     missing_entitlements: [],
     mod_available: true,
     mod_deployed: true,
+    mod_outdated: false,
     game_running: false,
     launcher_running: false,
     ...overrides,
@@ -335,6 +336,11 @@ describe('useGameState', () => {
       it('returns false when launcher is running', async () => {
         const {state} = await initWithStatus({mod_deployed: true, launcher_running: true});
         expect(state.canRemoveMod.value).toBeFalsy();
+      });
+
+      it('returns true when mod is outdated', async () => {
+        const {state} = await initWithStatus({mod_deployed: false, mod_outdated: true});
+        expect(state.canRemoveMod.value).toBeTruthy();
       });
     });
 

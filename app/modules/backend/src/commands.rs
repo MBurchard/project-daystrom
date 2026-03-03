@@ -30,13 +30,15 @@ pub struct GameStatus {
     pub mod_available: bool,
     /// Whether the mod is deployed and ready (macOS: entitlements OK, Windows: DLL up to date).
     pub mod_deployed: bool,
+    /// Whether the mod DLL exists but is outdated (hash mismatch). Always `false` on macOS.
+    pub mod_outdated: bool,
     /// Whether the game process is currently running.
     pub game_running: bool,
     /// Whether the Scopely launcher is currently running.
     pub launcher_running: bool,
 }
 
-/// Detect the STFC installation and check its entitlements, mod availability and running state.
+/// Detect the STFC installation and check its entitlements, mod availability, and running state.
 #[tauri::command]
 pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
     let mod_library = game::find_mod_library(&app);
@@ -71,13 +73,17 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
             // macOS: mod is "deployed" when entitlements are OK (injection via DYLD)
             // Windows: mod is deployed when the DLL is copied and up to date
             #[cfg(target_os = "macos")]
-            let mod_deployed = status.all_granted();
+            let (mod_deployed, mod_outdated) = (status.all_granted(), false);
             #[cfg(target_os = "windows")]
-            let mod_deployed = mod_library.as_ref().is_some_and(|lib| {
-                game::check_mod_deployment(&info.install_dir, lib)
-            });
+            let (mod_deployed, mod_outdated) = mod_library.as_ref().map(|lib| {
+                match game::check_mod_deployment(&info.install_dir, lib) {
+                    game::ModDeploymentState::UpToDate => (true, false),
+                    game::ModDeploymentState::Outdated => (false, true),
+                    game::ModDeploymentState::NotDeployed => (false, false),
+                }
+            }).unwrap_or((false, false));
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            let mod_deployed = false;
+            let (mod_deployed, mod_outdated) = (false, false);
 
             GameStatus {
                 installed: true,
@@ -89,6 +95,7 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
                 missing_entitlements: status.missing.iter().map(|s| s.to_string()).collect(),
                 mod_available,
                 mod_deployed,
+                mod_outdated,
                 game_running,
                 launcher_running,
             }
@@ -105,6 +112,7 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
                 missing_entitlements: vec![],
                 mod_available,
                 mod_deployed: false,
+                mod_outdated: false,
                 game_running: false,
                 launcher_running,
             }
@@ -146,9 +154,8 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<GameStatus, String> {
 
 /// Remove the deployed mod from the game directory after user confirmation.
 ///
-/// Shows a warning dialog explaining that the game will only be launchable via the Scopely
-/// Launcher afterwards. Returns the refreshed game status regardless of whether the user
-/// confirmed or cancelled.
+/// Shows a warning dialogue explaining that the game will only be launchable via the Scopely Launcher afterwards.
+/// Returns the refreshed game status regardless of whether the user confirmed or cancelled.
 #[tauri::command]
 pub fn remove_mod(window: tauri::WebviewWindow) -> Result<GameStatus, String> {
     let info = game::detect().ok_or("STFC not found")?;
@@ -194,8 +201,7 @@ pub struct UpdateCheck {
     pub update_available: bool,
 }
 
-/// Check whether a game update is available by comparing the local `.version` file
-/// against the Scopely update API.
+/// Check whether a game update is available by comparing the local `.version` file against the Scopely update API.
 #[tauri::command]
 pub fn check_for_update() -> Result<UpdateCheck, String> {
     let info = game::detect().ok_or("STFC not found")?;
