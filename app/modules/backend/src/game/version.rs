@@ -49,11 +49,11 @@ fn parse_version_string(content: &str) -> Option<u32> {
 ///
 /// The API returns XML with a `<version>` element. When no update is available, the
 /// version attribute is `-1` or the element is absent.
-// TODO(windows): Use `platform=windows` in the URL; curl ships with Windows 10+.
 pub fn fetch_remote(installed: u32) -> Result<Option<u32>, String> {
+    let platform = if cfg!(target_os = "macos") { "mac_os" } else { "windows" };
     let url = format!(
         "https://gus.xsolla.com/updates?version={installed}&project_id={PROJECT_ID}\
-         &region=&platform=mac_os"
+         &region=&platform={platform}"
     );
 
     let output = Command::new("curl")

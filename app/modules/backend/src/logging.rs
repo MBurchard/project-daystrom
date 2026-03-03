@@ -96,14 +96,24 @@ fn rotate_logs() {
 
 /// Return the platform-specific log directory, if applicable.
 ///
-/// On macOS this is `~/Library/Logs/{identifier}/` where the identifier
-/// is read from `tauri.conf.json` at compile time.
-/// Returns `None` on other platforms (no game client, no rotation needed).
+/// - macOS: `~/Library/Logs/{identifier}/`
+/// - Windows: `%LOCALAPPDATA%/{identifier}/logs/`
+/// - Other: `None` (no rotation needed)
 fn log_dir() -> Option<PathBuf> {
-    if !cfg!(target_os = "macos") {
-        return None;
+    #[cfg(target_os = "macos")]
+    {
+        Some(dirs::home_dir()?.join(format!("Library/Logs/{}", env!("TAURI_IDENTIFIER"))))
     }
-    Some(dirs::home_dir()?.join(format!("Library/Logs/{}", env!("TAURI_IDENTIFIER"))))
+
+    #[cfg(target_os = "windows")]
+    {
+        Some(dirs::data_local_dir()?.join(format!("{}/logs", env!("TAURI_IDENTIFIER"))))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
 }
 
 // ---- Runtime rotation state -----------------------------------------------------

@@ -50,6 +50,7 @@ function makeGameStatus(overrides: Partial<GameStatus> = {}): GameStatus {
     granted_entitlements: [],
     missing_entitlements: [],
     mod_available: true,
+    mod_deployed: true,
     game_running: false,
     launcher_running: false,
     ...overrides,
@@ -218,8 +219,8 @@ describe('useGameState', () => {
         expect(state.canLaunch.value).toBeFalsy();
       });
 
-      it('returns false when entitlements are not OK', async () => {
-        const {state} = await initWithStatus({entitlements_ok: false});
+      it('returns false when mod is not deployed', async () => {
+        const {state} = await initWithStatus({mod_deployed: false});
         expect(state.canLaunch.value).toBeFalsy();
       });
 
@@ -282,25 +283,30 @@ describe('useGameState', () => {
       });
     });
 
-    describe('canPatchEntitlements', () => {
+    describe('canInstallMod', () => {
       it('returns true when installed, nothing running, no update', async () => {
         const {state} = await initWithStatus();
-        expect(state.canPatchEntitlements.value).toBeTruthy();
+        expect(state.canInstallMod.value).toBeTruthy();
       });
 
       it('returns false when not installed', async () => {
         const {state} = await initWithStatus({installed: false});
-        expect(state.canPatchEntitlements.value).toBeFalsy();
+        expect(state.canInstallMod.value).toBeFalsy();
       });
 
       it('returns false when game is running', async () => {
         const {state} = await initWithStatus({game_running: true});
-        expect(state.canPatchEntitlements.value).toBeFalsy();
+        expect(state.canInstallMod.value).toBeFalsy();
       });
 
       it('returns false when launcher is running', async () => {
         const {state} = await initWithStatus({launcher_running: true});
-        expect(state.canPatchEntitlements.value).toBeFalsy();
+        expect(state.canInstallMod.value).toBeFalsy();
+      });
+
+      it('returns false when mod is not available', async () => {
+        const {state} = await initWithStatus({mod_available: false});
+        expect(state.canInstallMod.value).toBeFalsy();
       });
     });
 
@@ -367,13 +373,13 @@ describe('useGameState', () => {
       });
     });
 
-    describe('fixEntitlements', () => {
+    describe('installMod', () => {
       it('updates status on success', async () => {
         const newStatus = makeGameStatus({entitlements_ok: true});
         mockInvoke.mockResolvedValue(newStatus);
 
         const state = useGameState();
-        state.fixEntitlements();
+        state.installMod();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
         });
@@ -386,7 +392,7 @@ describe('useGameState', () => {
         mockInvoke.mockRejectedValue(new Error('permission denied'));
 
         const state = useGameState();
-        state.fixEntitlements();
+        state.installMod();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
         });
@@ -399,7 +405,7 @@ describe('useGameState', () => {
 
         const state = useGameState();
         expect(state.actionPending.value).toBe(false);
-        state.fixEntitlements();
+        state.installMod();
         expect(state.actionPending.value).toBe(true);
       });
 
@@ -407,14 +413,14 @@ describe('useGameState', () => {
         // The first call fails
         mockInvoke.mockRejectedValueOnce(new Error('first error'));
         const state = useGameState();
-        state.fixEntitlements();
+        state.installMod();
         await vi.waitFor(() => {
           expect(state.actionError.value).toContain('first error');
         });
 
         // The second call succeeds
         mockInvoke.mockResolvedValue(makeGameStatus());
-        state.fixEntitlements();
+        state.installMod();
         expect(state.actionError.value).toBeNull();
       });
     });

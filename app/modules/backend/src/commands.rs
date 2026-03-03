@@ -24,8 +24,10 @@ pub struct GameStatus {
     pub granted_entitlements: Vec<String>,
     /// Entitlement keys that are missing (empty when `entitlements_ok` is true).
     pub missing_entitlements: Vec<String>,
-    /// Whether the mod dylib was found in the app's resource directory.
+    /// Whether the mod library was found in the app's resource directory.
     pub mod_available: bool,
+    /// Whether the mod is deployed and ready (macOS: entitlements OK, Windows: DLL up to date).
+    pub mod_deployed: bool,
     /// Whether the game process is currently running.
     pub game_running: bool,
     /// Whether the Scopely launcher is currently running.
@@ -35,7 +37,8 @@ pub struct GameStatus {
 /// Detect the STFC installation and check its entitlements, mod availability and running state.
 #[tauri::command]
 pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
-    let mod_available = game::find_mod_library(&app).is_some();
+    let mod_library = game::find_mod_library(&app);
+    let mod_available = mod_library.is_some();
 
     let launcher_running = game::is_launcher_running();
 
@@ -43,6 +46,18 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
         Some(info) => {
             let status = game::entitlements::check(&info.executable);
             let game_running = game::is_running(&info.executable);
+
+            // macOS: mod is "deployed" when entitlements are OK (injection via DYLD)
+            // Windows: mod is deployed when the DLL is copied and up to date
+            #[cfg(target_os = "macos")]
+            let mod_deployed = status.all_granted();
+            #[cfg(target_os = "windows")]
+            let mod_deployed = mod_library.as_ref().map_or(false, |lib| {
+                game::check_mod_deployment(&info.install_dir, lib)
+            });
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let mod_deployed = false;
+
             GameStatus {
                 installed: true,
                 install_dir: Some(info.install_dir.display().to_string()),
@@ -52,6 +67,7 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
                 granted_entitlements: status.granted.iter().map(|s| s.to_string()).collect(),
                 missing_entitlements: status.missing.iter().map(|s| s.to_string()).collect(),
                 mod_available,
+                mod_deployed,
                 game_running,
                 launcher_running,
             }
@@ -65,6 +81,7 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
             granted_entitlements: vec![],
             missing_entitlements: vec![],
             mod_available,
+            mod_deployed: false,
             game_running: false,
             launcher_running,
         },
@@ -77,18 +94,29 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
     result
 }
 
-/// Re-sign the game executable with the required mod-injection entitlements.
+/// Prepare the mod for use: patch entitlements on macOS, deploy the DLL on Windows.
 ///
 /// Returns the refreshed game status so the frontend can update in one step.
 #[tauri::command]
-pub fn patch_entitlements(app: tauri::AppHandle) -> Result<GameStatus, String> {
+pub fn prepare_mod(app: tauri::AppHandle) -> Result<GameStatus, String> {
     let info = game::detect().ok_or("STFC not found")?;
 
     if game::is_running(&info.executable) {
-        return Err("Cannot patch entitlements while the game is running".to_string());
+        return Err("Cannot prepare mod while the game is running".to_string());
     }
 
-    game::entitlements::patch(&info.executable)?;
+    #[cfg(target_os = "macos")]
+    {
+        game::entitlements::patch(&info.executable)?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mod_library = game::find_mod_library(&app)
+            .ok_or("Mod library not found — run build:mod first")?;
+        game::deploy_mod(&info.install_dir, &mod_library)?;
+    }
+
     Ok(get_game_status(app))
 }
 
@@ -129,7 +157,7 @@ pub fn check_for_update() -> Result<UpdateCheck, String> {
     }
 }
 
-/// Lightweight process check for polling. Only runs `pgrep`, no filesystem I/O.
+/// Lightweight process check for polling. Only runs process listing (`pgrep`/`tasklist`), no filesystem I/O.
 #[derive(Clone, Serialize, TS)]
 #[ts(export)]
 pub struct ProcessStatus {
@@ -151,23 +179,28 @@ pub fn launch_updater(app: tauri::AppHandle) -> Result<(), String> {
 
 /// Launch the game with the mod library injected.
 ///
+/// On macOS, checks entitlements before launching. On Windows, auto-deploys the DLL if needed.
 /// Starts background process monitoring after a successful launch.
 #[tauri::command]
 pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
     let info = game::detect().ok_or("STFC not found")?;
 
-    let dylib = game::find_mod_library(&app)
+    let mod_library = game::find_mod_library(&app)
         .ok_or("Mod library not found — run build:mod first")?;
 
-    let status = game::entitlements::check(&info.executable);
-    if !status.all_granted() {
-        let names: Vec<_> = status.missing.iter()
-            .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
-            .collect();
-        return Err(format!("Missing entitlements: {} — patch them first", names.join(", ")));
+    // macOS: entitlements must be patched before launching
+    #[cfg(target_os = "macos")]
+    {
+        let status = game::entitlements::check(&info.executable);
+        if !status.all_granted() {
+            let names: Vec<_> = status.missing.iter()
+                .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
+                .collect();
+            return Err(format!("Missing entitlements: {} — patch them first", names.join(", ")));
+        }
     }
 
-    game::launcher::launch(&info, &dylib)?;
+    game::launcher::launch(&info, &mod_library)?;
     crate::monitor::start(app, true, false);
     Ok(())
 }

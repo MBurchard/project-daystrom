@@ -132,7 +132,7 @@ pub fn run() {
             commands::get_game_status,
             commands::check_for_update,
             commands::launch_updater,
-            commands::patch_entitlements,
+            commands::prepare_mod,
             commands::launch_game,
         ])
         .on_window_event(|window, event| {

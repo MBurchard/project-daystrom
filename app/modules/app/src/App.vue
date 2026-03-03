@@ -16,9 +16,9 @@ const {
   updateAvailable,
   canLaunch,
   versionCheckClass,
-  canPatchEntitlements,
+  canInstallMod,
   canLaunchUpdater,
-  fixEntitlements,
+  installMod,
   openUpdater,
   launchGame,
   init,
@@ -51,10 +51,7 @@ onUnmounted(() => destroy());
         <li v-if="status.installed" :class="versionCheckClass">
           <template v-if="updateAvailable">
             v{{ remoteVersion }} available
-            <button
-              :disabled="!canLaunchUpdater || actionPending"
-              @click="openUpdater"
-            >
+            <button :disabled="!canLaunchUpdater || actionPending" @click="openUpdater">
               Update
             </button>
           </template>
@@ -73,19 +70,11 @@ onUnmounted(() => destroy());
           Scopely Launcher running
         </li>
 
-        <li v-if="status.installed" :class="status.entitlements_ok ? 'ok' : 'fail'">
-          Entitlements
-          <button
-            v-if="status.installed"
-            :disabled="!canPatchEntitlements || actionPending"
-            @click="fixEntitlements"
-          >
-            {{ status.entitlements_ok ? 'Re-apply' : 'Fix' }}
+        <li v-if="status.installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
+          Community Patch
+          <button v-if="status.mod_available" :disabled="!canInstallMod || actionPending" @click="installMod">
+            {{ status.mod_deployed ? 'Reinstall' : 'Install' }}
           </button>
-        </li>
-
-        <li v-if="status.installed" :class="status.mod_available ? 'ok' : 'fail'">
-          Mod loaded
         </li>
 
         <li v-if="status.installed" :class="gameRunning ? 'ok' : 'fail'">
@@ -93,12 +82,7 @@ onUnmounted(() => destroy());
         </li>
       </ul>
 
-      <button
-        v-if="status.installed"
-        :disabled="!canLaunch || actionPending"
-        class="launch-btn"
-        @click="launchGame"
-      >
+      <button v-if="status.installed" :disabled="!canLaunch || actionPending" class="launch-btn" @click="launchGame">
         Launch Game
       </button>
 
