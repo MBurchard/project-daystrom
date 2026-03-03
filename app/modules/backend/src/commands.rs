@@ -1,4 +1,6 @@
 use serde::Serialize;
+use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use ts_rs::TS;
 
 use crate::game;
@@ -140,6 +142,44 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<GameStatus, String> {
     }
 
     Ok(get_game_status(app))
+}
+
+/// Remove the deployed mod from the game directory after user confirmation.
+///
+/// Shows a warning dialog explaining that the game will only be launchable via the Scopely
+/// Launcher afterwards. Returns the refreshed game status regardless of whether the user
+/// confirmed or cancelled.
+#[tauri::command]
+pub fn remove_mod(window: tauri::WebviewWindow) -> Result<GameStatus, String> {
+    let info = game::detect().ok_or("STFC not found")?;
+
+    if game::is_running(&info.executable) {
+        return Err("Cannot remove mod while the game is running".to_string());
+    }
+
+    let confirmed = window.dialog()
+        .message("Remove the Community Mod?\n\n\
+                  After removal, the game can only be launched through the Scopely Launcher.")
+        .title("Remove Mod")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
+        .blocking_show();
+
+    if !confirmed {
+        return Ok(get_game_status(window.app_handle().clone()));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // TODO: macOS mod is injected via DYLD at launch, nothing to remove from disk
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        game::remove_mod(&info.install_dir)?;
+    }
+
+    Ok(get_game_status(window.app_handle().clone()))
 }
 
 /// Result of checking the Scopely update API for a game update.

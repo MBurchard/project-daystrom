@@ -60,10 +60,14 @@ export interface GameState {
   versionCheckClass: Readonly<Ref<string>>;
   /** True when the mod install/reinstall button should be enabled. */
   canInstallMod: Readonly<Ref<boolean>>;
+  /** True when the mod remove button should be enabled. */
+  canRemoveMod: Readonly<Ref<boolean>>;
   /** True when the updater button should be enabled. */
   canLaunchUpdater: Readonly<Ref<boolean>>;
   /** Prepare the mod (patch entitlements on macOS, deploy DLL on Windows). */
   installMod: () => void;
+  /** Remove the deployed mod from the game directory. */
+  removeMod: () => void;
   /** Open the Scopely launcher for updating. */
   openUpdater: () => void;
   /** Launch the game with the mod injected. */
@@ -159,6 +163,15 @@ export function useGameState(): GameState {
   });
 
   /**
+   * Whether the mod remove button should be enabled.
+   * @returns true when installed, mod deployed, nothing running
+   */
+  const canRemoveMod = computed(() => {
+    const s = status.value;
+    return s.installed && s.mod_deployed && !gameRunning.value && !launcherRunning.value;
+  });
+
+  /**
    * Whether the Update button should be shown and enabled.
    * @returns true when an update is available, launcher is not already running, and no action pending
    */
@@ -167,6 +180,36 @@ export function useGameState(): GameState {
   });
 
   // ---- Actions ----------------------------------------------------------------------
+
+  /**
+   * Run a backend command with shared pending/error lifecycle.
+   *
+   * @param command - the Tauri command name to invoke
+   * @param onSuccess - callback receiving the command result on success
+   */
+  function runAction<T>(command: string, onSuccess: (result: T) => void): void {
+    actionPending.value = true;
+    actionError.value = null;
+    invoke<T>(command)
+      .then(onSuccess)
+      .catch((err) => {
+        actionError.value = String(err);
+      })
+      .finally(() => {
+        actionPending.value = false;
+      });
+  }
+
+  /**
+   * Apply a full GameStatus from the backend to the local state.
+   *
+   * @param result - the refreshed game status
+   */
+  function applyStatus(result: GameStatus): void {
+    status.value = result;
+    gameRunning.value = result.game_running;
+    launcherRunning.value = result.launcher_running;
+  }
 
   /**
    * Check for a game update via the Scopely update API and cache the result.
@@ -184,65 +227,39 @@ export function useGameState(): GameState {
 
   /**
    * Prepare the mod for use (patch entitlements on macOS, deploy DLL on Windows).
-   * The backend prepares and returns the refreshed status in one step.
    */
   function installMod(): void {
     log.debug('User clicked Install Mod');
-    actionPending.value = true;
-    actionError.value = null;
-    invoke<GameStatus>('prepare_mod')
-      .then((result) => {
-        status.value = result;
-        gameRunning.value = result.game_running;
-        launcherRunning.value = result.launcher_running;
-      })
-      .catch((err) => {
-        actionError.value = String(err);
-      })
-      .finally(() => {
-        actionPending.value = false;
-      });
+    runAction<GameStatus>('prepare_mod', applyStatus);
+  }
+
+  /**
+   * Remove the deployed mod from the game directory.
+   */
+  function removeMod(): void {
+    log.debug('User clicked Remove Mod');
+    runAction<GameStatus>('remove_mod', applyStatus);
   }
 
   /**
    * Open the Scopely launcher for updating.
-   * The backend starts process monitoring and pushes state updates via events.
    */
   function openUpdater(): void {
     log.debug('User clicked Update');
-    actionPending.value = true;
-    actionError.value = null;
-    invoke('launch_updater')
-      .then(() => {
-        launcherRunning.value = true;
-        updaterStartedByUs.value = true;
-      })
-      .catch((err) => {
-        actionError.value = String(err);
-      })
-      .finally(() => {
-        actionPending.value = false;
-      });
+    runAction('launch_updater', () => {
+      launcherRunning.value = true;
+      updaterStartedByUs.value = true;
+    });
   }
 
   /**
    * Launch the game with the mod injected.
-   * The backend starts process monitoring and pushes state updates via events.
    */
   function launchGame(): void {
     log.debug('User clicked Launch Game');
-    actionPending.value = true;
-    actionError.value = null;
-    invoke('launch_game')
-      .then(() => {
-        gameRunning.value = true;
-      })
-      .catch((err) => {
-        actionError.value = String(err);
-      })
-      .finally(() => {
-        actionPending.value = false;
-      });
+    runAction('launch_game', () => {
+      gameRunning.value = true;
+    });
   }
 
   // ---- Lifecycle --------------------------------------------------------------------
@@ -356,8 +373,10 @@ export function useGameState(): GameState {
     canLaunch,
     versionCheckClass,
     canInstallMod,
+    canRemoveMod,
     canLaunchUpdater,
     installMod,
+    removeMod,
     openUpdater,
     launchGame,
     checkForUpdate,

@@ -8,7 +8,7 @@ mod game;
 mod logging;
 mod monitor;
 
-use commands::{check_for_update, get_game_status, launch_game, launch_updater, prepare_mod};
+use commands::{check_for_update, get_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
 
 use_log!("Startup");
 
@@ -110,6 +110,7 @@ pub fn run() {
             check_for_update,
             launch_updater,
             prepare_mod,
+            remove_mod,
             launch_game,
         ])
         .on_window_event(|window, event| {
