@@ -80,9 +80,11 @@ onUnmounted(() => destroy());
         <li v-if="installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
           Community Mod
           <button v-if="status.mod_available" :disabled="!canInstallMod || actionPending" @click="installMod">
-            {{ status.mod_deployed ? 'Reinstall' : 'Install' }}
+            {{ status.mod_deployed ? 'Reinstall' : status.mod_outdated ? 'Update' : 'Install' }}
           </button>
-          <button v-if="status.mod_deployed" :disabled="!canRemoveMod || actionPending" @click="removeMod">
+          <!-- eslint-disable-next-line style/max-len -->
+          <button v-if="status.mod_deployed || status.mod_outdated" :disabled="!canRemoveMod || actionPending"
+              @click="removeMod">
             Remove
           </button>
         </li>

@@ -21,6 +21,7 @@ const DEFAULT_GAME_STATUS: GameStatus = {
   missing_entitlements: [],
   mod_available: false,
   mod_deployed: false,
+  mod_outdated: false,
   game_running: false,
   launcher_running: false,
 };
@@ -164,11 +165,12 @@ export function useGameState(): GameState {
 
   /**
    * Whether the mod remove button should be enabled.
-   * @returns true when installed, mod deployed, nothing running
+   * @returns true when installed, mod deployed or outdated, nothing running
    */
   const canRemoveMod = computed(() => {
     const s = status.value;
-    return s.installed && s.mod_deployed && !gameRunning.value && !launcherRunning.value;
+    return s.installed && (s.mod_deployed || s.mod_outdated) &&
+      !gameRunning.value && !launcherRunning.value;
   });
 
   /**
@@ -182,7 +184,7 @@ export function useGameState(): GameState {
   // ---- Actions ----------------------------------------------------------------------
 
   /**
-   * Run a backend command with shared pending/error lifecycle.
+   * Run a backend command with a shared pending / error lifecycle.
    *
    * @param command - the Tauri command name to invoke
    * @param onSuccess - callback receiving the command result on success

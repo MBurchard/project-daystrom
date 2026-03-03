@@ -28,8 +28,7 @@ const GAME_PATH_KEY: &str = "152033..GAME_PATH=";
 
 /// Extract the GAME_PATH value from the launcher INI file.
 ///
-/// Hand-rolled because rust-ini chokes on the binary REGION_INFO blob
-/// that the Scopely launcher writes.
+/// Hand-rolled because rust-ini chokes on the binary REGION_INFO blob that the Scopely launcher writes.
 fn read_game_path(content: &str) -> Option<&str> {
     for line in content.lines() {
         if let Some(value) = line.strip_prefix(GAME_PATH_KEY) {
@@ -180,23 +179,43 @@ pub fn file_sha256(path: &Path) -> io::Result<[u8; 32]> {
     Ok(hasher.finalize().into())
 }
 
+/// Result of checking the mod deployment in the game directory.
+#[cfg(target_os = "windows")]
+pub enum ModDeploymentState {
+    /// No version.dll found in the game directory.
+    NotDeployed,
+    /// version.dll exists, but its hash does not match the bundled library.
+    Outdated,
+    /// version.dll exists and matches the bundled library.
+    UpToDate,
+}
+
 /// Check whether the bundled mod library is deployed and up to date in the game directory.
 ///
 /// Compares the SHA-256 hash of the bundled library against `install_dir/version.dll`.
-/// Returns `true` when both files exist and their hashes match.
+/// Returns a `ModDeploymentState` indicating whether the DLL is missing, outdated, or current.
 #[cfg(target_os = "windows")]
-pub fn check_mod_deployment(install_dir: &Path, mod_library: &Path) -> bool {
+pub fn check_mod_deployment(install_dir: &Path, mod_library: &Path) -> ModDeploymentState {
     let deployed = install_dir.join("version.dll");
     if !deployed.exists() {
-        return false;
+        log_info!("No version.dll found in {}", install_dir.display());
+        return ModDeploymentState::NotDeployed;
     }
     let Ok(hash_bundled) = file_sha256(mod_library) else {
-        return false;
+        log_warn!("Could not hash bundled mod library {}", mod_library.display());
+        return ModDeploymentState::NotDeployed;
     };
     let Ok(hash_deployed) = file_sha256(&deployed) else {
-        return false;
+        log_warn!("Could not hash deployed version.dll in {}", install_dir.display());
+        return ModDeploymentState::NotDeployed;
     };
-    hash_bundled == hash_deployed
+    if hash_bundled == hash_deployed {
+        log_info!("version.dll is up to date");
+        ModDeploymentState::UpToDate
+    } else {
+        log_info!("version.dll is outdated (hash mismatch)");
+        ModDeploymentState::Outdated
+    }
 }
 
 /// Deploy the bundled mod library as `version.dll` into the game directory.
@@ -227,12 +246,12 @@ pub fn remove_mod(install_dir: &Path) -> Result<(), String> {
     })?;
     log_info!("Removed {}", dll.display());
 
-    // Clean up runtime artifacts (best-effort, may not exist if mod was never run)
+    // Clean up runtime artefacts (best-effort may not exist if mod was never run)
     for name in ["community_patch.log", "community_patch_runtime.vars"] {
         let path = install_dir.join(name);
         match std::fs::remove_file(&path) {
             Ok(()) => log_info!("Removed {}", path.display()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => log_warn!("Could not remove {}: {e}", path.display()),
         }
     }
