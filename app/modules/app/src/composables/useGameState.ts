@@ -40,12 +40,12 @@ export interface GameState {
   canLaunch: Readonly<Ref<boolean>>;
   /** CSS class for the version-check checklist item. */
   versionCheckClass: Readonly<Ref<string>>;
-  /** True when the entitlements button should be enabled. */
-  canPatchEntitlements: Readonly<Ref<boolean>>;
+  /** True when the mod install/reinstall button should be enabled. */
+  canInstallMod: Readonly<Ref<boolean>>;
   /** True when the updater button should be enabled. */
   canLaunchUpdater: Readonly<Ref<boolean>>;
-  /** Patch the game executable's entitlements. */
-  fixEntitlements: () => void;
+  /** Prepare the mod (patch entitlements on macOS, deploy DLL on Windows). */
+  installMod: () => void;
   /** Open the Scopely launcher for updating. */
   openUpdater: () => void;
   /** Launch the game with the mod injected. */
@@ -98,11 +98,11 @@ export function useGameState(): GameState {
 
   /**
    * Whether all conditions for launching the game are met.
-   * @returns true when installed, entitlements OK, mod available, nothing running, no update
+   * @returns true when installed, mod deployed, mod available, nothing running, no update
    */
   const canLaunch = computed(() => {
     const s = status.value;
-    return !!s?.installed && s.entitlements_ok && s.mod_available &&
+    return !!s?.installed && s.mod_deployed && s.mod_available &&
       !gameRunning.value && !launcherRunning.value && !updateAvailable.value;
   });
 
@@ -124,12 +124,13 @@ export function useGameState(): GameState {
   });
 
   /**
-   * Whether the entitlements button should be enabled.
-   * @returns true when game is installed, nothing running, and no update pending
+   * Whether the mod install/reinstall button should be enabled.
+   * @returns true when game is installed, mod available, nothing running, and no update pending
    */
-  const canPatchEntitlements = computed(() => {
+  const canInstallMod = computed(() => {
     const s = status.value;
-    return !!s?.installed && !gameRunning.value && !launcherRunning.value && !updateAvailable.value;
+    return !!s?.installed && s.mod_available &&
+      !gameRunning.value && !launcherRunning.value && !updateAvailable.value;
   });
 
   /**
@@ -157,14 +158,14 @@ export function useGameState(): GameState {
   }
 
   /**
-   * Patch the game executable's entitlements.
-   * The backend patches and returns the refreshed status in one step.
+   * Prepare the mod for use (patch entitlements on macOS, deploy DLL on Windows).
+   * The backend prepares and returns the refreshed status in one step.
    */
-  function fixEntitlements(): void {
-    log.debug('User clicked Fix Entitlements');
+  function installMod(): void {
+    log.debug('User clicked Install Mod');
     actionPending.value = true;
     actionError.value = null;
-    invoke<GameStatus>('patch_entitlements')
+    invoke<GameStatus>('prepare_mod')
       .then((result) => {
         status.value = result;
         gameRunning.value = result.game_running;
@@ -324,9 +325,9 @@ export function useGameState(): GameState {
     updateAvailable,
     canLaunch,
     versionCheckClass,
-    canPatchEntitlements,
+    canInstallMod,
     canLaunchUpdater,
-    fixEntitlements,
+    installMod,
     openUpdater,
     launchGame,
     checkForUpdate,

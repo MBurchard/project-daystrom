@@ -37,7 +37,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../resources/mod/libstfc-community-patch.dylib": "mod/libstfc-community-patch.dylib"
+      "../../resources/mod/*": "mod/"
     }
   }
 }

@@ -29,15 +29,26 @@ const MANIFEST_PATH = join(APP_DIR, 'modules', 'backend', 'Cargo.toml');
 const TS_RS_EXPORT_DIR = join(APP_DIR, 'modules', 'app', 'src', 'generated');
 const TAURI_APP_PATH = join(APP_DIR, 'modules', 'backend');
 
-const PLATFORM_CONFIG: Record<string, {target: string; dylib: string}> = {
+interface PlatformConfig {
+  target: string;
+  dylib: string;
+  xmakePlatform: string;
+  xmakeArch: string;
+}
+
+const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
   darwin: {
     target: 'stfc-community-patch',
     dylib: 'build/macosx/arm64/release/libstfc-community-patch.dylib',
+    xmakePlatform: 'macosx',
+    xmakeArch: 'arm64',
   },
-  // win32: {
-  //   target: 'stfc-community-patch',
-  //   dylib: 'build/windows/x64/release/stfc-community-patch.dll',
-  // },
+  win32: {
+    target: 'stfc-community-patch',
+    dylib: 'build/windows/x64/release/stfc-community-patch.dll',
+    xmakePlatform: 'windows',
+    xmakeArch: 'x64',
+  },
 };
 
 // -- commands ---------------------------------------------------------------
@@ -186,6 +197,12 @@ function buildMod(): void {
     log.info(`Created ${MOD_OUTPUT_DIR}`);
   }
 
+  log.info(`Configuring xmake for ${config.xmakePlatform} ${config.xmakeArch}...`);
+  execSync(
+    `xmake f -p ${config.xmakePlatform} -a ${config.xmakeArch} -m release -y`,
+    {cwd: MOD_DIR, stdio: 'inherit'},
+  );
+
   log.info(`Building ${config.target}...`);
   execSync(`xmake build -y ${config.target}`, {cwd: MOD_DIR, stdio: 'inherit'});
 
@@ -219,6 +236,7 @@ function icons(): void {
  */
 function dev(): void {
   log.info('Starting Project Daystrom in dev mode...');
+  buildMod();
   tauri('dev');
 }
 

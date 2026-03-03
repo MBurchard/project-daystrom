@@ -21,7 +21,7 @@ Project Daystrom picks up where the Community Mod leaves off. The mod already pr
 improvements — hotkeys, UI tweaks, zoom presets, data sync, and more. Project Daystrom builds on that foundation
 and adds:
 
-- **A native app** (Tauri 2 + Vue 3) that runs alongside the game on macOS (Windows planned)
+- **A native app** (Tauri 2 + Vue 3) that runs alongside the game on macOS and Windows
 - **A cross-platform launcher** replacing the platform-specific launchers (Swift on macOS,
   proxy DLL on Windows) with a single unified solution that handles entitlement patching,
   mod injection, and game launch
@@ -74,7 +74,18 @@ project-daystrom/
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - [XMake](https://xmake.io/) (for building the mod)
 - [CMake](https://cmake.org/) (required by xmake to build C++ dependencies like spud)
-- **macOS on Apple Silicon** — local development assumes arm64; the CI handles universal builds
+
+### macOS
+
+- **Apple Silicon** — local development assumes arm64; the CI handles universal builds
+- Xcode Command Line Tools (`xcode-select --install`)
+
+### Windows
+
+- **Visual Studio Build Tools 2022** (or VS Community) — workload "Desktop development with C++"
+  including a **Windows SDK** (not installed by default!)
+- xmake: `irm https://xmake.io/psget.text | iex` in PowerShell
+- Rust: standard installation via [rustup-init.exe](https://rustup.rs/) (option 1 selects MSVC toolchain)
 
 ## Setup
 
@@ -85,26 +96,18 @@ pnpm install
 
 All commands run from the **workspace root** unless noted otherwise.
 
-## Building the mod (dylib)
+## Building the mod
 
-The mod code lives in `stfc-mod/` and produces `libstfc-community-patch.dylib` — the shared library
-that gets injected into the game via `DYLD_INSERT_LIBRARIES`.
+The mod code lives in `stfc-mod/` and produces a shared library that gets injected into the game
+(`libstfc-community-patch.dylib` on macOS, `stfc-community-patch.dll` on Windows).
 
 ```sh
 pnpm build:mod
 ```
 
-This builds only the dylib target (`stfc-community-patch`) and copies the result to
-`app/resources/mod/`. The full `xmake build` would also try to build the original Swift launcher,
-which we don't need — Project Daystrom replaces it.
-
-Alternatively, from the `stfc-mod/` directory directly:
-
-```sh
-xmake build -y stfc-community-patch
-```
-
-The built dylib lands at `stfc-mod/build/macosx/arm64/release/libstfc-community-patch.dylib` (~8 MB).
+This configures xmake for the current platform, builds only the mod target (`stfc-community-patch`),
+and copies the result to `app/resources/mod/`. The full `xmake build` would also try to build the
+original Swift launcher, which we don't need — Project Daystrom replaces it.
 
 ## Scripts
 
@@ -127,7 +130,7 @@ The built dylib lands at `stfc-mod/build/macosx/arm64/release/libstfc-community-
 | `pnpm build:mod`                  | Build mod dylib and copy to `app/resources/mod/`     |
 | `pnpm build:app`                  | Build mod dylib + Tauri app bundle                   |
 | `pnpm icons`                      | Generate Tauri icons from `resources/daystrom.png`   |
-| `pnpm dev`                        | Start Tauri app (Vite + Rust) with hot reload        |
+| `pnpm dev`                        | Build mod + start Tauri app with hot reload          |
 
 ### Path Aliases
 

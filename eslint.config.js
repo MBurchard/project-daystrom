@@ -22,6 +22,14 @@ export default antfu({
     'style/quote-props': ['error', 'as-needed', {unnecessary: true}],
   },
 }, {
+  files: ['**/*.vue'],
+  rules: {
+    'vue/html-indent': ['error', 2, {attribute: 2, alignAttributesVertically: false}],
+    'vue/first-attribute-linebreak': ['error', {singleline: 'beside', multiline: 'beside'}],
+    'vue/html-closing-bracket-newline': ['error', {singleline: 'never', multiline: 'never'}],
+    'vue/max-attributes-per-line': ['error', {singleline: 10, multiline: 10}],
+  },
+}, {
   files: ['**/*.md'],
   rules: {
     'style/no-trailing-spaces': 'off',

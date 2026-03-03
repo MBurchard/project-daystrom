@@ -1,12 +1,17 @@
+use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sha2::{Digest, Sha256};
 use tauri::Manager;
 
 use crate::use_log;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 #[cfg(target_os = "macos")]
 pub mod entitlements;
 
@@ -33,11 +38,6 @@ pub mod entitlements {
     pub fn check(_executable: &Path) -> EntitlementStatus {
         EntitlementStatus { granted: vec![], missing: vec![] }
     }
-
-    /// Stub — entitlement patching is only available on macOS.
-    pub fn patch(_executable: &Path) -> Result<(), String> {
-        Err("Entitlement patching is only supported on macOS".to_string())
-    }
 }
 pub mod launcher;
 pub mod version;
@@ -62,7 +62,10 @@ pub fn detect() -> Option<GameInfo> {
     #[cfg(target_os = "macos")]
     let base = macos::detect();
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let base = windows::detect();
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base: Option<(PathBuf, PathBuf)> = {
         log::warn!("Game detection not implemented for this platform");
         None
@@ -76,42 +79,127 @@ pub fn detect() -> Option<GameInfo> {
 /// Check whether the Scopely launcher is currently running.
 ///
 /// The launcher can modify game files (updates), so game actions should be blocked while it runs.
-// TODO(windows): Detect the launcher process on Windows.
 pub fn is_launcher_running() -> bool {
-    Command::new("pgrep")
-        .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/launcher"])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq launcher.exe", "/NH"])
+            .output()
+            .map(|out| {
+                out.status.success()
+                    && String::from_utf8_lossy(&out.stdout).contains("launcher.exe")
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("pgrep")
+            .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/launcher"])
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Locate the bundled mod library in the app's resource directory.
-/// Returns `None` if the resource directory is unavailable or the dylib does not exist.
+/// Returns `None` if the resource directory is unavailable or the library does not exist.
 pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     let resource_dir = app.path().resource_dir().ok()?;
-    let dylib = resource_dir.join("mod/libstfc-community-patch.dylib");
-    if dylib.exists() {
-        Some(dylib)
+
+    #[cfg(target_os = "macos")]
+    let library = resource_dir.join("mod/libstfc-community-patch.dylib");
+    #[cfg(target_os = "windows")]
+    let library = resource_dir.join("mod/stfc-community-patch.dll");
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let library = resource_dir.join("mod/libstfc-community-patch.so");
+
+    if library.exists() {
+        Some(library)
     } else {
         None
     }
 }
 
+/// Compute the SHA-256 digest of a file by streaming it in 8 KB chunks.
+///
+/// Returns the 32-byte hash or an I/O error if the file cannot be read.
+pub fn file_sha256(path: &Path) -> io::Result<[u8; 32]> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().into())
+}
+
+/// Check whether the bundled mod library is deployed and up to date in the game directory.
+///
+/// Compares the SHA-256 hash of the bundled library against `install_dir/version.dll`.
+/// Returns `true` when both files exist and their hashes match.
+#[cfg(target_os = "windows")]
+pub fn check_mod_deployment(install_dir: &Path, mod_library: &Path) -> bool {
+    let deployed = install_dir.join("version.dll");
+    if !deployed.exists() {
+        return false;
+    }
+    let Ok(hash_bundled) = file_sha256(mod_library) else {
+        return false;
+    };
+    let Ok(hash_deployed) = file_sha256(&deployed) else {
+        return false;
+    };
+    hash_bundled == hash_deployed
+}
+
+/// Deploy the bundled mod library as `version.dll` into the game directory.
+///
+/// Copies the file and returns an error string on failure.
+#[cfg(target_os = "windows")]
+pub fn deploy_mod(install_dir: &Path, mod_library: &Path) -> Result<(), String> {
+    let target = install_dir.join("version.dll");
+    std::fs::copy(mod_library, &target).map_err(|e| {
+        log_error!("Failed to deploy mod to {}: {e}", target.display());
+        format!("Failed to deploy mod: {e}")
+    })?;
+    log_info!("Deployed mod to {}", target.display());
+    Ok(())
+}
+
 /// Check whether the STFC game process is currently running.
 ///
 /// Uses a hardcoded process name so it can be called without filesystem I/O.
-// TODO(windows): Adapt the process name for Windows.
 pub fn is_game_running() -> bool {
-    Command::new("pgrep")
-        .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command"])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq prime.exe", "/NH"])
+            .output()
+            .map(|out| {
+                out.status.success()
+                    && String::from_utf8_lossy(&out.stdout).contains("prime.exe")
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("pgrep")
+            .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command"])
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Check whether a process matching the given executable path is currently running.
 ///
-/// Uses `pgrep -f` to search for the executable name.
+/// Uses `pgrep -f` on macOS/Linux and `tasklist /FI` on Windows.
 pub fn is_running(executable: &Path) -> bool {
     let name = executable
         .file_name()
@@ -120,9 +208,25 @@ pub fn is_running(executable: &Path) -> bool {
     if name.is_empty() {
         return false;
     }
-    Command::new("pgrep")
-        .args(["-f", name])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("tasklist")
+            .args(["/FI", &format!("IMAGENAME eq {name}"), "/NH"])
+            .output()
+            .map(|out| {
+                out.status.success()
+                    && String::from_utf8_lossy(&out.stdout).contains(name)
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("pgrep")
+            .args(["-f", name])
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
 }
