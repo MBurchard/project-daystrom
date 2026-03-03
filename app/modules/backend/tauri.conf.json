@@ -15,7 +15,8 @@
         "label": "main",
         "title": "Project Daystrom",
         "width": 1024,
-        "height": 768
+        "height": 768,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
