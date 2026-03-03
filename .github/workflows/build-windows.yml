@@ -1,0 +1,101 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Windows App (x64)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artefacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/modules/backend -> target
+
+      - name: Set up xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: latest
+
+      - name: Build mod DLL (x64)
+        working-directory: stfc-mod
+        run: |
+          xmake f -p windows -a x64 -m release -y
+          xmake build -y stfc-community-patch
+
+      - name: Copy mod DLL to resources
+        run: |
+          New-Item -ItemType Directory -Force -Path app/resources/mod
+          Copy-Item stfc-mod/build/windows/x64/release/stfc-community-patch.dll app/resources/mod/
+        shell: pwsh
+
+      - name: Generate Tauri icons
+        run: pnpm icons
+
+      - name: Generate TypeScript bindings (ts-rs)
+        run: pnpm test:app:backend
+
+      - name: Build Tauri app (NSIS only)
+        run: pnpm exec tauri build --bundles nsis
+        working-directory: app
+        env:
+          TAURI_APP_PATH: ${{ github.workspace }}/app/modules/backend
+
+      # Code signing (optional, requires WINDOWS_PFX_BASE64 and WINDOWS_PFX_PASSWORD secrets)
+      - name: Import code signing certificate
+        if: env.WINDOWS_PFX_BASE64 != ''
+        run: |
+          $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+          Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My `
+            -Password (ConvertTo-SecureString $env:WINDOWS_PFX_PASSWORD -AsPlainText -Force)
+          Remove-Item $pfxPath
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+
+      - name: Sign NSIS installer
+        if: env.WINDOWS_PFX_BASE64 != ''
+        run: |
+          $exe = Get-ChildItem app/modules/backend/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          & signtool sign /fd sha256 /t http://timestamp.digicert.com /a $exe.FullName
+          Write-Host "Signed $($exe.Name)"
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+
+      - name: Upload setup .exe
+        uses: actions/upload-artifact@v6
+        with:
+          name: Project-Daystrom-Windows-x64
+          path: app/modules/backend/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 30
