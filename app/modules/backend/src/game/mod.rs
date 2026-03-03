@@ -3,10 +3,41 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use sha2::{Digest, Sha256};
 use tauri::Manager;
 
 use crate::use_log;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Create a `Command` that won't spawn a visible console window on Windows.
+///
+/// On non-Windows platforms this is equivalent to `Command::new(program)`.
+pub(crate) fn silent_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+/// INI key (with `=` suffix) that holds the game installation directory.
+const GAME_PATH_KEY: &str = "152033..GAME_PATH=";
+
+/// Extract the GAME_PATH value from the launcher INI file.
+///
+/// Hand-rolled because rust-ini chokes on the binary REGION_INFO blob
+/// that the Scopely launcher writes.
+fn read_game_path(content: &str) -> Option<&str> {
+    for line in content.lines() {
+        if let Some(value) = line.strip_prefix(GAME_PATH_KEY) {
+            return Some(value);
+        }
+    }
+    None
+}
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -76,18 +107,19 @@ pub fn detect() -> Option<GameInfo> {
     Some(GameInfo { install_dir, executable, installed_version })
 }
 
-/// Check whether the Scopely launcher is currently running.
+/// Check whether a process matching `pattern` is currently running.
 ///
-/// The launcher can modify game files (updates), so game actions should be blocked while it runs.
-pub fn is_launcher_running() -> bool {
+/// On Windows, filters `tasklist` by image name and checks stdout.
+/// On macOS/Linux, uses `pgrep -f` for full command-line matching.
+fn is_process_active(pattern: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
-        Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq launcher.exe", "/NH"])
+        silent_command("tasklist")
+            .args(["/FI", &format!("IMAGENAME eq {pattern}"), "/NH"])
             .output()
             .map(|out| {
                 out.status.success()
-                    && String::from_utf8_lossy(&out.stdout).contains("launcher.exe")
+                    && String::from_utf8_lossy(&out.stdout).contains(pattern)
             })
             .unwrap_or(false)
     }
@@ -95,11 +127,21 @@ pub fn is_launcher_running() -> bool {
     #[cfg(not(target_os = "windows"))]
     {
         Command::new("pgrep")
-            .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/launcher"])
+            .args(["-f", pattern])
             .output()
             .map(|out| out.status.success())
             .unwrap_or(false)
     }
+}
+
+/// Check whether the Scopely launcher is currently running.
+///
+/// The launcher can modify game files (updates), so game actions should be blocked while it runs.
+pub fn is_launcher_running() -> bool {
+    #[cfg(target_os = "windows")]
+    return is_process_active("launcher.exe");
+    #[cfg(not(target_os = "windows"))]
+    return is_process_active("Star Trek Fleet Command.app/Contents/MacOS/launcher");
 }
 
 /// Locate the bundled mod library in the app's resource directory.
@@ -176,25 +218,11 @@ pub fn deploy_mod(install_dir: &Path, mod_library: &Path) -> Result<(), String> 
 /// Uses a hardcoded process name so it can be called without filesystem I/O.
 pub fn is_game_running() -> bool {
     #[cfg(target_os = "windows")]
-    {
-        Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq prime.exe", "/NH"])
-            .output()
-            .map(|out| {
-                out.status.success()
-                    && String::from_utf8_lossy(&out.stdout).contains("prime.exe")
-            })
-            .unwrap_or(false)
-    }
-
+    return is_process_active("prime.exe");
     #[cfg(not(target_os = "windows"))]
-    {
-        Command::new("pgrep")
-            .args(["-f", "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command"])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
+    return is_process_active(
+        "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command",
+    );
 }
 
 /// Check whether a process matching the given executable path is currently running.
@@ -208,25 +236,50 @@ pub fn is_running(executable: &Path) -> bool {
     if name.is_empty() {
         return false;
     }
+    is_process_active(name)
+}
 
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("tasklist")
-            .args(["/FI", &format!("IMAGENAME eq {name}"), "/NH"])
-            .output()
-            .map(|out| {
-                out.status.success()
-                    && String::from_utf8_lossy(&out.stdout).contains(name)
-            })
-            .unwrap_or(false)
+// ---- Tests ----
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_game_path_normal() {
+        let ini = "[General]\n152033..GAME_PATH=C:/Games/STFC/\n";
+        assert_eq!(read_game_path(ini), Some("C:/Games/STFC/"));
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        Command::new("pgrep")
-            .args(["-f", name])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
+    #[test]
+    fn read_game_path_missing_key() {
+        let ini = "[General]\nLANGUAGE=de\nAUTOUPDATE_ENABLED=true\n";
+        assert_eq!(read_game_path(ini), None);
+    }
+
+    #[test]
+    fn read_game_path_empty_content() {
+        assert_eq!(read_game_path(""), None);
+    }
+
+    #[test]
+    fn read_game_path_key_among_others() {
+        let ini = "\
+[General]
+152033..GAME_INSTALLED=true
+152033..GAME_PATH=D:/Games/STFC/
+152033..GAME_TEMP_PATH=C:/Temp/stfc/
+LANGUAGE=de";
+        assert_eq!(read_game_path(ini), Some("D:/Games/STFC/"));
+    }
+
+    #[test]
+    fn read_game_path_survives_binary_blob() {
+        let ini = "\
+[General]
+152033..GAME_PATH=C:/Games/STFC/
+REGION_INFO=\"@Variant(\\0\\0\\0\\b\\0\\0)\"
+LANGUAGE=de";
+        assert_eq!(read_game_path(ini), Some("C:/Games/STFC/"));
     }
 }

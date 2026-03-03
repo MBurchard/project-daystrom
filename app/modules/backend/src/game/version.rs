@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::process::Command;
 
 use crate::use_log;
 
@@ -56,7 +55,7 @@ pub fn fetch_remote(installed: u32) -> Result<Option<u32>, String> {
          &region=&platform={platform}"
     );
 
-    let output = Command::new("curl")
+    let output = super::silent_command("curl")
         .args(["-s", "--max-time", &CURL_TIMEOUT.to_string(), &url])
         .output()
         .map_err(|e| format!("Failed to run curl: {e}"))?;

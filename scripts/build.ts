@@ -119,7 +119,7 @@ function typecheckFrontend(): void {
  */
 function typecheckBackend(): void {
   log.info('Type-checking backend...');
-  cargo('check');
+  cargo('clippy');
 }
 
 /**

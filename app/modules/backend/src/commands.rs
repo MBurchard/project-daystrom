@@ -52,7 +52,7 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
             #[cfg(target_os = "macos")]
             let mod_deployed = status.all_granted();
             #[cfg(target_os = "windows")]
-            let mod_deployed = mod_library.as_ref().map_or(false, |lib| {
+            let mod_deployed = mod_library.as_ref().is_some_and(|lib| {
                 game::check_mod_deployment(&info.install_dir, lib)
             });
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]

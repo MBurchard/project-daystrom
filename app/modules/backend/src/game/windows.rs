@@ -8,9 +8,6 @@ use_log!("GameDetect");
 const LAUNCHER_SETTINGS_PATH: &str =
     "Star Trek Fleet Command/launcher_settings.ini";
 
-/// INI key (with `=` suffix) that holds the game installation directory.
-const GAME_PATH_KEY: &str = "152033..GAME_PATH=";
-
 /// Name of the game executable on Windows.
 const EXECUTABLE_NAME: &str = "prime.exe";
 
@@ -24,15 +21,22 @@ const LAUNCHER_DIR: &str = "Star Trek Fleet Command";
 const UNINSTALL_REG_KEY: &str =
     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Star Trek Fleet Command";
 
-/// Extract the GAME_PATH value from the launcher INI file.
-/// Hand-rolled because rust-ini chokes on the binary REGION_INFO blob that Scopely's launcher writes.
-fn read_game_path(content: &str) -> Option<&str> {
-    for line in content.lines() {
-        if let Some(value) = line.strip_prefix(GAME_PATH_KEY) {
-            return Some(value);
-        }
-    }
-    None
+/// Read the game install directory from the Scopely launcher settings INI.
+///
+/// Parses `%LOCALAPPDATA%\Star Trek Fleet Command\launcher_settings.ini` and extracts
+/// the `GAME_PATH` value. Returns `None` if the file or key is missing.
+fn read_install_dir() -> Option<PathBuf> {
+    let local_app_data = dirs::data_local_dir()?;
+    let ini_path = local_app_data.join(LAUNCHER_SETTINGS_PATH);
+    log_debug!("Looking for launcher settings at {}", ini_path.display());
+
+    let content = std::fs::read_to_string(&ini_path)
+        .map_err(|e| log_debug!("Could not read launcher settings: {e}"))
+        .ok()?;
+
+    let raw_path = super::read_game_path(&content)?;
+    log_debug!("Raw GAME_PATH value: {raw_path}");
+    Some(PathBuf::from(raw_path))
 }
 
 /// Locate the Scopely launcher executable on Windows.
@@ -46,8 +50,16 @@ fn read_game_path(content: &str) -> Option<&str> {
 pub fn find_launcher() -> Option<PathBuf> {
     // 1. Derive from GAME_PATH: the launcher sits in the STFC root, two levels above the game dir
     //    (e.g. GAME_PATH = "D:/Programme/STFC/default/game/" -> root = "D:/Programme/STFC/")
-    if let Some(launcher) = find_launcher_via_game_path() {
-        return Some(launcher);
+    if let Some(install_dir) = read_install_dir() {
+        let root = install_dir.parent().and_then(|p| p.parent());
+        if let Some(root) = root {
+            let launcher = root.join(LAUNCHER_EXECUTABLE);
+            if launcher.exists() {
+                log_debug!("Found launcher relative to game path: {}", launcher.display());
+                return Some(launcher);
+            }
+            log_debug!("Launcher not at derived path: {}", launcher.display());
+        }
     }
 
     // 2. Standard path: %LOCALAPPDATA%\Star Trek Fleet Command\launcher.exe
@@ -69,36 +81,11 @@ pub fn find_launcher() -> Option<PathBuf> {
     None
 }
 
-/// Derive the launcher location from the game install path in `launcher_settings.ini`.
-///
-/// The INI's `GAME_PATH` points to something like `.../STFC/default/game/`.
-/// The launcher executable lives at the STFC root, two directory levels up.
-fn find_launcher_via_game_path() -> Option<PathBuf> {
-    let local_app_data = dirs::data_local_dir()?;
-    let ini_path = local_app_data.join(LAUNCHER_SETTINGS_PATH);
-    let content = std::fs::read_to_string(&ini_path).ok()?;
-    let raw_path = read_game_path(&content)?;
-
-    let game_dir = PathBuf::from(raw_path);
-    // Walk up two levels: default/game/ -> default/ -> STFC root
-    let root = game_dir.parent()?.parent()?;
-    let launcher = root.join(LAUNCHER_EXECUTABLE);
-
-    if launcher.exists() {
-        log_debug!("Found launcher relative to game path: {}", launcher.display());
-        return Some(launcher);
-    }
-    log_debug!("Launcher not at derived path: {}", launcher.display());
-    None
-}
-
 /// Query the Windows registry for the launcher's install location.
 ///
 /// Uses `reg query` to avoid an external crate dependency.
 fn find_launcher_via_registry() -> Option<PathBuf> {
-    use std::process::Command;
-
-    let output = Command::new("reg")
+    let output = super::silent_command("reg")
         .args(["query", UNINSTALL_REG_KEY, "/v", "InstallLocation"])
         .output()
         .map_err(|e| log_debug!("reg query failed: {e}"))
@@ -130,66 +117,12 @@ fn find_launcher_via_registry() -> Option<PathBuf> {
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn read_game_path_normal() {
-        let ini = "[General]\n152033..GAME_PATH=C:/Games/STFC/\n";
-        assert_eq!(read_game_path(ini), Some("C:/Games/STFC/"));
-    }
-
-    #[test]
-    fn read_game_path_missing_key() {
-        let ini = "[General]\nLANGUAGE=de\nAUTOUPDATE_ENABLED=true\n";
-        assert_eq!(read_game_path(ini), None);
-    }
-
-    #[test]
-    fn read_game_path_empty_content() {
-        assert_eq!(read_game_path(""), None);
-    }
-
-    #[test]
-    fn read_game_path_key_among_others() {
-        let ini = "\
-[General]
-152033..GAME_INSTALLED=true
-152033..GAME_PATH=D:/Games/STFC/
-152033..GAME_TEMP_PATH=C:/Temp/stfc/
-LANGUAGE=de";
-        assert_eq!(read_game_path(ini), Some("D:/Games/STFC/"));
-    }
-
-    #[test]
-    fn read_game_path_survives_binary_blob() {
-        let ini = "\
-[General]
-152033..GAME_PATH=C:/Games/STFC/
-REGION_INFO=\"@Variant(\\0\\0\\0\\b\\0\\0)\"
-LANGUAGE=de";
-        assert_eq!(read_game_path(ini), Some("C:/Games/STFC/"));
-    }
-}
-
 /// Locate the STFC installation by reading the Scopely launcher settings INI.
 ///
 /// Returns `None` (with debug/warn logging) if the settings file is missing,
 /// the game path key is absent, or the executable does not exist on disk.
 pub fn detect() -> Option<(PathBuf, PathBuf)> {
-    let local_app_data = dirs::data_local_dir()?;
-    let ini_path = local_app_data.join(LAUNCHER_SETTINGS_PATH);
-    log_debug!("Looking for launcher settings at {}", ini_path.display());
-
-    let content = std::fs::read_to_string(&ini_path)
-        .map_err(|e| log_debug!("Could not read launcher settings: {e}"))
-        .ok()?;
-
-    let raw_path = read_game_path(&content)?;
-    log_debug!("Raw GAME_PATH value: {raw_path}");
-
-    let install_dir = PathBuf::from(raw_path);
+    let install_dir = read_install_dir()?;
     let executable = install_dir.join(EXECUTABLE_NAME);
 
     if !executable.exists() {

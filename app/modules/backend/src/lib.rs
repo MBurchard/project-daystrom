@@ -8,6 +8,8 @@ mod game;
 mod logging;
 mod monitor;
 
+use commands::{check_for_update, get_game_status, launch_game, launch_updater, prepare_mod};
+
 use_log!("Startup");
 
 /// Show a warning dialog explaining that the app cannot quit while the game or launcher is running.
@@ -63,7 +65,7 @@ pub fn run() {
                 None => log_warn!("STFC not found, game features will be unavailable"),
             }
 
-            match game::find_mod_library(&app.handle()) {
+            match game::find_mod_library(app.handle()) {
                 Some(path) => log_info!("Mod library found: {}", path.display()),
                 None => log_warn!("Mod library not bundled, run pnpm build:mod"),
             }
@@ -129,11 +131,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_game_status,
-            commands::check_for_update,
-            commands::launch_updater,
-            commands::prepare_mod,
-            commands::launch_game,
+            get_game_status,
+            check_for_update,
+            launch_updater,
+            prepare_mod,
+            launch_game,
         ])
         .on_window_event(|window, event| {
             match event {
