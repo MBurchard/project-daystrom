@@ -11,13 +11,31 @@ import {computed, ref} from 'vue';
 
 const log = getLogger('App');
 
+const DEFAULT_GAME_STATUS: GameStatus = {
+  installed: false,
+  install_dir: null,
+  executable: null,
+  game_version: null,
+  entitlements_ok: false,
+  granted_entitlements: [],
+  missing_entitlements: [],
+  mod_available: false,
+  mod_deployed: false,
+  game_running: false,
+  launcher_running: false,
+};
+
 // ---- Public Interface -----------------------------------------------------------
 
 export interface GameState {
   /** App version string from Tauri. */
   version: Readonly<Ref<string>>;
-  /** Full game status from the backend, null until the first load. */
-  status: Readonly<Ref<GameStatus | null>>;
+  /** Full game status from the backend. */
+  status: Readonly<Ref<GameStatus>>;
+  /** True while the initial status load is in flight. */
+  loading: Readonly<Ref<boolean>>;
+  /** Whether the game is installed (false while status is loading). */
+  installed: Readonly<Ref<boolean>>;
   /** Fatal error during the initial status load. */
   error: Readonly<Ref<string | null>>;
   /** Error from the last user-triggered action. */
@@ -68,7 +86,8 @@ export function useGameState(): GameState {
   // ---- Reactive State -------------------------------------------------------------
 
   const version = ref('');
-  const status = ref<GameStatus | null>(null);
+  const status = ref<GameStatus>({...DEFAULT_GAME_STATUS});
+  const loading = ref(true);
   const error = ref<string | null>(null);
   const actionError = ref<string | null>(null);
   const actionPending = ref(false);
@@ -85,12 +104,18 @@ export function useGameState(): GameState {
   // ---- Computed Guards --------------------------------------------------------------
 
   /**
+   * Whether the game is installed.
+   * @returns false while status is still loading or when the game is not found
+   */
+  const installed = computed(() => status.value.installed);
+
+  /**
    * Whether a game update is available.
    * @returns true when the remote version exceeds the installed version
    */
   const updateAvailable = computed(() => {
     const s = status.value;
-    if (!s?.game_version || remoteVersion.value == null) {
+    if (!s.game_version || remoteVersion.value == null) {
       return false;
     }
     return remoteVersion.value > s.game_version;
@@ -102,7 +127,7 @@ export function useGameState(): GameState {
    */
   const canLaunch = computed(() => {
     const s = status.value;
-    return !!s?.installed && s.mod_deployed && s.mod_available &&
+    return s.installed && s.mod_deployed && s.mod_available &&
       !gameRunning.value && !launcherRunning.value && !updateAvailable.value;
   });
 
@@ -129,7 +154,7 @@ export function useGameState(): GameState {
    */
   const canInstallMod = computed(() => {
     const s = status.value;
-    return !!s?.installed && s.mod_available &&
+    return s.installed && s.mod_available &&
       !gameRunning.value && !launcherRunning.value && !updateAvailable.value;
   });
 
@@ -292,6 +317,9 @@ export function useGameState(): GameState {
       .catch((err) => {
         error.value = String(err);
         log.error(`Failed to get game status: ${err}`);
+      })
+      .finally(() => {
+        loading.value = false;
       });
   }
 
@@ -314,6 +342,8 @@ export function useGameState(): GameState {
   return {
     version,
     status,
+    loading,
+    installed,
     error,
     actionError,
     actionPending,

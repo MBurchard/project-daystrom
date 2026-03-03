@@ -113,7 +113,7 @@ async function initWithStatus(statusOverrides: Partial<GameStatus> = {}) {
   const state = useGameState();
   state.init();
   await vi.waitFor(() => {
-    expect(state.status.value).not.toBeNull();
+    expect(state.loading.value).toBe(false);
   });
 
   return {state, listeners, emitEvent};
@@ -164,9 +164,10 @@ describe('useGameState', () => {
 
   describe('computed guards', () => {
     describe('updateAvailable', () => {
-      it('returns false when status is null', () => {
-        const {updateAvailable} = useGameState();
-        expect(updateAvailable.value).toBe(false);
+      it('returns false before status is loaded', () => {
+        const state = useGameState();
+        expect(state.loading.value).toBe(true);
+        expect(state.updateAvailable.value).toBe(false);
       });
 
       it('returns false when game_version is null', async () => {
@@ -190,7 +191,7 @@ describe('useGameState', () => {
         const state2 = useGameState();
         state2.init();
         await vi.waitFor(() => {
-          expect(state2.status.value).not.toBeNull();
+          expect(state2.loading.value).toBe(false);
         });
         // The remoteVersion is still null because check_for_update never resolved,
         // but initWithStatus resolves it. Use a fresh instance:
@@ -593,7 +594,7 @@ describe('useGameState', () => {
       const state = useGameState();
       state.init();
       await vi.waitFor(() => {
-        expect(state.status.value).not.toBeNull();
+        expect(state.loading.value).toBe(false);
       });
 
       expect(listeners.has('process-status')).toBe(true);
@@ -608,7 +609,7 @@ describe('useGameState', () => {
       const state = useGameState();
       state.init();
       await vi.waitFor(() => {
-        expect(state.status.value).not.toBeNull();
+        expect(state.loading.value).toBe(false);
       });
 
       expect(mockInvoke).toHaveBeenCalledWith('get_game_status');
@@ -644,7 +645,7 @@ describe('useGameState', () => {
       const state = useGameState();
       state.init();
       await vi.waitFor(() => {
-        expect(state.status.value).not.toBeNull();
+        expect(state.loading.value).toBe(false);
       });
 
       expect(mockInvoke).not.toHaveBeenCalledWith('check_for_update');
@@ -672,7 +673,7 @@ describe('useGameState', () => {
       const state = useGameState();
       state.init();
       await vi.waitFor(() => {
-        expect(state.status.value).not.toBeNull();
+        expect(state.loading.value).toBe(false);
       });
 
       state.destroy();
@@ -680,6 +681,32 @@ describe('useGameState', () => {
       for (const fn of unlistenFns) {
         expect(fn).toHaveBeenCalledOnce();
       }
+    });
+
+    it('sets loading to false after successful init', async () => {
+      captureListeners();
+      mockInvoke.mockResolvedValue(makeGameStatus({installed: false}));
+
+      const state = useGameState();
+      expect(state.loading.value).toBe(true);
+
+      state.init();
+      await vi.waitFor(() => {
+        expect(state.loading.value).toBe(false);
+      });
+    });
+
+    it('sets loading to false after failed init', async () => {
+      captureListeners();
+      mockInvoke.mockRejectedValue(new Error('backend unavailable'));
+
+      const state = useGameState();
+      expect(state.loading.value).toBe(true);
+
+      state.init();
+      await vi.waitFor(() => {
+        expect(state.loading.value).toBe(false);
+      });
     });
 
     it('does not throw when destroy is called without init', () => {

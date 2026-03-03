@@ -40,11 +40,30 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
     let mod_library = game::find_mod_library(&app);
     let mod_available = mod_library.is_some();
 
+    match &mod_library {
+        Some(path) => log_info!("Mod library found: {}", path.display()),
+        None => log_warn!("Mod library not bundled, run pnpm build:mod"),
+    }
+
     let launcher_running = game::is_launcher_running();
 
     let result = match game::detect() {
         Some(info) => {
+            match info.installed_version {
+                Some(v) => log_info!("STFC found (v{v}): {}", info.executable.display()),
+                None => log_info!("STFC found: {}", info.executable.display()),
+            }
+
             let status = game::entitlements::check(&info.executable);
+            if status.all_granted() {
+                log_info!("Entitlements OK, mod injection ready");
+            } else {
+                let names: Vec<_> = status.missing.iter()
+                    .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
+                    .collect();
+                log_warn!("Missing entitlements: {}", names.join(", "));
+            }
+
             let game_running = game::is_running(&info.executable);
 
             // macOS: mod is "deployed" when entitlements are OK (injection via DYLD)
@@ -72,19 +91,22 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
                 launcher_running,
             }
         }
-        None => GameStatus {
-            installed: false,
-            install_dir: None,
-            executable: None,
-            game_version: None,
-            entitlements_ok: false,
-            granted_entitlements: vec![],
-            missing_entitlements: vec![],
-            mod_available,
-            mod_deployed: false,
-            game_running: false,
-            launcher_running,
-        },
+        None => {
+            log_warn!("STFC not found, game features will be unavailable");
+            GameStatus {
+                installed: false,
+                install_dir: None,
+                executable: None,
+                game_version: None,
+                entitlements_ok: false,
+                granted_entitlements: vec![],
+                missing_entitlements: vec![],
+                mod_available,
+                mod_deployed: false,
+                game_running: false,
+                launcher_running,
+            }
+        }
     };
 
     if result.game_running || result.launcher_running {

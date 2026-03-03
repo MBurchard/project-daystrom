@@ -5,6 +5,8 @@ import {onMounted, onUnmounted} from 'vue';
 const {
   version,
   status,
+  loading,
+  installed,
   error,
   actionError,
   actionPending,
@@ -37,18 +39,21 @@ onUnmounted(() => destroy());
       Failed to load game status: {{ error }}
     </p>
 
-    <section v-else-if="status">
+    <section v-else>
       <h2>Status</h2>
 
       <ul class="checklist">
-        <li :class="status.installed ? 'ok' : 'fail'">
+        <li v-if="loading" class="neutral">
+          Detecting STFC...
+        </li>
+        <li v-else :class="installed ? 'ok' : 'fail'">
           STFC installed
-          <template v-if="status.installed && status.game_version">
+          <template v-if="installed && status.game_version">
             (v{{ status.game_version }})
           </template>
         </li>
 
-        <li v-if="status.installed" :class="versionCheckClass">
+        <li v-if="installed" :class="versionCheckClass">
           <template v-if="updateAvailable">
             v{{ remoteVersion }} available
             <button :disabled="!canLaunchUpdater || actionPending" @click="openUpdater">
@@ -70,19 +75,19 @@ onUnmounted(() => destroy());
           Scopely Launcher running
         </li>
 
-        <li v-if="status.installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
+        <li v-if="installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
           Community Patch
           <button v-if="status.mod_available" :disabled="!canInstallMod || actionPending" @click="installMod">
             {{ status.mod_deployed ? 'Reinstall' : 'Install' }}
           </button>
         </li>
 
-        <li v-if="status.installed" :class="gameRunning ? 'ok' : 'fail'">
+        <li v-if="installed" :class="gameRunning ? 'ok' : 'fail'">
           Game running
         </li>
       </ul>
 
-      <button v-if="status.installed" :disabled="!canLaunch || actionPending" class="launch-btn" @click="launchGame">
+      <button v-if="installed" :disabled="!canLaunch || actionPending" class="launch-btn" @click="launchGame">
         Launch Game
       </button>
 
@@ -99,10 +104,6 @@ onUnmounted(() => destroy());
         Close the Scopely Launcher to continue. Do not start the game from there, use Daystrom instead.
       </p>
     </section>
-
-    <p v-else>
-      Loading...
-    </p>
   </main>
 </template>
 
@@ -144,8 +145,22 @@ body {
 }
 
 .checklist li.neutral::before {
-  content: '–';
-  color: #9e9e9e;
+  content: '';
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-right: 0.6rem;
+  vertical-align: middle;
+  position: relative;
+  top: -2px;
+  border-radius: 50%;
+  border: 2px solid #1a8acf;
+  background: conic-gradient(from 0deg, transparent 240deg, #1a8acf 360deg);
+  animation: radar-sweep 1.2s linear infinite;
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .checklist button {
