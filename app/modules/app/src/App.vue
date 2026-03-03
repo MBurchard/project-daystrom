@@ -76,7 +76,7 @@ onUnmounted(() => destroy());
         </li>
 
         <li v-if="installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
-          Community Patch
+          Community Mod
           <button v-if="status.mod_available" :disabled="!canInstallMod || actionPending" @click="installMod">
             {{ status.mod_deployed ? 'Reinstall' : 'Install' }}
           </button>
@@ -103,6 +103,7 @@ onUnmounted(() => destroy());
       <p v-else-if="launcherRunning" class="info-message">
         Close the Scopely Launcher to continue. Do not start the game from there, use Daystrom instead.
       </p>
+
     </section>
   </main>
 </template>
@@ -110,6 +111,12 @@ onUnmounted(() => destroy());
 <style>
 body {
   font-family: system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+.error,
+.info-message {
+  user-select: text;
 }
 </style>
 
@@ -166,6 +173,8 @@ body {
 .checklist button {
   margin-left: 0.5rem;
   font-size: 0.85rem;
+  position: relative;
+  top: -2px;
 }
 
 .launch-btn {
