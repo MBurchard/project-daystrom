@@ -168,13 +168,13 @@ fn verify_process_path(image_name: &str, expected_path: &Path) -> bool {
         "Get-Process -Name '{}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path",
         process_name
     );
+    let expected = expected_path.to_string_lossy().replace('/', "\\");
     silent_command("powershell")
         .args(["-NoProfile", "-Command", &ps_command])
         .output()
         .map(|out| {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let expected = expected_path.to_string_lossy();
-            stdout.lines().any(|line| line.trim().eq_ignore_ascii_case(expected.as_ref()))
+            stdout.lines().any(|line| line.trim().eq_ignore_ascii_case(&expected))
         })
         .unwrap_or(false)
 }
@@ -187,9 +187,9 @@ fn verify_process_path(image_name: &str, expected_path: &Path) -> bool {
 pub fn is_launcher_running() -> bool {
     #[cfg(target_os = "windows")]
     {
-        let path = LAUNCHER_PATH.get_or_init(|| windows::find_launcher());
+        let path = LAUNCHER_PATH.get_or_init(windows::find_launcher);
         let Some(path) = path.as_ref() else { return false };
-        return is_verified_process_running("launcher.exe", path);
+        is_verified_process_running("launcher.exe", path)
     }
     #[cfg(not(target_os = "windows"))]
     is_process_active("Star Trek Fleet Command.app/Contents/MacOS/launcher")
@@ -321,7 +321,7 @@ pub fn is_game_running() -> bool {
     {
         let path = GAME_PATH.get_or_init(|| detect().map(|info| info.executable));
         let Some(path) = path.as_ref() else { return false };
-        return is_verified_process_running("prime.exe", path);
+        is_verified_process_running("prime.exe", path)
     }
     #[cfg(not(target_os = "windows"))]
     is_process_active("Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command")
