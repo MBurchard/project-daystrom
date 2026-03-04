@@ -1,5 +1,8 @@
+use std::thread;
+
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+#[cfg(target_os = "windows")]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use ts_rs::TS;
 
@@ -14,24 +17,18 @@ use_log!("Commands");
 pub struct GameStatus {
     /// Whether STFC was found on this machine.
     pub installed: bool,
-    /// Root directory of the game installation, if found.
-    pub install_dir: Option<String>,
-    /// Full path to the game executable, if found.
-    pub executable: Option<String>,
     /// Installed game version from the `.version` file, if available.
     pub game_version: Option<u32>,
-    /// Whether all four required entitlements are set on the game executable.
-    pub entitlements_ok: bool,
-    /// Entitlement keys that are present and set to `true`.
-    pub granted_entitlements: Vec<String>,
-    /// Entitlement keys that are missing (empty when `entitlements_ok` is true).
-    pub missing_entitlements: Vec<String>,
     /// Whether the mod library was found in the app's resource directory.
     pub mod_available: bool,
+    /// Whether the mod can be installed or updated (game found and mod library bundled).
+    pub mod_installable: bool,
     /// Whether the mod is deployed and ready (macOS: entitlements OK, Windows: DLL up to date).
     pub mod_deployed: bool,
     /// Whether the mod DLL exists but is outdated (hash mismatch). Always `false` on macOS.
     pub mod_outdated: bool,
+    /// Whether the mod can be removed from disk (Windows: DLL deployed or outdated, macOS: always false).
+    pub mod_removable: bool,
     /// Whether the game process is currently running.
     pub game_running: bool,
     /// Whether the Scopely launcher is currently running.
@@ -85,17 +82,22 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let (mod_deployed, mod_outdated) = (false, false);
 
+            // macOS: nothing to remove (DYLD injection), Windows: DLL exists on disk
+            #[cfg(target_os = "macos")]
+            let mod_removable = false;
+            #[cfg(target_os = "windows")]
+            let mod_removable = mod_deployed || mod_outdated;
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let mod_removable = false;
+
             GameStatus {
                 installed: true,
-                install_dir: Some(info.install_dir.display().to_string()),
-                executable: Some(info.executable.display().to_string()),
                 game_version: info.installed_version,
-                entitlements_ok: status.all_granted(),
-                granted_entitlements: status.granted.iter().map(|s| s.to_string()).collect(),
-                missing_entitlements: status.missing.iter().map(|s| s.to_string()).collect(),
                 mod_available,
+                mod_installable: mod_available,
                 mod_deployed,
                 mod_outdated,
+                mod_removable,
                 game_running,
                 launcher_running,
             }
@@ -104,15 +106,12 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
             log_warn!("STFC not found, game features will be unavailable");
             GameStatus {
                 installed: false,
-                install_dir: None,
-                executable: None,
                 game_version: None,
-                entitlements_ok: false,
-                granted_entitlements: vec![],
-                missing_entitlements: vec![],
                 mod_available,
+                mod_installable: false,
                 mod_deployed: false,
                 mod_outdated: false,
+                mod_removable: false,
                 game_running: false,
                 launcher_running,
             }
@@ -120,7 +119,17 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
     };
 
     if result.game_running || result.launcher_running {
-        crate::monitor::start(app, result.game_running, result.launcher_running);
+        crate::monitor::start(app.clone(), result.game_running, result.launcher_running);
+    }
+
+    // Kick off an async update check if the game is installed
+    if result.installed {
+        thread::spawn(move || {
+            match check_for_update() {
+                Ok(check) => { let _ = app.emit("update-check", check); }
+                Err(_) => { let _ = app.emit("update-check-failed", ()); }
+            }
+        });
     }
 
     result
@@ -158,35 +167,39 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<GameStatus, String> {
 /// Returns the refreshed game status regardless of whether the user confirmed or cancelled.
 #[tauri::command]
 pub fn remove_mod(window: tauri::WebviewWindow) -> Result<GameStatus, String> {
-    let info = game::detect().ok_or("STFC not found")?;
-
-    if game::is_running(&info.executable) {
-        return Err("Cannot remove mod while the game is running".to_string());
-    }
-
-    let confirmed = window.dialog()
-        .message("Remove the Community Mod?\n\n\
-                  After removal, the game can only be launched through the Scopely Launcher.")
-        .title("Remove Mod")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
-        .blocking_show();
-
-    if !confirmed {
-        return Ok(get_game_status(window.app_handle().clone()));
-    }
-
-    #[cfg(target_os = "macos")]
+    // macOS: mod is injected via DYLD at launch, nothing to remove from disk
+    #[cfg(not(target_os = "windows"))]
+    #[allow(clippy::needless_return)]
     {
-        // TODO: macOS mod is injected via DYLD at launch, nothing to remove from disk
+        log_warn!("remove_mod called on macOS, this should not happen");
+        return Ok(get_game_status(window.app_handle().clone()));
     }
 
     #[cfg(target_os = "windows")]
     {
-        game::remove_mod(&info.install_dir)?;
-    }
+        let info = game::detect().ok_or("STFC not found")?;
 
-    Ok(get_game_status(window.app_handle().clone()))
+        if game::is_running(&info.executable) {
+            return Err("Cannot remove mod while the game is running".to_string());
+        }
+
+        let confirmed = window.dialog()
+            .message("Remove the Community Mod?\n\n\
+                      After removal, the game can only be launched through the Scopely Launcher.")
+            .title("Remove Mod")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
+            .blocking_show();
+
+        if !confirmed {
+            log_info!("Mod removal cancelled by user");
+            return Ok(get_game_status(window.app_handle().clone()));
+        }
+
+        log_info!("User confirmed mod removal");
+        game::remove_mod(&info.install_dir)?;
+        Ok(get_game_status(window.app_handle().clone()))
+    }
 }
 
 /// Result of checking the Scopely update API for a game update.
@@ -202,7 +215,6 @@ pub struct UpdateCheck {
 }
 
 /// Check whether a game update is available by comparing the local `.version` file against the Scopely update API.
-#[tauri::command]
 pub fn check_for_update() -> Result<UpdateCheck, String> {
     let info = game::detect().ok_or("STFC not found")?;
     let installed = info.installed_version.ok_or("Could not read installed game version")?;

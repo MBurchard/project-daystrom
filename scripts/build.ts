@@ -115,19 +115,23 @@ function typecheckFrontend(): void {
 }
 
 /**
- * Run the backend Rust type check (cargo check).
+ * Run the backend Rust type check (cargo clippy) and regenerate TypeScript bindings via ts-rs.
  */
 function typecheckBackend(): void {
   log.info('Type-checking backend...');
   cargo('clippy');
+  log.info('Generating TypeScript bindings...');
+  cargo('test export_bindings');
 }
 
 /**
  * Run both frontend and backend type checks.
+ *
+ * Backend runs first so that ts-rs bindings are up to date before vue-tsc checks the frontend.
  */
 function typecheck(): void {
-  typecheckFrontend();
   typecheckBackend();
+  typecheckFrontend();
 }
 
 // -- test -------------------------------------------------------------------

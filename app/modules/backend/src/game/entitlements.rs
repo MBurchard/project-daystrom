@@ -16,8 +16,6 @@ const REQUIRED: [&str; 4] = [
 
 /// Result of checking the game executable's code-signing entitlements.
 pub struct EntitlementStatus {
-    /// Entitlement keys that are present and set to `true`.
-    pub granted: Vec<&'static str>,
     /// Entitlement keys that are absent or not `true`.
     pub missing: Vec<&'static str>,
 }
@@ -117,26 +115,17 @@ pub fn check(executable: &Path) -> EntitlementStatus {
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             log_debug!("codesign failed: {stderr}");
-            return EntitlementStatus { granted: vec![], missing: REQUIRED.to_vec() };
+            return EntitlementStatus { missing: REQUIRED.to_vec() };
         }
         Err(e) => {
             log_debug!("Could not run codesign: {e}");
-            return EntitlementStatus { granted: vec![], missing: REQUIRED.to_vec() };
+            return EntitlementStatus { missing: REQUIRED.to_vec() };
         }
     };
 
-    let mut granted = vec![];
-    let mut missing = vec![];
+    let missing: Vec<_> = REQUIRED.iter().copied().filter(|key| !has_entitlement(&xml, key)).collect();
 
-    for &key in &REQUIRED {
-        if has_entitlement(&xml, key) {
-            granted.push(key);
-        } else {
-            missing.push(key);
-        }
-    }
-
-    EntitlementStatus { granted, missing }
+    EntitlementStatus { missing }
 }
 
 /// XML plist containing the four required entitlements for mod injection.

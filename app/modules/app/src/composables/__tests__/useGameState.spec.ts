@@ -43,15 +43,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 function makeGameStatus(overrides: Partial<GameStatus> = {}): GameStatus {
   return {
     installed: true,
-    install_dir: '/Applications/STFC.app',
-    executable: '/Applications/STFC.app/Contents/MacOS/stfc',
     game_version: 100,
-    entitlements_ok: true,
-    granted_entitlements: [],
-    missing_entitlements: [],
     mod_available: true,
+    mod_installable: true,
     mod_deployed: true,
     mod_outdated: false,
+    mod_removable: false,
     game_running: false,
     launcher_running: false,
     ...overrides,
@@ -101,12 +98,35 @@ async function initWithStatus(statusOverrides: Partial<GameStatus> = {}) {
     if (cmd === 'get_game_status') {
       return Promise.resolve(status);
     }
-    if (cmd === 'check_for_update') {
-      return Promise.resolve({
-        installed_version: status.game_version ?? 100,
-        remote_version: status.game_version,
-        update_available: false,
-      } satisfies UpdateCheck);
+    return Promise.resolve(undefined);
+  });
+
+  const state = useGameState();
+  state.init();
+  await vi.waitFor(() => {
+    expect(state.loading.value).toBe(false);
+  });
+
+  // Simulate the backend's async update check event
+  emitEvent('update-check', {
+    installed_version: status.game_version ?? 100,
+    remote_version: status.game_version,
+    update_available: false,
+  } satisfies UpdateCheck);
+
+  return {state, listeners, emitEvent};
+}
+
+/**
+ * Init the composable without emitting an update-check event.
+ * Useful for testing the state before the backend responds.
+ * @returns the composable instance
+ */
+async function initWithoutUpdateCheck() {
+  captureListeners();
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'get_game_status') {
+      return Promise.resolve(makeGameStatus());
     }
     return Promise.resolve(undefined);
   });
@@ -117,7 +137,7 @@ async function initWithStatus(statusOverrides: Partial<GameStatus> = {}) {
     expect(state.loading.value).toBe(false);
   });
 
-  return {state, listeners, emitEvent};
+  return {state};
 }
 
 /**
@@ -127,26 +147,27 @@ async function initWithStatus(statusOverrides: Partial<GameStatus> = {}) {
  * @returns the composable instance
  */
 async function initWithUpdateAvailable(statusOverrides: Partial<GameStatus> = {}) {
+  const {emitEvent} = captureListeners();
+
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'get_game_status') {
       return Promise.resolve(makeGameStatus({game_version: 100, ...statusOverrides}));
     }
-    if (cmd === 'check_for_update') {
-      return Promise.resolve({
-        installed_version: 100,
-        remote_version: 200,
-        update_available: true,
-      } satisfies UpdateCheck);
-    }
     return Promise.resolve(undefined);
   });
-  captureListeners();
 
   const state = useGameState();
   state.init();
   await vi.waitFor(() => {
-    expect(state.remoteVersion.value).toBe(200);
+    expect(state.loading.value).toBe(false);
   });
+
+  // Simulate the backend's async update check event
+  emitEvent('update-check', {
+    installed_version: 100,
+    remote_version: 200,
+    update_available: true,
+  } satisfies UpdateCheck);
 
   return {state};
 }
@@ -177,26 +198,11 @@ describe('useGameState', () => {
       });
 
       it('returns false when remoteVersion is null', async () => {
-        await initWithStatus();
-        // checkForUpdate hasn't resolved with a different version
-        // Let's override the mock to not call check_for_update
-        mockInvoke.mockImplementation((cmd: string) => {
-          if (cmd === 'get_game_status') {
-            return Promise.resolve(makeGameStatus());
-          }
-          if (cmd === 'check_for_update') {
-            return new Promise(() => {}); // never resolves
-          }
-          return Promise.resolve(undefined);
-        });
-        const state2 = useGameState();
-        state2.init();
-        await vi.waitFor(() => {
-          expect(state2.loading.value).toBe(false);
-        });
-        // The remoteVersion is still null because check_for_update never resolved,
-        // but initWithStatus resolves it. Use a fresh instance:
-        expect(state2.updateAvailable.value).toBe(false);
+        const {state} = await initWithoutUpdateCheck();
+
+        // No update-check event emitted yet, so the remoteVersion is still null
+        expect(state.remoteVersion.value).toBeNull();
+        expect(state.updateAvailable.value).toBe(false);
       });
 
       it('returns false when remote version equals installed version', async () => {
@@ -216,18 +222,8 @@ describe('useGameState', () => {
         expect(state.canLaunch.value).toBeTruthy();
       });
 
-      it('returns false when not installed', async () => {
-        const {state} = await initWithStatus({installed: false});
-        expect(state.canLaunch.value).toBeFalsy();
-      });
-
       it('returns false when mod is not deployed', async () => {
         const {state} = await initWithStatus({mod_deployed: false});
-        expect(state.canLaunch.value).toBeFalsy();
-      });
-
-      it('returns false when mod is not available', async () => {
-        const {state} = await initWithStatus({mod_available: false});
         expect(state.canLaunch.value).toBeFalsy();
       });
 
@@ -253,24 +249,10 @@ describe('useGameState', () => {
         expect(state.versionCheckClass.value).toBe('warn');
       });
 
-      it('returns "neutral" when update check failed', async () => {
-        mockInvoke.mockImplementation((cmd: string) => {
-          if (cmd === 'get_game_status') {
-            return Promise.resolve(makeGameStatus());
-          }
-          if (cmd === 'check_for_update') {
-            return Promise.reject(new Error('network error'));
-          }
-          return Promise.resolve(undefined);
-        });
-        captureListeners();
+      it('returns "neutral" when no update-check event received yet', async () => {
+        const {state} = await initWithoutUpdateCheck();
 
-        const state = useGameState();
-        state.init();
-        await vi.waitFor(() => {
-          expect(state.updateCheckFailed.value).toBe(true);
-        });
-
+        // No update-check event emitted, remoteVersion is still null
         expect(state.versionCheckClass.value).toBe('neutral');
       });
 
@@ -286,13 +268,13 @@ describe('useGameState', () => {
     });
 
     describe('canInstallMod', () => {
-      it('returns true when installed, nothing running, no update', async () => {
+      it('returns true when mod_installable, nothing running, no update', async () => {
         const {state} = await initWithStatus();
         expect(state.canInstallMod.value).toBeTruthy();
       });
 
-      it('returns false when not installed', async () => {
-        const {state} = await initWithStatus({installed: false});
+      it('returns false when mod_installable is false', async () => {
+        const {state} = await initWithStatus({mod_installable: false});
         expect(state.canInstallMod.value).toBeFalsy();
       });
 
@@ -305,42 +287,27 @@ describe('useGameState', () => {
         const {state} = await initWithStatus({launcher_running: true});
         expect(state.canInstallMod.value).toBeFalsy();
       });
-
-      it('returns false when mod is not available', async () => {
-        const {state} = await initWithStatus({mod_available: false});
-        expect(state.canInstallMod.value).toBeFalsy();
-      });
     });
 
     describe('canRemoveMod', () => {
-      it('returns true when installed, mod deployed, nothing running', async () => {
-        const {state} = await initWithStatus({mod_deployed: true});
+      it('returns true when mod_removable is true, nothing running', async () => {
+        const {state} = await initWithStatus({mod_removable: true});
         expect(state.canRemoveMod.value).toBeTruthy();
       });
 
-      it('returns false when not installed', async () => {
-        const {state} = await initWithStatus({installed: false});
-        expect(state.canRemoveMod.value).toBeFalsy();
-      });
-
-      it('returns false when mod is not deployed', async () => {
-        const {state} = await initWithStatus({mod_deployed: false});
+      it('returns false when mod_removable is false', async () => {
+        const {state} = await initWithStatus({mod_removable: false});
         expect(state.canRemoveMod.value).toBeFalsy();
       });
 
       it('returns false when game is running', async () => {
-        const {state} = await initWithStatus({mod_deployed: true, game_running: true});
+        const {state} = await initWithStatus({mod_removable: true, game_running: true});
         expect(state.canRemoveMod.value).toBeFalsy();
       });
 
       it('returns false when launcher is running', async () => {
-        const {state} = await initWithStatus({mod_deployed: true, launcher_running: true});
+        const {state} = await initWithStatus({mod_removable: true, launcher_running: true});
         expect(state.canRemoveMod.value).toBeFalsy();
-      });
-
-      it('returns true when mod is outdated', async () => {
-        const {state} = await initWithStatus({mod_deployed: false, mod_outdated: true});
-        expect(state.canRemoveMod.value).toBeTruthy();
       });
     });
 
@@ -365,51 +332,9 @@ describe('useGameState', () => {
   // ---- Actions ----------------------------------------------------------------------
 
   describe('actions', () => {
-    describe('checkForUpdate', () => {
-      it('sets remoteVersion on success', async () => {
-        mockInvoke.mockResolvedValue({
-          installed_version: 100,
-          remote_version: 200,
-          update_available: true,
-        } satisfies UpdateCheck);
-
-        const state = useGameState();
-        state.checkForUpdate();
-        await vi.waitFor(() => {
-          expect(state.remoteVersion.value).toBe(200);
-        });
-
-        expect(state.updateCheckFailed.value).toBe(false);
-      });
-
-      it('falls back to installed_version when remote_version is null', async () => {
-        mockInvoke.mockResolvedValue({
-          installed_version: 100,
-          remote_version: null,
-          update_available: false,
-        } satisfies UpdateCheck);
-
-        const state = useGameState();
-        state.checkForUpdate();
-        await vi.waitFor(() => {
-          expect(state.remoteVersion.value).toBe(100);
-        });
-      });
-
-      it('sets updateCheckFailed on error', async () => {
-        mockInvoke.mockRejectedValue(new Error('network error'));
-
-        const state = useGameState();
-        state.checkForUpdate();
-        await vi.waitFor(() => {
-          expect(state.updateCheckFailed.value).toBe(true);
-        });
-      });
-    });
-
     describe('installMod', () => {
       it('updates status on success', async () => {
-        const newStatus = makeGameStatus({entitlements_ok: true});
+        const newStatus = makeGameStatus({mod_deployed: true});
         mockInvoke.mockResolvedValue(newStatus);
 
         const state = useGameState();
@@ -608,7 +533,7 @@ describe('useGameState', () => {
 
     it('updates status on game-status event', async () => {
       const {state, emitEvent} = await initWithStatus();
-      const newStatus = makeGameStatus({entitlements_ok: false, game_running: true});
+      const newStatus = makeGameStatus({mod_deployed: false, game_running: true});
 
       emitEvent('game-status', newStatus);
 
@@ -629,9 +554,8 @@ describe('useGameState', () => {
       expect(state.updateCheckFailed.value).toBe(false);
     });
 
-    it('ignores null remote_version in update-check event', async () => {
+    it('falls back to installed_version when remote_version is null', async () => {
       const {state, emitEvent} = await initWithStatus();
-      const previousRemote = state.remoteVersion.value;
 
       emitEvent('update-check', {
         installed_version: 100,
@@ -639,7 +563,40 @@ describe('useGameState', () => {
         update_available: false,
       } satisfies UpdateCheck);
 
-      expect(state.remoteVersion.value).toBe(previousRemote);
+      expect(state.remoteVersion.value).toBe(100);
+    });
+
+    it('sets updateCheckFailed on update-check-failed event', async () => {
+      const {state, emitEvent} = await initWithStatus();
+
+      emitEvent('update-check-failed', undefined);
+
+      expect(state.updateCheckFailed.value).toBe(true);
+    });
+
+    it('resets updateCheckFailed when a successful update-check arrives', async () => {
+      const {state, emitEvent} = await initWithStatus();
+
+      // Simulate a failed check
+      emitEvent('update-check-failed', undefined);
+      expect(state.updateCheckFailed.value).toBe(true);
+
+      // Successful check clears the failure
+      emitEvent('update-check', {
+        installed_version: 100,
+        remote_version: 100,
+        update_available: false,
+      } satisfies UpdateCheck);
+
+      expect(state.updateCheckFailed.value).toBe(false);
+    });
+
+    it('returns "neutral" versionCheckClass when update check failed', async () => {
+      const {state, emitEvent} = await initWithStatus();
+
+      emitEvent('update-check-failed', undefined);
+
+      expect(state.versionCheckClass.value).toBe('neutral');
     });
   });
 
@@ -649,19 +606,7 @@ describe('useGameState', () => {
     it('loads app version on init', async () => {
       mockGetVersion.mockResolvedValue('2.5.0');
       captureListeners();
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'get_game_status') {
-          return Promise.resolve(makeGameStatus());
-        }
-        if (cmd === 'check_for_update') {
-          return Promise.resolve({
-            installed_version: 100,
-            remote_version: 100,
-            update_available: false,
-          } satisfies UpdateCheck);
-        }
-        return Promise.resolve(undefined);
-      });
+      mockInvoke.mockResolvedValue(makeGameStatus());
 
       const state = useGameState();
       state.init();
@@ -670,7 +615,7 @@ describe('useGameState', () => {
       });
     });
 
-    it('registers three event listeners on init', async () => {
+    it('registers four event listeners on init', async () => {
       const {listeners} = captureListeners();
       mockInvoke.mockResolvedValue(makeGameStatus({installed: false}));
 
@@ -683,6 +628,7 @@ describe('useGameState', () => {
       expect(listeners.has('process-status')).toBe(true);
       expect(listeners.has('game-status')).toBe(true);
       expect(listeners.has('update-check')).toBe(true);
+      expect(listeners.has('update-check-failed')).toBe(true);
     });
 
     it('calls get_game_status on init', async () => {
@@ -698,42 +644,6 @@ describe('useGameState', () => {
       expect(mockInvoke).toHaveBeenCalledWith('get_game_status');
     });
 
-    it('calls check_for_update when game is installed', async () => {
-      captureListeners();
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'get_game_status') {
-          return Promise.resolve(makeGameStatus({installed: true}));
-        }
-        if (cmd === 'check_for_update') {
-          return Promise.resolve({
-            installed_version: 100,
-            remote_version: 100,
-            update_available: false,
-          } satisfies UpdateCheck);
-        }
-        return Promise.resolve(undefined);
-      });
-
-      const state = useGameState();
-      state.init();
-      await vi.waitFor(() => {
-        expect(mockInvoke).toHaveBeenCalledWith('check_for_update');
-      });
-    });
-
-    it('skips check_for_update when game is not installed', async () => {
-      captureListeners();
-      mockInvoke.mockResolvedValue(makeGameStatus({installed: false}));
-
-      const state = useGameState();
-      state.init();
-      await vi.waitFor(() => {
-        expect(state.loading.value).toBe(false);
-      });
-
-      expect(mockInvoke).not.toHaveBeenCalledWith('check_for_update');
-    });
-
     it('sets error when get_game_status fails', async () => {
       captureListeners();
       mockInvoke.mockRejectedValue(new Error('backend unavailable'));
@@ -746,7 +656,7 @@ describe('useGameState', () => {
     });
 
     it('calls all unlisten functions on destroy', async () => {
-      const unlistenFns = [vi.fn(), vi.fn(), vi.fn()];
+      const unlistenFns = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
       let callIndex = 0;
       mockListen.mockImplementation((_name: string, _cb: unknown) => {
         return Promise.resolve(unlistenFns[callIndex++]);

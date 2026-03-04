@@ -63,7 +63,7 @@ onUnmounted(() => destroy());
             </button>
           </template>
           <template v-else-if="updateCheckFailed">
-            Version check not available
+            Version check failed
           </template>
           <template v-else-if="remoteVersion != null">
             Version check: up to date
@@ -82,9 +82,7 @@ onUnmounted(() => destroy());
           <button v-if="status.mod_available" :disabled="!canInstallMod || actionPending" @click="installMod">
             {{ status.mod_deployed ? 'Reinstall' : status.mod_outdated ? 'Update' : 'Install' }}
           </button>
-          <!-- eslint-disable-next-line style/max-len -->
-          <button v-if="status.mod_deployed || status.mod_outdated" :disabled="!canRemoveMod || actionPending"
-              @click="removeMod">
+          <button v-if="status.mod_removable" :disabled="!canRemoveMod || actionPending" @click="removeMod">
             Remove
           </button>
         </li>

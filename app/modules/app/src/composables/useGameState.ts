@@ -1,27 +1,23 @@
+import {getLogger} from '@app/log';
 import type {GameStatus} from '@generated/GameStatus';
 import type {ProcessStatus} from '@generated/ProcessStatus';
 import type {UpdateCheck} from '@generated/UpdateCheck';
-import type {Ref} from 'vue';
-
-import {getLogger} from '@app/log';
 import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
+import type {Ref} from 'vue';
 import {computed, ref} from 'vue';
 
 const log = getLogger('App');
 
 const DEFAULT_GAME_STATUS: GameStatus = {
   installed: false,
-  install_dir: null,
-  executable: null,
   game_version: null,
-  entitlements_ok: false,
-  granted_entitlements: [],
-  missing_entitlements: [],
   mod_available: false,
+  mod_installable: false,
   mod_deployed: false,
   mod_outdated: false,
+  mod_removable: false,
   game_running: false,
   launcher_running: false,
 };
@@ -73,8 +69,6 @@ export interface GameState {
   openUpdater: () => void;
   /** Launch the game with the mod injected. */
   launchGame: () => void;
-  /** Check for a game update via the Scopely update API. */
-  checkForUpdate: () => void;
   /** Register event listeners and load the initial state. Call from onMounted. */
   init: () => void;
   /** Unregister event listeners. Call from onUnmounted. */
@@ -105,6 +99,7 @@ export function useGameState(): GameState {
   let unlistenProcessStatus: (() => void) | null = null;
   let unlistenGameStatus: (() => void) | null = null;
   let unlistenUpdateCheck: (() => void) | null = null;
+  let unlistenUpdateCheckFailed: (() => void) | null = null;
 
   // ---- Computed Guards --------------------------------------------------------------
 
@@ -128,12 +123,10 @@ export function useGameState(): GameState {
 
   /**
    * Whether all conditions for launching the game are met.
-   * @returns true when installed, mod deployed, mod available, nothing running, no update
+   * @returns true when mod deployed (implies installed), nothing running, no update
    */
   const canLaunch = computed(() => {
-    const s = status.value;
-    return s.installed && s.mod_deployed && s.mod_available &&
-      !gameRunning.value && !launcherRunning.value && !updateAvailable.value;
+    return status.value.mod_deployed && !updateAvailable.value && !gameRunning.value && !launcherRunning.value;
   });
 
   /**
@@ -155,22 +148,18 @@ export function useGameState(): GameState {
 
   /**
    * Whether the mod install/reinstall button should be enabled.
-   * @returns true when game is installed, mod available, nothing running, and no update pending
+   * @returns true when mod_installable (implies installed and mod available), nothing running, no update
    */
   const canInstallMod = computed(() => {
-    const s = status.value;
-    return s.installed && s.mod_available &&
-      !gameRunning.value && !launcherRunning.value && !updateAvailable.value;
+    return status.value.mod_installable && !updateAvailable.value && !gameRunning.value && !launcherRunning.value;
   });
 
   /**
    * Whether the mod remove button should be enabled.
-   * @returns true when installed, mod deployed or outdated, nothing running
+   * @returns true when mod_removable (implies installed) and nothing running
    */
   const canRemoveMod = computed(() => {
-    const s = status.value;
-    return s.installed && (s.mod_deployed || s.mod_outdated) &&
-      !gameRunning.value && !launcherRunning.value;
+    return status.value.mod_removable && !gameRunning.value && !launcherRunning.value;
   });
 
   /**
@@ -196,8 +185,7 @@ export function useGameState(): GameState {
       .then(onSuccess)
       .catch((err) => {
         actionError.value = String(err);
-      })
-      .finally(() => {
+      }).finally(() => {
         actionPending.value = false;
       });
   }
@@ -211,20 +199,6 @@ export function useGameState(): GameState {
     status.value = result;
     gameRunning.value = result.game_running;
     launcherRunning.value = result.launcher_running;
-  }
-
-  /**
-   * Check for a game update via the Scopely update API and cache the result.
-   */
-  function checkForUpdate(): void {
-    invoke<UpdateCheck>('check_for_update')
-      .then((result) => {
-        updateCheckFailed.value = false;
-        remoteVersion.value = result.remote_version ?? result.installed_version;
-      })
-      .catch(() => {
-        updateCheckFailed.value = true;
-      });
   }
 
   /**
@@ -273,13 +247,11 @@ export function useGameState(): GameState {
   function init(): void {
     log.debug('App.vue mounted');
 
-    getVersion()
-      .then((v) => {
-        version.value = v;
-      })
-      .catch((err) => {
-        log.error(`Failed to get app version: ${err}`);
-      });
+    getVersion().then((v) => {
+      version.value = v;
+    }).catch((err) => {
+      log.error(`Failed to get app version: ${err}`);
+    });
 
     // Backend pushes process state changes while monitoring
     listen<ProcessStatus>('process-status', (event) => {
@@ -288,58 +260,53 @@ export function useGameState(): GameState {
       }
       launcherRunning.value = event.payload.launcher_running;
       gameRunning.value = event.payload.game_running;
-    })
-      .then((unlisten) => {
-        unlistenProcessStatus = unlisten;
-      })
-      .catch((err) => {
-        log.error(`Failed to listen for process-status: ${err}`);
-      });
+    }).then((unlisten) => {
+      unlistenProcessStatus = unlisten;
+    }).catch((err) => {
+      log.error(`Failed to listen for process-status: ${err}`);
+    });
 
     // Backend pushes full status refresh when a watched process exits
     listen<GameStatus>('game-status', (event) => {
       status.value = event.payload;
       gameRunning.value = event.payload.game_running;
       launcherRunning.value = event.payload.launcher_running;
-    })
-      .then((unlisten) => {
-        unlistenGameStatus = unlisten;
-      })
-      .catch((err) => {
-        log.error(`Failed to listen for game-status: ${err}`);
-      });
+    }).then((unlisten) => {
+      unlistenGameStatus = unlisten;
+    }).catch((err) => {
+      log.error(`Failed to listen for game-status: ${err}`);
+    });
 
-    // Backend pushes update check results during periodic API rechecks
+    // Backend pushes update check results (initial + periodic rechecks from monitor)
     listen<UpdateCheck>('update-check', (event) => {
       updateCheckFailed.value = false;
-      if (event.payload.remote_version != null) {
-        remoteVersion.value = event.payload.remote_version;
-      }
-    })
-      .then((unlisten) => {
-        unlistenUpdateCheck = unlisten;
-      })
-      .catch((err) => {
-        log.error(`Failed to listen for update-check: ${err}`);
-      });
+      remoteVersion.value = event.payload.remote_version ?? event.payload.installed_version;
+    }).then((unlisten) => {
+      unlistenUpdateCheck = unlisten;
+    }).catch((err) => {
+      log.error(`Failed to listen for update-check: ${err}`);
+    });
+
+    // Backend pushes this event when the update check fails (network error, API down, etc.)
+    listen('update-check-failed', () => {
+      updateCheckFailed.value = true;
+    }).then((unlisten) => {
+      unlistenUpdateCheckFailed = unlisten;
+    }).catch((err) => {
+      log.error(`Failed to listen for update-check-failed: ${err}`);
+    });
 
     // Initial full detection (once)
-    invoke<GameStatus>('get_game_status')
-      .then((result) => {
-        status.value = result;
-        gameRunning.value = result.game_running;
-        launcherRunning.value = result.launcher_running;
-        if (result.installed) {
-          checkForUpdate();
-        }
-      })
-      .catch((err) => {
-        error.value = String(err);
-        log.error(`Failed to get game status: ${err}`);
-      })
-      .finally(() => {
-        loading.value = false;
-      });
+    invoke<GameStatus>('get_game_status').then((result) => {
+      status.value = result;
+      gameRunning.value = result.game_running;
+      launcherRunning.value = result.launcher_running;
+    }).catch((err) => {
+      error.value = String(err);
+      log.error(`Failed to get game status: ${err}`);
+    }).finally(() => {
+      loading.value = false;
+    });
   }
 
   /**
@@ -355,6 +322,9 @@ export function useGameState(): GameState {
     }
     if (unlistenUpdateCheck) {
       unlistenUpdateCheck();
+    }
+    if (unlistenUpdateCheckFailed) {
+      unlistenUpdateCheckFailed();
     }
   }
 
@@ -381,7 +351,6 @@ export function useGameState(): GameState {
     removeMod,
     openUpdater,
     launchGame,
-    checkForUpdate,
     init,
     destroy,
   };
