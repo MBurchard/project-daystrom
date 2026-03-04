@@ -31,7 +31,7 @@ const TAURI_APP_PATH = join(APP_DIR, 'modules', 'backend');
 
 interface PlatformConfig {
   target: string;
-  dylib: string;
+  library: string;
   xmakePlatform: string;
   xmakeArch: string;
 }
@@ -39,13 +39,13 @@ interface PlatformConfig {
 const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
   darwin: {
     target: 'stfc-community-patch',
-    dylib: 'build/macosx/arm64/release/libstfc-community-patch.dylib',
+    library: 'build/macosx/arm64/release/libstfc-community-patch.dylib',
     xmakePlatform: 'macosx',
     xmakeArch: 'arm64',
   },
   win32: {
     target: 'stfc-community-patch',
-    dylib: 'build/windows/x64/release/stfc-community-patch.dll',
+    library: 'build/windows/x64/release/stfc-community-patch.dll',
     xmakePlatform: 'windows',
     xmakeArch: 'x64',
   },
@@ -187,7 +187,7 @@ function testAll(): void {
 // -- build ------------------------------------------------------------------
 
 /**
- * Build the mod dylib and copy it to app/resources/mod/.
+ * Build the mod library and copy it to app/resources/mod/.
  */
 function buildMod(): void {
   const config = PLATFORM_CONFIG[process.platform];
@@ -210,14 +210,14 @@ function buildMod(): void {
   log.info(`Building ${config.target}...`);
   execSync(`xmake build -y ${config.target}`, {cwd: MOD_DIR, stdio: 'inherit'});
 
-  const src = join(MOD_DIR, config.dylib);
+  const src = join(MOD_DIR, config.library);
   const dest = join(MOD_OUTPUT_DIR, basename(src));
   cpSync(src, dest);
   log.info(`Copied ${dest}`);
 }
 
 /**
- * Build the Tauri app bundle (always rebuilds the mod dylib first).
+ * Build the Tauri app bundle (always rebuilds the mod library first).
  */
 function buildApp(): void {
   buildMod();
