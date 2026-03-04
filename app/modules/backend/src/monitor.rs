@@ -11,7 +11,7 @@ use crate::use_log;
 use_log!("Monitor");
 
 /// Interval between process checks.
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Interval for re-checking the Scopely update API while the launcher is open.
 const API_RECHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -19,15 +19,12 @@ const API_RECHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// Flag indicating whether a monitor thread is currently active.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// Start background process monitoring.
+/// Start the permanent background process monitor.
 ///
-/// Spawns a thread that polls game and launcher process status every 5 seconds
-/// and pushes state changes to the frontend via Tauri events. Stops automatically
-/// when no watched processes are running.
-///
-/// `initial_game` / `initial_launcher` reflect the expected state right after launch
-/// so the first poll does not emit a spurious change event.
-pub fn start(app: tauri::AppHandle, initial_game: bool, initial_launcher: bool) {
+/// Spawns a thread that polls game and launcher process status every 2 seconds and pushes state changes to the frontend
+/// via Tauri events. Runs for the entire lifetime of the application.
+/// Safe to call multiple times; subsequent calls are no-ops.
+pub fn start(app: tauri::AppHandle) {
     if ACTIVE.swap(true, Ordering::SeqCst) {
         log_debug!("Monitor already active");
         return;
@@ -35,20 +32,18 @@ pub fn start(app: tauri::AppHandle, initial_game: bool, initial_launcher: bool) 
 
     log_debug!("Starting process monitor");
     thread::spawn(move || {
-        run_loop(app, initial_game, initial_launcher);
-        ACTIVE.store(false, Ordering::Release);
-        log_debug!("Process monitor stopped");
+        run_loop(app);
     });
 }
 
 /// Main monitoring loop.
 ///
-/// Checks process status every [`POLL_INTERVAL`] seconds. Emits `process-status` events
-/// on state changes, `game-status` events after a process exits (full refresh), and
-/// `update-check` events for periodic API rechecks while the launcher is open.
-fn run_loop(app: tauri::AppHandle, initial_game: bool, initial_launcher: bool) {
-    let mut prev_game = initial_game;
-    let mut prev_launcher = initial_launcher;
+/// Checks process status every [`POLL_INTERVAL`] seconds. Emits `process-status` events on state changes, `game-status`
+/// events after a process exits (full refresh), and `update-check` events for periodic API rechecks while the launcher
+/// is open. Runs indefinitely.
+fn run_loop(app: tauri::AppHandle) {
+    let mut prev_game = false;
+    let mut prev_launcher = false;
     let mut last_api_check = Instant::now();
 
     loop {
@@ -91,10 +86,5 @@ fn run_loop(app: tauri::AppHandle, initial_game: bool, initial_launcher: bool) {
 
         prev_game = game;
         prev_launcher = launcher;
-
-        // Nothing running: monitoring no longer needed
-        if !game && !launcher {
-            break;
-        }
     }
 }

@@ -53,6 +53,8 @@ pub fn run() {
                 macos_quit::install_quit_guard();
             }
 
+            monitor::start(app.handle().clone());
+
             // ---- System Tray --------------------------------------------------------
 
             let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;

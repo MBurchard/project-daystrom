@@ -118,10 +118,6 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
         }
     };
 
-    if result.game_running || result.launcher_running {
-        crate::monitor::start(app.clone(), result.game_running, result.launcher_running);
-    }
-
     // Kick off an async update check if the game is installed
     if result.installed {
         thread::spawn(move || {
@@ -248,19 +244,15 @@ pub struct ProcessStatus {
 }
 
 /// Open the Scopely launcher so the user can install an update.
-///
-/// Starts background process monitoring after a successful launch.
 #[tauri::command]
-pub fn launch_updater(app: tauri::AppHandle) -> Result<(), String> {
+pub fn launch_updater(_app: tauri::AppHandle) -> Result<(), String> {
     game::launcher::open_updater()?;
-    crate::monitor::start(app, false, true);
     Ok(())
 }
 
 /// Launch the game with the mod library injected.
 ///
 /// On macOS, checks entitlements before launching. On Windows, auto-deploys the DLL if needed.
-/// Starts background process monitoring after a successful launch.
 #[tauri::command]
 pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
     let info = game::detect().ok_or("STFC not found")?;
@@ -281,6 +273,5 @@ pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     game::launcher::launch(&info, &mod_library)?;
-    crate::monitor::start(app, true, false);
     Ok(())
 }
