@@ -6,6 +6,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 mod commands;
 mod game;
 mod logging;
+#[cfg(target_os = "macos")]
+mod macos_quit;
 mod monitor;
 
 use commands::{get_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
@@ -13,7 +15,7 @@ use commands::{get_game_status, launch_game, launch_updater, prepare_mod, remove
 use_log!("Startup");
 
 /// Show a warning dialog explaining that the app cannot quit while the game or launcher is running.
-fn warn_quit_blocked(window: &tauri::WebviewWindow) {
+pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
     let launcher = game::is_launcher_running();
     let game = game::is_game_running();
     let message = match (launcher, game) {
@@ -44,6 +46,12 @@ pub fn run() {
         .setup(|app| {
             let version = &app.package_info().version;
             log_info!("Project Daystrom {version} initialised");
+
+            #[cfg(target_os = "macos")]
+            {
+                macos_quit::set_app_handle(app.handle().clone());
+                macos_quit::install_quit_guard();
+            }
 
             // ---- System Tray --------------------------------------------------------
 

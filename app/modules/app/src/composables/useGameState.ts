@@ -1,11 +1,11 @@
-import {getLogger} from '@app/log';
 import type {GameStatus} from '@generated/GameStatus';
 import type {ProcessStatus} from '@generated/ProcessStatus';
 import type {UpdateCheck} from '@generated/UpdateCheck';
+import type {Ref} from 'vue';
+import {getLogger} from '@app/log';
 import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
-import type {Ref} from 'vue';
 import {computed, ref} from 'vue';
 
 const log = getLogger('App');
@@ -185,7 +185,8 @@ export function useGameState(): GameState {
       .then(onSuccess)
       .catch((err) => {
         actionError.value = String(err);
-      }).finally(() => {
+      })
+      .finally(() => {
         actionPending.value = false;
       });
   }
