@@ -1,10 +1,13 @@
+#[cfg(target_os = "windows")]
 use std::io;
+#[cfg(target_os = "windows")]
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
 use sha2::{Digest, Sha256};
 use tauri::Manager;
 
@@ -17,6 +20,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 ///
 /// On non-Windows platforms this is equivalent to `Command::new(program)`.
 pub(crate) fn silent_command(program: &str) -> Command {
+    #[allow(unused_mut)]
     let mut cmd = Command::new(program);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -51,8 +55,6 @@ pub mod entitlements {
 
     /// Result of checking the game executable's code-signing entitlements.
     pub struct EntitlementStatus {
-        /// Entitlement keys that are present and set to `true`.
-        pub granted: Vec<&'static str>,
         /// Entitlement keys that are absent or not `true`.
         pub missing: Vec<&'static str>,
     }
@@ -66,7 +68,7 @@ pub mod entitlements {
 
     /// Stub — entitlements are a macOS concept; always returns empty on other platforms.
     pub fn check(_executable: &Path) -> EntitlementStatus {
-        EntitlementStatus { granted: vec![], missing: vec![] }
+        EntitlementStatus { missing: vec![] }
     }
 }
 pub mod launcher;
@@ -165,6 +167,7 @@ pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// Compute the SHA-256 digest of a file by streaming it in 8 KB chunks.
 ///
 /// Returns the 32-byte hash or an I/O error if the file cannot be read.
+#[cfg(target_os = "windows")]
 pub fn file_sha256(path: &Path) -> io::Result<[u8; 32]> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();

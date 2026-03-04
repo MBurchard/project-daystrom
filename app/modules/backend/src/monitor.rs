@@ -82,8 +82,9 @@ fn run_loop(app: tauri::AppHandle, initial_game: bool, initial_launcher: bool) {
         // Periodic API recheck while the launcher is open
         if launcher && last_api_check.elapsed() >= API_RECHECK_INTERVAL {
             log_debug!("Periodic update check");
-            if let Ok(check) = commands::check_for_update() {
-                let _ = app.emit("update-check", check);
+            match commands::check_for_update() {
+                Ok(check) => { let _ = app.emit("update-check", check); }
+                Err(_) => { let _ = app.emit("update-check-failed", ()); }
             }
             last_api_check = Instant::now();
         }

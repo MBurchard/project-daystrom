@@ -8,7 +8,7 @@ mod game;
 mod logging;
 mod monitor;
 
-use commands::{check_for_update, get_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
+use commands::{get_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
 
 use_log!("Startup");
 
@@ -107,7 +107,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_game_status,
-            check_for_update,
             launch_updater,
             prepare_mod,
             remove_mod,
