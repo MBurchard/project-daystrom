@@ -4,6 +4,8 @@ use std::io;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -15,6 +17,14 @@ use crate::use_log;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Cached full path to the Scopely launcher executable (Windows only).
+#[cfg(target_os = "windows")]
+static LAUNCHER_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// Cached full path to the STFC game executable (Windows only).
+#[cfg(target_os = "windows")]
+static GAME_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Create a `Command` that won't spawn a visible console window on Windows.
 ///
@@ -135,14 +145,54 @@ fn is_process_active(pattern: &str) -> bool {
     }
 }
 
+/// Two-stage process check: quick `tasklist` filter, then PowerShell path verification.
+///
+/// Returns `true` only if a process with the given image name is running AND its executable path matches
+/// `expected_path` (case-insensitive, since Windows paths are case-insensitive).
+#[cfg(target_os = "windows")]
+fn is_verified_process_running(image_name: &str, expected_path: &Path) -> bool {
+    if !is_process_active(image_name) {
+        return false;
+    }
+    verify_process_path(image_name, expected_path)
+}
+
+/// Verify that a running process actually lives at the expected filesystem path.
+///
+/// Uses `Get-Process` to retrieve the executable path of all processes matching the given image name
+/// (without `.exe` suffix) and compares each line against the expected path.
+#[cfg(target_os = "windows")]
+fn verify_process_path(image_name: &str, expected_path: &Path) -> bool {
+    let process_name = image_name.trim_end_matches(".exe");
+    let ps_command = format!(
+        "Get-Process -Name '{}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path",
+        process_name
+    );
+    silent_command("powershell")
+        .args(["-NoProfile", "-Command", &ps_command])
+        .output()
+        .map(|out| {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let expected = expected_path.to_string_lossy();
+            stdout.lines().any(|line| line.trim().eq_ignore_ascii_case(expected.as_ref()))
+        })
+        .unwrap_or(false)
+}
+
 /// Check whether the Scopely launcher is currently running.
 ///
+/// On Windows, uses a two-stage check (image name + full path verification) to avoid false positives from unrelated
+/// processes named `launcher.exe`.
 /// The launcher can modify game files (updates), so game actions should be blocked while it runs.
 pub fn is_launcher_running() -> bool {
     #[cfg(target_os = "windows")]
-    return is_process_active("launcher.exe");
+    {
+        let path = LAUNCHER_PATH.get_or_init(|| windows::find_launcher());
+        let Some(path) = path.as_ref() else { return false };
+        return is_verified_process_running("launcher.exe", path);
+    }
     #[cfg(not(target_os = "windows"))]
-    return is_process_active("Star Trek Fleet Command.app/Contents/MacOS/launcher");
+    is_process_active("Star Trek Fleet Command.app/Contents/MacOS/launcher")
 }
 
 /// Locate the bundled mod library in the app's resource directory.
@@ -264,27 +314,31 @@ pub fn remove_mod(install_dir: &Path) -> Result<(), String> {
 
 /// Check whether the STFC game process is currently running.
 ///
-/// Uses a hardcoded process name so it can be called without filesystem I/O.
+/// On Windows, uses a two-stage check (image name + full path verification) to avoid false positives from unrelated
+/// processes named `prime.exe`.
 pub fn is_game_running() -> bool {
     #[cfg(target_os = "windows")]
-    return is_process_active("prime.exe");
+    {
+        let path = GAME_PATH.get_or_init(|| detect().map(|info| info.executable));
+        let Some(path) = path.as_ref() else { return false };
+        return is_verified_process_running("prime.exe", path);
+    }
     #[cfg(not(target_os = "windows"))]
-    return is_process_active(
-        "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command",
-    );
+    is_process_active("Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command")
 }
 
 /// Check whether a process matching the given executable path is currently running.
 ///
-/// Uses `pgrep -f` on macOS/Linux and `tasklist /FI` on Windows.
+/// On Windows, uses a two-stage check (image name + full path verification).
+/// On macOS/Linux, uses `pgrep -f` for full command-line matching.
 pub fn is_running(executable: &Path) -> bool {
-    let name = executable
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let name = executable.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.is_empty() {
         return false;
     }
+    #[cfg(target_os = "windows")]
+    return is_verified_process_running(name, executable);
+    #[cfg(not(target_os = "windows"))]
     is_process_active(name)
 }
 
