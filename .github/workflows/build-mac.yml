@@ -2,6 +2,7 @@ name: Build macOS App
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: build-mac-${{ github.ref }}
@@ -80,7 +81,7 @@ jobs:
           TAURI_APP_PATH: ${{ github.workspace }}/app/modules/backend
 
       - name: Upload .dmg
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: Project-Daystrom-macOS-universal
           path: app/modules/backend/target/universal-apple-darwin/release/bundle/dmg/*.dmg

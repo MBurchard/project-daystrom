@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    name: macOS Build
+    uses: ./.github/workflows/build-mac.yml
+    permissions:
+      contents: read
+
+  build-windows:
+    name: Windows Build
+    uses: ./.github/workflows/build-windows.yml
+    permissions:
+      contents: read
+    secrets: inherit
+
+  attach-assets:
+    name: Attach Release Assets
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: Project-Daystrom-macOS-universal
+          path: assets/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: Project-Daystrom-Windows-x64
+          path: assets/
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "${{ github.event.release.tag_name }}" assets/* --clobber
