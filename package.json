@@ -27,9 +27,9 @@
     "dev": "node scripts/build.ts dev"
   },
   "devDependencies": {
-    "@antfu/eslint-config": "^7.6.1",
+    "@antfu/eslint-config": "^7.7.0",
     "@tsconfig/node24": "^24.0.4",
-    "eslint": "^10.0.2",
+    "eslint": "^10.0.3",
     "typescript": "~5.9.3"
   }
 }
