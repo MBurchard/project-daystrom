@@ -187,15 +187,61 @@ fn remove_temp_files_recursive(dir: &Path) {
     }
 }
 
+/// Remove broken `.bundle` directories from the app's `PlugIns/` folder.
+///
+/// The Scopely updater sometimes leaves behind empty bundle shells (directory structure with `Contents/MacOS/` but no
+/// actual binary inside) which cause `codesign` to fail with "bundle format unrecognized, invalid, or unsuitable".
+fn clean_broken_bundles(executable: &Path) {
+    // executable is .../Contents/MacOS/Star Trek Fleet Command
+    // We need .../Contents/PlugIns/
+    let plugins_dir = executable
+        .parent() // .../Contents/MacOS
+        .and_then(|p| p.parent()) // .../Contents
+        .map(|p| p.join("PlugIns"));
+
+    let Some(plugins_dir) = plugins_dir else { return };
+
+    let entries = match fs::read_dir(&plugins_dir) {
+        Ok(e) => e,
+        Err(_) => return, // no PlugIns directory is fine
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        if !name.to_string_lossy().ends_with(".bundle") {
+            continue;
+        }
+
+        // A valid bundle must have at least one file in Contents/MacOS/
+        let macos_dir = path.join("Contents/MacOS");
+        let has_binary = macos_dir.is_dir()
+            && fs::read_dir(&macos_dir)
+                .map(|mut entries| entries.any(|e| e.is_ok_and(|e| e.path().is_file())))
+                .unwrap_or(false);
+
+        if !has_binary {
+            log_info!("Removing broken bundle: {}", path.display());
+            if let Err(e) = fs::remove_dir_all(&path) {
+                log_warn!("Could not remove broken bundle {}: {e}", path.display());
+            }
+        }
+    }
+}
+
 /// Re-sign the game executable with the four required entitlements for mod injection.
 ///
-/// Cleans up leftover temp files from the Scopely updater first, then writes a temporary
-/// plist file, runs `codesign --force --sign -` with it, and verifies the result.
+/// Cleans up leftover temp files and broken bundles from the Scopely updater first, then writes a temporary plist file,
+/// runs `codesign --force --sign -` with it, and verifies the result.
 pub fn patch(executable: &Path) -> Result<(), String> {
     log_info!("Patching entitlements on {}", executable.display());
 
     // Clean up Scopely updater leftovers that would make codesign fail
     clean_bundle_temp_files(executable);
+    clean_broken_bundles(executable);
 
     let plist_path = std::env::temp_dir().join("daystrom-entitlements.plist");
 
