@@ -19,6 +19,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = { version = "2", features = ["colored"] }
+tauri-plugin-notification = "2"
+toml = "0.8"
 colored = "3"
 log = "0.4"
 time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }

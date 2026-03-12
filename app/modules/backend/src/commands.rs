@@ -35,6 +35,58 @@ pub struct GameStatus {
     pub launcher_running: bool,
 }
 
+// ---- Game Status Builder --------------------------------------------------------
+
+/// Snapshot of a detected game installation, gathered from I/O before the pure status builder runs.
+///
+/// Decouples the I/O-heavy detection step from the deterministic status assembly so the latter can
+/// be tested without a Tauri runtime or filesystem access.
+struct DetectedGame {
+    /// Installed game version from the `.version` file, if available.
+    installed_version: Option<u32>,
+    /// Whether the mod library is deployed and up to date in the game directory.
+    mod_deployed: bool,
+    /// Whether the mod library exists on disk but is outdated (hash mismatch).
+    mod_outdated: bool,
+    /// Whether the game process is currently running.
+    game_running: bool,
+}
+
+/// Assemble a [`GameStatus`] from already-gathered inputs.
+///
+/// Pure function: no I/O, no Tauri dependency. All platform-specific decisions about
+/// `mod_removable` are resolved via `cfg!()` so the logic is testable on any platform.
+fn build_game_status(
+    detection: Option<&DetectedGame>,
+    mod_available: bool,
+    launcher_running: bool,
+) -> GameStatus {
+    match detection {
+        Some(det) => GameStatus {
+            installed: true,
+            game_version: det.installed_version,
+            mod_available,
+            mod_installable: mod_available,
+            mod_deployed: det.mod_deployed,
+            mod_outdated: det.mod_outdated,
+            mod_removable: cfg!(target_os = "windows") && (det.mod_deployed || det.mod_outdated),
+            game_running: det.game_running,
+            launcher_running,
+        },
+        None => GameStatus {
+            installed: false,
+            game_version: None,
+            mod_available,
+            mod_installable: false,
+            mod_deployed: false,
+            mod_outdated: false,
+            mod_removable: false,
+            game_running: false,
+            launcher_running,
+        },
+    }
+}
+
 /// Detect the STFC installation and check its entitlements, mod availability, and running state.
 #[tauri::command]
 pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
@@ -48,75 +100,48 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
 
     let launcher_running = game::is_launcher_running();
 
-    let result = match game::detect() {
-        Some(info) => {
-            match info.installed_version {
-                Some(v) => log_info!("STFC found (v{v}): {}", info.executable.display()),
-                None => log_info!("STFC found: {}", info.executable.display()),
-            }
-
-            let status = game::entitlements::check(&info.executable);
-            if status.all_granted() {
-                log_info!("Entitlements OK, mod injection ready");
-            } else {
-                let names: Vec<_> = status.missing.iter()
-                    .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
-                    .collect();
-                log_warn!("Missing entitlements: {}", names.join(", "));
-            }
-
-            let game_running = game::is_running(&info.executable);
-
-            // macOS: mod is "deployed" when entitlements are OK (injection via DYLD)
-            // Windows: mod is deployed when the DLL is copied and up to date
-            #[cfg(target_os = "macos")]
-            let (mod_deployed, mod_outdated) = (status.all_granted(), false);
-            #[cfg(target_os = "windows")]
-            let (mod_deployed, mod_outdated) = mod_library.as_ref().map(|lib| {
-                match game::check_mod_deployment(&info.install_dir, lib) {
-                    game::ModDeploymentState::UpToDate => (true, false),
-                    game::ModDeploymentState::Outdated => (false, true),
-                    game::ModDeploymentState::NotDeployed => (false, false),
-                }
-            }).unwrap_or((false, false));
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            let (mod_deployed, mod_outdated) = (false, false);
-
-            // macOS: nothing to remove (DYLD injection), Windows: DLL exists on disk
-            #[cfg(target_os = "macos")]
-            let mod_removable = false;
-            #[cfg(target_os = "windows")]
-            let mod_removable = mod_deployed || mod_outdated;
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            let mod_removable = false;
-
-            GameStatus {
-                installed: true,
-                game_version: info.installed_version,
-                mod_available,
-                mod_installable: mod_available,
-                mod_deployed,
-                mod_outdated,
-                mod_removable,
-                game_running,
-                launcher_running,
-            }
+    let detection = game::detect().map(|info| {
+        match info.installed_version {
+            Some(v) => log_info!("STFC found (v{v}): {}", info.executable.display()),
+            None => log_info!("STFC found: {}", info.executable.display()),
         }
-        None => {
-            log_warn!("STFC not found, game features will be unavailable");
-            GameStatus {
-                installed: false,
-                game_version: None,
-                mod_available,
-                mod_installable: false,
-                mod_deployed: false,
-                mod_outdated: false,
-                mod_removable: false,
-                game_running: false,
-                launcher_running,
-            }
+
+        let status = game::entitlements::check(&info.executable);
+        if status.all_granted() {
+            log_info!("Entitlements OK, mod injection ready");
+        } else {
+            let names: Vec<_> = status.missing.iter()
+                .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
+                .collect();
+            log_warn!("Missing entitlements: {}", names.join(", "));
         }
-    };
+
+        let game_running = game::is_running(&info.executable);
+
+        // macOS: mod is "deployed" when entitlements are OK (injection via DYLD)
+        // Windows: mod is deployed when the DLL is copied and up to date
+        #[cfg(target_os = "macos")]
+        let (mod_deployed, mod_outdated) = (status.all_granted(), false);
+        #[cfg(target_os = "windows")]
+        let (mod_deployed, mod_outdated) = mod_library.as_ref().map(|lib| {
+            match game::check_mod_deployment(&info.install_dir, lib) {
+                game::ModDeploymentState::UpToDate => (true, false),
+                game::ModDeploymentState::Outdated => (false, true),
+                game::ModDeploymentState::NotDeployed => (false, false),
+            }
+        }).unwrap_or((false, false));
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let (mod_deployed, mod_outdated) = (false, false);
+
+        DetectedGame {
+            installed_version: info.installed_version,
+            mod_deployed,
+            mod_outdated,
+            game_running,
+        }
+    });
+
+    let result = build_game_status(detection.as_ref(), mod_available, launcher_running);
 
     // Kick off an async update check if the game is installed
     if result.installed {
@@ -130,6 +155,8 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
 
     result
 }
+
+// ---- Mod Preparation / Removal --------------------------------------------------
 
 /// Prepare the mod for use: patch entitlements on macOS, deploy the DLL on Windows.
 ///
@@ -159,8 +186,9 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<GameStatus, String> {
 
 /// Remove the deployed mod from the game directory after user confirmation.
 ///
-/// Shows a warning dialogue explaining that the game will only be launchable via the Scopely Launcher afterwards.
-/// Returns the refreshed game status regardless of whether the user confirmed or cancelled.
+/// Shows a warning dialogue explaining that the game will only be launchable via the Scopely
+/// Launcher afterwards. Returns the refreshed game status regardless of whether the user
+/// confirmed or cancelled.
 #[tauri::command]
 pub fn remove_mod(window: tauri::WebviewWindow) -> Result<GameStatus, String> {
     // macOS: mod is injected via DYLD at launch, nothing to remove from disk
@@ -198,6 +226,8 @@ pub fn remove_mod(window: tauri::WebviewWindow) -> Result<GameStatus, String> {
     }
 }
 
+// ---- Update Check ---------------------------------------------------------------
+
 /// Result of checking the Scopely update API for a game update.
 #[derive(Clone, Serialize, TS)]
 #[ts(export)]
@@ -210,12 +240,15 @@ pub struct UpdateCheck {
     pub update_available: bool,
 }
 
-/// Check whether a game update is available by comparing the local `.version` file against the Scopely update API.
-pub fn check_for_update() -> Result<UpdateCheck, String> {
-    let info = game::detect().ok_or("STFC not found")?;
-    let installed = info.installed_version.ok_or("Could not read installed game version")?;
-
-    match game::version::fetch_remote(installed) {
+/// Assemble an [`UpdateCheck`] from an installed version and a remote lookup result.
+///
+/// Pure function: no I/O. Separated from [`check_for_update`] so the comparison logic can be
+/// tested without hitting the network or filesystem.
+fn build_update_check(
+    installed: u32,
+    remote: Result<Option<u32>, String>,
+) -> Result<UpdateCheck, String> {
+    match remote {
         Ok(Some(remote)) => Ok(UpdateCheck {
             installed_version: installed,
             remote_version: Some(remote),
@@ -233,7 +266,21 @@ pub fn check_for_update() -> Result<UpdateCheck, String> {
     }
 }
 
-/// Lightweight process check for polling. Only runs process listing (`pgrep`/`tasklist`), no filesystem I/O.
+/// Check whether a game update is available.
+///
+/// Compares the local `.version` file against the Scopely update API. Uses [`build_update_check`]
+/// for the actual comparison logic.
+pub fn check_for_update() -> Result<UpdateCheck, String> {
+    let info = game::detect().ok_or("STFC not found")?;
+    let installed = info.installed_version.ok_or("Could not read installed game version")?;
+    build_update_check(installed, game::version::fetch_remote(installed))
+}
+
+// ---- Process Status -------------------------------------------------------------
+
+/// Lightweight process check for polling.
+///
+/// Only runs process listing (`pgrep`/`tasklist`), no filesystem I/O.
 #[derive(Clone, Serialize, TS)]
 #[ts(export)]
 pub struct ProcessStatus {
@@ -243,10 +290,13 @@ pub struct ProcessStatus {
     pub launcher_running: bool,
 }
 
+// ---- Launch Commands ------------------------------------------------------------
+
 /// Open the Scopely launcher so the user can install an update.
 #[tauri::command]
 pub fn launch_updater(_app: tauri::AppHandle) -> Result<(), String> {
     game::launcher::open_updater()?;
+    crate::process_origin::mark_launcher_started();
     Ok(())
 }
 
@@ -273,5 +323,191 @@ pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     game::launcher::launch(&info, &mod_library)?;
+    crate::process_origin::mark_game_started();
     Ok(())
+}
+
+// ---- Tests ----------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- build_game_status --
+
+    #[test]
+    fn game_not_found_returns_minimal_status() {
+        let status = build_game_status(None, false, false);
+        assert!(!status.installed);
+        assert!(status.game_version.is_none());
+        assert!(!status.mod_available);
+        assert!(!status.mod_installable);
+        assert!(!status.mod_deployed);
+        assert!(!status.mod_outdated);
+        assert!(!status.mod_removable);
+        assert!(!status.game_running);
+        assert!(!status.launcher_running);
+    }
+
+    #[test]
+    fn game_not_found_but_mod_bundled() {
+        let status = build_game_status(None, true, false);
+        assert!(!status.installed);
+        assert!(status.mod_available);
+        assert!(!status.mod_installable, "mod not installable without game");
+    }
+
+    #[test]
+    fn game_not_found_launcher_running() {
+        let status = build_game_status(None, false, true);
+        assert!(!status.installed);
+        assert!(status.launcher_running);
+        assert!(!status.game_running);
+    }
+
+    #[test]
+    fn game_found_basic_fields() {
+        let det = DetectedGame {
+            installed_version: Some(12345),
+
+            mod_deployed: false,
+            mod_outdated: false,
+            game_running: false,
+        };
+        let status = build_game_status(Some(&det), true, false);
+        assert!(status.installed);
+        assert_eq!(status.game_version, Some(12345));
+        assert!(status.mod_available);
+        assert!(status.mod_installable);
+    }
+
+    #[test]
+    fn game_found_no_version() {
+        let det = DetectedGame {
+            installed_version: None,
+
+            mod_deployed: false,
+            mod_outdated: false,
+            game_running: false,
+        };
+        let status = build_game_status(Some(&det), false, false);
+        assert!(status.installed);
+        assert!(status.game_version.is_none());
+        assert!(!status.mod_available);
+        assert!(!status.mod_installable, "no mod library bundled");
+    }
+
+    #[test]
+    fn game_found_mod_deployed() {
+        let det = DetectedGame {
+            installed_version: Some(100),
+
+            mod_deployed: true,
+            mod_outdated: false,
+            game_running: false,
+        };
+        let status = build_game_status(Some(&det), true, false);
+        assert!(status.mod_deployed);
+        assert!(!status.mod_outdated);
+        // mod_removable is platform-dependent: true on Windows, false on macOS
+        assert_eq!(status.mod_removable, cfg!(target_os = "windows"));
+    }
+
+    #[test]
+    fn game_found_mod_outdated() {
+        let det = DetectedGame {
+            installed_version: Some(100),
+
+            mod_deployed: false,
+            mod_outdated: true,
+            game_running: false,
+        };
+        let status = build_game_status(Some(&det), true, false);
+        assert!(!status.mod_deployed);
+        assert!(status.mod_outdated);
+        assert_eq!(status.mod_removable, cfg!(target_os = "windows"));
+    }
+
+    #[test]
+    fn game_found_mod_not_deployed_not_outdated() {
+        let det = DetectedGame {
+            installed_version: Some(100),
+
+            mod_deployed: false,
+            mod_outdated: false,
+            game_running: false,
+        };
+        let status = build_game_status(Some(&det), true, false);
+        assert!(!status.mod_deployed);
+        assert!(!status.mod_outdated);
+        assert!(!status.mod_removable);
+    }
+
+    #[test]
+    fn game_found_game_running() {
+        let det = DetectedGame {
+            installed_version: Some(100),
+
+            mod_deployed: true,
+            mod_outdated: false,
+            game_running: true,
+        };
+        let status = build_game_status(Some(&det), true, true);
+        assert!(status.game_running);
+        assert!(status.launcher_running);
+    }
+
+    // -- build_update_check --
+
+    #[test]
+    fn update_available() {
+        let result = build_update_check(100, Ok(Some(200)));
+        let check = result.unwrap();
+        assert_eq!(check.installed_version, 100);
+        assert_eq!(check.remote_version, Some(200));
+        assert!(check.update_available);
+    }
+
+    #[test]
+    fn no_update_same_version() {
+        let result = build_update_check(100, Ok(Some(100)));
+        let check = result.unwrap();
+        assert_eq!(check.remote_version, Some(100));
+        assert!(!check.update_available);
+    }
+
+    #[test]
+    fn no_update_older_remote() {
+        let result = build_update_check(200, Ok(Some(100)));
+        let check = result.unwrap();
+        assert!(!check.update_available);
+    }
+
+    #[test]
+    fn remote_version_unavailable() {
+        let result = build_update_check(100, Ok(None));
+        let check = result.unwrap();
+        assert_eq!(check.installed_version, 100);
+        assert!(check.remote_version.is_none());
+        assert!(!check.update_available);
+    }
+
+    #[test]
+    fn remote_check_failed() {
+        let result = build_update_check(100, Err("network error".to_string()));
+        let Err(err) = result else { panic!("expected Err for failed remote check") };
+        assert!(err.contains("network error"));
+    }
+
+    // -- check_for_update (integration, no Tauri dependency) --
+
+    #[test]
+    fn check_for_update_without_game_installed() {
+        // In the test environment, STFC is not installed: game::detect() returns None.
+        let result = check_for_update();
+        let Err(err) = result else { return }; // game installed on dev machine: skip gracefully
+        assert_eq!(err, "STFC not found");
+    }
+
+    // ts-rs binding exports are auto-generated by #[ts(export)] on the structs
 }
