@@ -1,5 +1,4 @@
 import type {GameStatus} from '@generated/GameStatus';
-import type {ProcessStatus} from '@generated/ProcessStatus';
 import type {UpdateCheck} from '@generated/UpdateCheck';
 
 import {beforeEach, describe, expect, it, vi} from 'vitest';
@@ -85,8 +84,8 @@ function captureListeners(): {
 }
 
 /**
- * Init the composable with a prepared game status.
- * Awaits all microtasks so the state is settled.
+ * Init the composable with a game-status event.
+ * Waits until loading is false.
  * @param statusOverrides - fields to override on the default GameStatus
  * @returns the composable instance
  */
@@ -94,15 +93,12 @@ async function initWithStatus(statusOverrides: Partial<GameStatus> = {}) {
   const status = makeGameStatus(statusOverrides);
   const {listeners, emitEvent} = captureListeners();
 
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'get_game_status') {
-      return Promise.resolve(status);
-    }
-    return Promise.resolve(undefined);
-  });
-
   const state = useGameState();
   state.init();
+
+  // Simulate the monitor's initial game-status event
+  emitEvent('game-status', status);
+
   await vi.waitFor(() => {
     expect(state.loading.value).toBe(false);
   });
@@ -123,16 +119,14 @@ async function initWithStatus(statusOverrides: Partial<GameStatus> = {}) {
  * @returns the composable instance
  */
 async function initWithoutUpdateCheck() {
-  captureListeners();
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'get_game_status') {
-      return Promise.resolve(makeGameStatus());
-    }
-    return Promise.resolve(undefined);
-  });
+  const {emitEvent} = captureListeners();
 
   const state = useGameState();
   state.init();
+
+  // Simulate the monitor's initial game-status event
+  emitEvent('game-status', makeGameStatus());
+
   await vi.waitFor(() => {
     expect(state.loading.value).toBe(false);
   });
@@ -147,17 +141,14 @@ async function initWithoutUpdateCheck() {
  * @returns the composable instance
  */
 async function initWithUpdateAvailable(statusOverrides: Partial<GameStatus> = {}) {
-  const {emitEvent} = captureListeners();
-
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'get_game_status') {
-      return Promise.resolve(makeGameStatus({game_version: 100, ...statusOverrides}));
-    }
-    return Promise.resolve(undefined);
-  });
+  const {listeners, emitEvent} = captureListeners();
 
   const state = useGameState();
   state.init();
+
+  // Simulate the monitor's initial game-status event
+  emitEvent('game-status', makeGameStatus({game_version: 100, ...statusOverrides}));
+
   await vi.waitFor(() => {
     expect(state.loading.value).toBe(false);
   });
@@ -169,7 +160,7 @@ async function initWithUpdateAvailable(statusOverrides: Partial<GameStatus> = {}
     update_available: true,
   } satisfies UpdateCheck);
 
-  return {state};
+  return {state, listeners, emitEvent};
 }
 
 // ---- Tests --------------------------------------------------------------------------
@@ -333,24 +324,28 @@ describe('useGameState', () => {
 
   describe('actions', () => {
     describe('installMod', () => {
-      it('updates status on success', async () => {
-        const newStatus = makeGameStatus({mod_deployed: true});
-        mockInvoke.mockResolvedValue(newStatus);
+      it('clears pending after command resolves', async () => {
+        captureListeners();
+        mockInvoke.mockResolvedValue(undefined);
 
         const state = useGameState();
+        state.init();
         state.installMod();
+        expect(state.actionPending.value).toBe(true);
+
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
         });
 
-        expect(state.status.value).toEqual(newStatus);
         expect(state.actionError.value).toBeNull();
       });
 
       it('sets actionError on failure', async () => {
+        captureListeners();
         mockInvoke.mockRejectedValue(new Error('permission denied'));
 
         const state = useGameState();
+        state.init();
         state.installMod();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
@@ -360,49 +355,63 @@ describe('useGameState', () => {
       });
 
       it('manages actionPending lifecycle', () => {
+        captureListeners();
         mockInvoke.mockReturnValue(new Promise(() => {})); // never resolves
 
         const state = useGameState();
+        state.init();
         expect(state.actionPending.value).toBe(false);
         state.installMod();
         expect(state.actionPending.value).toBe(true);
       });
 
       it('clears previous actionError', async () => {
+        captureListeners();
+
+        const state = useGameState();
+        state.init();
+
         // The first call fails
         mockInvoke.mockRejectedValueOnce(new Error('first error'));
-        const state = useGameState();
         state.installMod();
         await vi.waitFor(() => {
           expect(state.actionError.value).toContain('first error');
         });
 
-        // The second call succeeds
-        mockInvoke.mockResolvedValue(makeGameStatus());
+        // The second call succeeds, error is cleared on start
+        mockInvoke.mockResolvedValue(undefined);
         state.installMod();
         expect(state.actionError.value).toBeNull();
+
+        await vi.waitFor(() => {
+          expect(state.actionPending.value).toBe(false);
+        });
       });
     });
 
     describe('removeMod', () => {
-      it('updates status on success', async () => {
-        const newStatus = makeGameStatus({mod_deployed: false});
-        mockInvoke.mockResolvedValue(newStatus);
+      it('clears pending after command resolves', async () => {
+        captureListeners();
+        mockInvoke.mockResolvedValue(undefined);
 
         const state = useGameState();
+        state.init();
         state.removeMod();
+        expect(state.actionPending.value).toBe(true);
+
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
         });
 
-        expect(state.status.value).toEqual(newStatus);
         expect(state.actionError.value).toBeNull();
       });
 
       it('sets actionError on failure', async () => {
+        captureListeners();
         mockInvoke.mockRejectedValue(new Error('file in use'));
 
         const state = useGameState();
+        state.init();
         state.removeMod();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
@@ -412,33 +421,45 @@ describe('useGameState', () => {
       });
 
       it('manages actionPending lifecycle', () => {
+        captureListeners();
         mockInvoke.mockReturnValue(new Promise(() => {})); // never resolves
 
         const state = useGameState();
+        state.init();
         expect(state.actionPending.value).toBe(false);
         state.removeMod();
         expect(state.actionPending.value).toBe(true);
       });
 
       it('clears previous actionError', async () => {
-        mockInvoke.mockRejectedValueOnce(new Error('first error'));
+        captureListeners();
+
         const state = useGameState();
+        state.init();
+
+        mockInvoke.mockRejectedValueOnce(new Error('first error'));
         state.removeMod();
         await vi.waitFor(() => {
           expect(state.actionError.value).toContain('first error');
         });
 
-        mockInvoke.mockResolvedValue(makeGameStatus({mod_deployed: false}));
+        mockInvoke.mockResolvedValue(undefined);
         state.removeMod();
         expect(state.actionError.value).toBeNull();
+
+        await vi.waitFor(() => {
+          expect(state.actionPending.value).toBe(false);
+        });
       });
     });
 
     describe('openUpdater', () => {
       it('sets launcherRunning and updaterStartedByUs on success', async () => {
+        captureListeners();
         mockInvoke.mockResolvedValue(undefined);
 
         const state = useGameState();
+        state.init();
         state.openUpdater();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
@@ -450,9 +471,11 @@ describe('useGameState', () => {
       });
 
       it('sets actionError on failure', async () => {
+        captureListeners();
         mockInvoke.mockRejectedValue(new Error('launcher not found'));
 
         const state = useGameState();
+        state.init();
         state.openUpdater();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
@@ -464,9 +487,11 @@ describe('useGameState', () => {
 
     describe('launchGame', () => {
       it('sets gameRunning on success', async () => {
+        captureListeners();
         mockInvoke.mockResolvedValue(undefined);
 
         const state = useGameState();
+        state.init();
         state.launchGame();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
@@ -477,9 +502,11 @@ describe('useGameState', () => {
       });
 
       it('sets actionError on failure', async () => {
+        captureListeners();
         mockInvoke.mockRejectedValue(new Error('launch failed'));
 
         const state = useGameState();
+        state.init();
         state.launchGame();
         await vi.waitFor(() => {
           expect(state.actionPending.value).toBe(false);
@@ -493,45 +520,7 @@ describe('useGameState', () => {
   // ---- Event Listeners --------------------------------------------------------------
 
   describe('event listeners', () => {
-    it('updates launcherRunning and gameRunning on process-status event', async () => {
-      const {state, emitEvent} = await initWithStatus();
-
-      emitEvent('process-status', {
-        launcher_running: true,
-        game_running: true,
-      } satisfies ProcessStatus);
-
-      expect(state.launcherRunning.value).toBe(true);
-      expect(state.gameRunning.value).toBe(true);
-    });
-
-    it('resets updaterStartedByUs when launcher stops', async () => {
-      const {state, emitEvent} = await initWithStatus();
-
-      // First: launcher starts (simulate openUpdater)
-      emitEvent('process-status', {
-        launcher_running: true,
-        game_running: false,
-      } satisfies ProcessStatus);
-
-      // Manually set updaterStartedByUs (normally done by openUpdater action)
-      // We test this via the event path: when the launcher stops, updaterStartedByUs resets.
-      mockInvoke.mockResolvedValueOnce(undefined);
-      state.openUpdater();
-      await vi.waitFor(() => {
-        expect(state.updaterStartedByUs.value).toBe(true);
-      });
-
-      // Launcher stops
-      emitEvent('process-status', {
-        launcher_running: false,
-        game_running: false,
-      } satisfies ProcessStatus);
-
-      expect(state.updaterStartedByUs.value).toBe(false);
-    });
-
-    it('updates status on game-status event', async () => {
+    it('updates status and process flags on game-status event', async () => {
       const {state, emitEvent} = await initWithStatus();
       const newStatus = makeGameStatus({mod_deployed: false, game_running: true});
 
@@ -539,6 +528,22 @@ describe('useGameState', () => {
 
       expect(state.status.value).toEqual(newStatus);
       expect(state.gameRunning.value).toBe(true);
+    });
+
+    it('resets updaterStartedByUs when launcher stops via game-status', async () => {
+      const {state, emitEvent} = await initWithStatus();
+
+      // Simulate openUpdater setting the flag
+      mockInvoke.mockResolvedValueOnce(undefined);
+      state.openUpdater();
+      await vi.waitFor(() => {
+        expect(state.updaterStartedByUs.value).toBe(true);
+      });
+
+      // Launcher stops (reported through game-status)
+      emitEvent('game-status', makeGameStatus({launcher_running: false}));
+
+      expect(state.updaterStartedByUs.value).toBe(false);
     });
 
     it('updates remoteVersion on update-check event', async () => {
@@ -600,13 +605,77 @@ describe('useGameState', () => {
     });
   });
 
+  // ---- getData (cached fetch) -------------------------------------------------------
+
+  describe('getData', () => {
+    it('fetches cached game status on init', async () => {
+      const cached = makeGameStatus({mod_deployed: true, game_running: true});
+      mockInvoke.mockResolvedValue(cached);
+      captureListeners();
+
+      const state = useGameState();
+      state.init();
+
+      await vi.waitFor(() => {
+        expect(state.loading.value).toBe(false);
+      });
+
+      expect(mockInvoke).toHaveBeenCalledWith('get_cached_game_status');
+      expect(state.status.value).toEqual(cached);
+      expect(state.gameRunning.value).toBe(true);
+    });
+
+    it('stays in loading state when cached status is null', async () => {
+      mockInvoke.mockResolvedValue(null);
+      captureListeners();
+
+      const state = useGameState();
+      state.init();
+
+      // Flush the invoked promise
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // No cached data, loading stays true until game-status event
+      expect(state.loading.value).toBe(true);
+    });
+  });
+
   // ---- Lifecycle --------------------------------------------------------------------
 
   describe('lifecycle', () => {
+    it('logs error when getVersion fails', async () => {
+      const mockLogger = mockGetLogger();
+      mockGetVersion.mockRejectedValue(new Error('version unavailable'));
+      captureListeners();
+
+      const state = useGameState();
+      state.init();
+
+      await vi.waitFor(() => {
+        expect(mockLogger.error).toHaveBeenCalled();
+      });
+
+      // App still works, the version stays empty
+      expect(state.version.value).toBe('');
+    });
+
+    it('logs errors when listen calls fail', async () => {
+      const mockLogger = mockGetLogger();
+      mockListen.mockRejectedValue(new Error('listen failed'));
+
+      const state = useGameState();
+      state.init();
+
+      await vi.waitFor(() => {
+        // Three listen calls, three error logs
+        expect(mockLogger.error).toHaveBeenCalledTimes(3);
+      });
+    });
+
     it('loads app version on init', async () => {
       mockGetVersion.mockResolvedValue('2.5.0');
       captureListeners();
-      mockInvoke.mockResolvedValue(makeGameStatus());
 
       const state = useGameState();
       state.init();
@@ -615,91 +684,49 @@ describe('useGameState', () => {
       });
     });
 
-    it('registers four event listeners on init', async () => {
+    it('registers three event listeners on init', () => {
       const {listeners} = captureListeners();
-      mockInvoke.mockResolvedValue(makeGameStatus({installed: false}));
 
       const state = useGameState();
       state.init();
-      await vi.waitFor(() => {
-        expect(state.loading.value).toBe(false);
-      });
 
-      expect(listeners.has('process-status')).toBe(true);
       expect(listeners.has('game-status')).toBe(true);
       expect(listeners.has('update-check')).toBe(true);
       expect(listeners.has('update-check-failed')).toBe(true);
+      expect(listeners.size).toBe(3);
     });
 
-    it('calls get_game_status on init', async () => {
-      captureListeners();
-      mockInvoke.mockResolvedValue(makeGameStatus({installed: false}));
+    it('sets loading to false on first game-status event', () => {
+      const {emitEvent} = captureListeners();
 
       const state = useGameState();
+      expect(state.loading.value).toBe(true);
+
       state.init();
-      await vi.waitFor(() => {
-        expect(state.loading.value).toBe(false);
-      });
+      expect(state.loading.value).toBe(true);
 
-      expect(mockInvoke).toHaveBeenCalledWith('get_game_status');
-    });
-
-    it('sets error when get_game_status fails', async () => {
-      captureListeners();
-      mockInvoke.mockRejectedValue(new Error('backend unavailable'));
-
-      const state = useGameState();
-      state.init();
-      await vi.waitFor(() => {
-        expect(state.error.value).toContain('backend unavailable');
-      });
+      emitEvent('game-status', makeGameStatus());
+      expect(state.loading.value).toBe(false);
     });
 
     it('calls all unlisten functions on destroy', async () => {
-      const unlistenFns = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+      const unlistenFns = [vi.fn(), vi.fn(), vi.fn()];
       let callIndex = 0;
       mockListen.mockImplementation((_name: string, _cb: unknown) => {
         return Promise.resolve(unlistenFns[callIndex++]);
       });
-      mockInvoke.mockResolvedValue(makeGameStatus({installed: false}));
 
       const state = useGameState();
       state.init();
-      await vi.waitFor(() => {
-        expect(state.loading.value).toBe(false);
-      });
+
+      // Flush microtasks so .then() handlers store the unlisten functions
+      await Promise.resolve();
 
       state.destroy();
 
       for (const fn of unlistenFns) {
         expect(fn).toHaveBeenCalledOnce();
       }
-    });
-
-    it('sets loading to false after successful init', async () => {
-      captureListeners();
-      mockInvoke.mockResolvedValue(makeGameStatus({installed: false}));
-
-      const state = useGameState();
-      expect(state.loading.value).toBe(true);
-
-      state.init();
-      await vi.waitFor(() => {
-        expect(state.loading.value).toBe(false);
-      });
-    });
-
-    it('sets loading to false after failed init', async () => {
-      captureListeners();
-      mockInvoke.mockRejectedValue(new Error('backend unavailable'));
-
-      const state = useGameState();
-      expect(state.loading.value).toBe(true);
-
-      state.init();
-      await vi.waitFor(() => {
-        expect(state.loading.value).toBe(false);
-      });
     });
 
     it('does not throw when destroy is called without init', () => {

@@ -1,5 +1,4 @@
 import type {GameStatus} from '@generated/GameStatus';
-import type {ProcessStatus} from '@generated/ProcessStatus';
 import type {UpdateCheck} from '@generated/UpdateCheck';
 import type {Ref} from 'vue';
 import {getLogger} from '@app/log';
@@ -96,7 +95,6 @@ export function useGameState(): GameState {
   const gameRunning = ref(false);
   const updaterStartedByUs = ref(false);
 
-  let unlistenProcessStatus: (() => void) | null = null;
   let unlistenGameStatus: (() => void) | null = null;
   let unlistenUpdateCheck: (() => void) | null = null;
   let unlistenUpdateCheckFailed: (() => void) | null = null;
@@ -173,15 +171,19 @@ export function useGameState(): GameState {
   // ---- Actions ----------------------------------------------------------------------
 
   /**
-   * Run a backend command with a shared pending / error lifecycle.
+   * Run a backend command triggered by a user action (button click).
+   *
+   * Sets `actionPending` while the command is in flight and captures errors in `actionError`.
+   * An optional `onSuccess` callback allows optimistic UI updates (e.g. setting process flags
+   * immediately after a launch command succeeds).
    *
    * @param command - the Tauri command name to invoke
-   * @param onSuccess - callback receiving the command result on success
+   * @param onSuccess - optional callback executed on success before pending clears
    */
-  function runAction<T>(command: string, onSuccess: (result: T) => void): void {
+  function runAction(command: string, onSuccess?: () => void): void {
     actionPending.value = true;
     actionError.value = null;
-    invoke<T>(command)
+    invoke(command)
       .then(onSuccess)
       .catch((err) => {
         actionError.value = String(err);
@@ -192,14 +194,18 @@ export function useGameState(): GameState {
   }
 
   /**
-   * Apply a full GameStatus from the backend to the local state.
+   * Fetch cached data from the backend without triggering expensive operations.
    *
-   * @param result - the refreshed game status
+   * @param command - the Tauri command name to invoke
+   * @returns the cached data, or null on error
    */
-  function applyStatus(result: GameStatus): void {
-    status.value = result;
-    gameRunning.value = result.game_running;
-    launcherRunning.value = result.launcher_running;
+  async function getData<T>(command: string): Promise<T | null> {
+    try {
+      return await invoke<T | null>(command);
+    } catch (err) {
+      log.error(`Failed to fetch ${command}:`, err);
+      return null;
+    }
   }
 
   /**
@@ -207,7 +213,7 @@ export function useGameState(): GameState {
    */
   function installMod(): void {
     log.debug('User clicked Install Mod');
-    runAction<GameStatus>('prepare_mod', applyStatus);
+    runAction('prepare_mod');
   }
 
   /**
@@ -215,7 +221,7 @@ export function useGameState(): GameState {
    */
   function removeMod(): void {
     log.debug('User clicked Remove Mod');
-    runAction<GameStatus>('remove_mod', applyStatus);
+    runAction('remove_mod');
   }
 
   /**
@@ -250,33 +256,23 @@ export function useGameState(): GameState {
 
     getVersion().then((v) => {
       version.value = v;
-    }).catch((err) => {
-      log.error(`Failed to get app version: ${err}`);
-    });
+    }).catch(reason => log.error('Failed to get app version:', reason));
 
-    // Backend pushes process state changes while monitoring
-    listen<ProcessStatus>('process-status', (event) => {
-      if (!event.payload.launcher_running) {
-        updaterStartedByUs.value = false;
+    // Fetch cached status from the backend store (maybe null if the monitor hasn't finished
+    // its initial detection yet; the game-status event will arrive shortly after).
+    getData<GameStatus>('get_cached_game_status').then((cached) => {
+      if (cached) {
+        applyGameStatus(cached);
       }
-      launcherRunning.value = event.payload.launcher_running;
-      gameRunning.value = event.payload.game_running;
-    }).then((unlisten) => {
-      unlistenProcessStatus = unlisten;
-    }).catch((err) => {
-      log.error(`Failed to listen for process-status: ${err}`);
-    });
+    }).catch(/* v8 ignore next @preserve -- only a defensive guard */ reason =>
+      log.error('Failed to apply cached game status:', reason));
 
-    // Backend pushes full status refresh when a watched process exits
+    // Backend store pushes status on every state change (process updates, mod actions, etc.)
     listen<GameStatus>('game-status', (event) => {
-      status.value = event.payload;
-      gameRunning.value = event.payload.game_running;
-      launcherRunning.value = event.payload.launcher_running;
+      applyGameStatus(event.payload);
     }).then((unlisten) => {
       unlistenGameStatus = unlisten;
-    }).catch((err) => {
-      log.error(`Failed to listen for game-status: ${err}`);
-    });
+    }).catch(reason => log.error('Failed to listen for game-status:', reason));
 
     // Backend pushes update check results (initial + periodic rechecks from monitor)
     listen<UpdateCheck>('update-check', (event) => {
@@ -284,30 +280,31 @@ export function useGameState(): GameState {
       remoteVersion.value = event.payload.remote_version ?? event.payload.installed_version;
     }).then((unlisten) => {
       unlistenUpdateCheck = unlisten;
-    }).catch((err) => {
-      log.error(`Failed to listen for update-check: ${err}`);
-    });
+    }).catch(reason => log.error('Failed to listen for update-check:', reason));
 
     // Backend pushes this event when the update check fails (network error, API down, etc.)
     listen('update-check-failed', () => {
       updateCheckFailed.value = true;
     }).then((unlisten) => {
       unlistenUpdateCheckFailed = unlisten;
-    }).catch((err) => {
-      log.error(`Failed to listen for update-check-failed: ${err}`);
-    });
+    }).catch(reason => log.error('Failed to listen for update-check-failed:', reason));
+  }
 
-    // Initial full detection (once)
-    invoke<GameStatus>('get_game_status').then((result) => {
-      status.value = result;
-      gameRunning.value = result.game_running;
-      launcherRunning.value = result.launcher_running;
-    }).catch((err) => {
-      error.value = String(err);
-      log.error(`Failed to get game status: ${err}`);
-    }).finally(() => {
-      loading.value = false;
-    });
+  /**
+   * Apply a GameStatus update to all reactive states.
+   *
+   * Shared by the initial cached-data fetch and the game-status event listener.
+   *
+   * @param s - the incoming game status from the backend store
+   */
+  function applyGameStatus(s: GameStatus): void {
+    status.value = s;
+    gameRunning.value = s.game_running;
+    launcherRunning.value = s.launcher_running;
+    if (!s.launcher_running) {
+      updaterStartedByUs.value = false;
+    }
+    loading.value = false;
   }
 
   /**
@@ -315,9 +312,6 @@ export function useGameState(): GameState {
    * Must be called from `onUnmounted`.
    */
   function destroy(): void {
-    if (unlistenProcessStatus) {
-      unlistenProcessStatus();
-    }
     if (unlistenGameStatus) {
       unlistenGameStatus();
     }

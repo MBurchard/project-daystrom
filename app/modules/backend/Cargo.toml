@@ -1,6 +1,6 @@
 [package]
 name = "daystrom"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 
 [lib]
@@ -20,7 +20,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = { version = "2", features = ["colored"] }
 tauri-plugin-notification = "2"
-toml = "0.8"
+toml = "1"
 colored = "3"
 log = "0.4"
 time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }

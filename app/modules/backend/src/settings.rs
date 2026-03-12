@@ -1,6 +1,6 @@
 //! Persistent application settings stored in `{data_dir}/{identifier}/settings.toml`.
 //!
-//! Settings survive across app restarts. The file is created lazily on first write. Missing or
+//! Settings survive across app restarts. The file is created lazily on first writing. Missing or
 //! corrupted files fall back to sensible defaults without error.
 
 use std::fs;
@@ -13,16 +13,40 @@ use crate::use_log;
 
 use_log!("Settings");
 
+/// UI-related hint counters for progressive notifications.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct HintSettings {
+    /// Number of times the user has seen a minimize-to-tray hint (dialogue or notification).
+    #[serde(default)]
+    pub minimize_to_tray: u32,
+}
+
+/// UI-related settings.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct UiSettings {
+    /// Progressive hint counters.
+    #[serde(default)]
+    pub hints: HintSettings,
+}
+
 /// Application settings that are persisted to disk.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
-    /// Number of times the user has seen a minimize-to-tray hint (dialog or notification).
+    /// UI behaviour and appearance.
     #[serde(default)]
-    pub minimize_hint_count: u32,
+    pub ui: UiSettings,
 }
 
 /// Global in-memory copy, loaded once at startup.
-static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings { minimize_hint_count: 0 });
+static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
+    ui: UiSettings {
+        hints: HintSettings { minimize_to_tray: 0 },
+    },
+});
+
+/// Override for the settings file path, used exclusively by tests.
+#[cfg(test)]
+static PATH_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Platform-specific settings directory.
 ///
@@ -34,8 +58,13 @@ fn settings_dir() -> Option<PathBuf> {
 
 /// Full path to the settings file.
 ///
-/// Combines [`settings_dir`] with the fixed filename `settings.toml`.
+/// Combines [`settings_dir`] with the fixed filename `settings.toml`. In tests, returns the
+/// override path if one was set via [`PATH_OVERRIDE`].
 fn settings_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(p) = PATH_OVERRIDE.lock().unwrap().clone() {
+        return Some(p);
+    }
     Some(settings_dir()?.join("settings.toml"))
 }
 
@@ -74,9 +103,9 @@ fn save_to(path: &Path, settings: &AppSettings) {
     }
 }
 
-/// Load settings from disk into the global state.
+/// Load settings from the disk into the global state.
 ///
-/// Falls back to defaults when the file is missing, empty, or contains invalid TOML. Safe to call
+/// Falls back to default when the file is missing, empty, or contains invalid TOML. Safe to call
 /// multiple times; later calls overwrite the in-memory state.
 pub fn load() {
     let settings = settings_path()
@@ -87,7 +116,7 @@ pub fn load() {
 
 /// Persist the current in-memory settings to disk.
 ///
-/// Creates the settings directory if it does not exist. Errors are logged but not propagated,
+/// Creates the settings directory if it does not exist. Errors are logged but not propagated 
 /// because failing to save a hint counter should never crash the app.
 pub fn save() {
     let settings = SETTINGS.lock().unwrap().clone();
@@ -98,11 +127,11 @@ pub fn save() {
     save_to(&path, &settings);
 }
 
-/// Return the current minimize hint count.
+/// Return the current minimize-to-tray hint count.
 ///
 /// Used by [`crate::minimize_to_tray`] to decide which hint level to show.
 pub fn minimize_hint_count() -> u32 {
-    SETTINGS.lock().unwrap().minimize_hint_count
+    SETTINGS.lock().unwrap().ui.hints.minimize_to_tray
 }
 
 /// Maximum value for the minimize hint counter.
@@ -111,17 +140,17 @@ pub fn minimize_hint_count() -> u32 {
 /// further increments would only waste disk writes.
 const MINIMIZE_HINT_MAX: u32 = 5;
 
-/// Increment the minimize hint count and persist to disk.
+/// Increment the minimize-to-tray hint count and persist to disk.
 ///
 /// Called after each minimize-to-tray action so the hint becomes less intrusive over time.
 /// Stops incrementing (and writing) once [`MINIMIZE_HINT_MAX`] is reached.
 pub fn increment_minimize_hint() {
     {
         let mut s = SETTINGS.lock().unwrap();
-        if s.minimize_hint_count >= MINIMIZE_HINT_MAX {
+        if s.ui.hints.minimize_to_tray >= MINIMIZE_HINT_MAX {
             return;
         }
-        s.minimize_hint_count += 1;
+        s.ui.hints.minimize_to_tray += 1;
     }
     save();
 }
@@ -145,34 +174,46 @@ mod tests {
         dir
     }
 
+    /// Point [`settings_path`] to a temp file and return the path. Caller must hold `TEST_LOCK`.
+    fn use_temp_path(name: &str) -> PathBuf {
+        let path = test_dir(name).join("settings.toml");
+        *PATH_OVERRIDE.lock().unwrap() = Some(path.clone());
+        path
+    }
+
+    /// Reset the path override. Caller must hold `TEST_LOCK`.
+    fn reset_path_override() {
+        *PATH_OVERRIDE.lock().unwrap() = None;
+    }
+
     // -- AppSettings serde --
 
     #[test]
     fn default_has_zero_hint_count() {
         let settings = AppSettings::default();
-        assert_eq!(settings.minimize_hint_count, 0);
+        assert_eq!(settings.ui.hints.minimize_to_tray, 0);
     }
 
     #[test]
     fn serde_round_trip() {
-        let settings = AppSettings { minimize_hint_count: 42 };
+        let settings = AppSettings { ui: UiSettings { hints: HintSettings { minimize_to_tray: 42 } } };
         let toml_str = toml::to_string_pretty(&settings).unwrap();
         let parsed: AppSettings = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.minimize_hint_count, 42);
+        assert_eq!(parsed.ui.hints.minimize_to_tray, 42);
     }
 
     #[test]
     fn deserialize_missing_fields_uses_defaults() {
         // Empty TOML table: all fields should fall back to serde defaults
         let parsed: AppSettings = toml::from_str("").unwrap();
-        assert_eq!(parsed.minimize_hint_count, 0);
+        assert_eq!(parsed.ui.hints.minimize_to_tray, 0);
     }
 
     #[test]
     fn deserialize_extra_fields_ignored() {
-        let toml_str = "minimize_hint_count = 3\nunknown_field = true\n";
+        let toml_str = "[ui.hints]\nminimize_to_tray = 3\n\n[extra]\nunknown_field = true\n";
         let parsed: AppSettings = toml::from_str(toml_str).unwrap();
-        assert_eq!(parsed.minimize_hint_count, 3);
+        assert_eq!(parsed.ui.hints.minimize_to_tray, 3);
     }
 
     #[test]
@@ -183,8 +224,8 @@ mod tests {
 
     #[test]
     fn deserialize_wrong_type_is_error() {
-        // minimize_hint_count expects u32, not a string
-        let result = toml::from_str::<AppSettings>("minimize_hint_count = \"hello\"");
+        // minimize_to_tray expects u32, not a string
+        let result = toml::from_str::<AppSettings>("[ui.hints]\nminimize_to_tray = \"hello\"");
         assert!(result.is_err());
     }
 
@@ -210,9 +251,9 @@ mod tests {
     fn load_from_valid_file() {
         let dir = test_dir("load_valid");
         let path = dir.join("settings.toml");
-        fs::write(&path, "minimize_hint_count = 7\n").unwrap();
+        fs::write(&path, "[ui.hints]\nminimize_to_tray = 7\n").unwrap();
         let result = load_from(&path);
-        assert_eq!(result.minimize_hint_count, 7);
+        assert_eq!(result.ui.hints.minimize_to_tray, 7);
     }
 
     #[test]
@@ -230,19 +271,19 @@ mod tests {
     fn save_to_creates_file() {
         let dir = test_dir("save_create");
         let path = dir.join("settings.toml");
-        let settings = AppSettings { minimize_hint_count: 5 };
+        let settings = AppSettings { ui: UiSettings { hints: HintSettings { minimize_to_tray: 5 } } };
         save_to(&path, &settings);
 
         assert!(path.exists());
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("minimize_hint_count = 5"));
+        assert!(content.contains("minimize_to_tray = 5"));
     }
 
     #[test]
     fn save_to_creates_parent_directories() {
         let dir = test_dir("save_parents");
         let path = dir.join("nested").join("deep").join("settings.toml");
-        let settings = AppSettings { minimize_hint_count: 1 };
+        let settings = AppSettings { ui: UiSettings { hints: HintSettings { minimize_to_tray: 1 } } };
         save_to(&path, &settings);
 
         assert!(path.exists());
@@ -252,7 +293,7 @@ mod tests {
     fn save_then_load_round_trip() {
         let dir = test_dir("save_load_rt");
         let path = dir.join("settings.toml");
-        let original = AppSettings { minimize_hint_count: 99 };
+        let original = AppSettings { ui: UiSettings { hints: HintSettings { minimize_to_tray: 99 } } };
         save_to(&path, &original);
         let loaded = load_from(&path);
         assert_eq!(loaded, original);
@@ -268,6 +309,8 @@ mod tests {
 
     #[test]
     fn settings_path_ends_with_settings_toml() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_path_override();
         let path = settings_path().expect("settings_path should return Some");
         assert_eq!(path.file_name().unwrap(), "settings.toml");
         assert!(path.to_string_lossy().contains(env!("TAURI_IDENTIFIER")));
@@ -278,66 +321,60 @@ mod tests {
     #[test]
     fn load_populates_global_state() {
         let _lock = TEST_LOCK.lock().unwrap();
+        let path = use_temp_path("load_global");
+        fs::write(&path, "[ui.hints]\nminimize_to_tray = 7\n").unwrap();
 
-        // Set to a sentinel value so we can verify load() overwrites it
-        SETTINGS.lock().unwrap().minimize_hint_count = 999;
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 999;
         load();
 
-        // load() reads from real path (file may or may not exist), but should
-        // never leave the sentinel value untouched
-        let count = minimize_hint_count();
-        assert_ne!(count, 999, "load() should overwrite the global state");
+        assert_eq!(minimize_hint_count(), 7, "load() should read from temp file");
 
         // Clean up
-        SETTINGS.lock().unwrap().minimize_hint_count = 0;
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
+        reset_path_override();
     }
 
     #[test]
     fn minimize_hint_count_reads_global() {
         let _lock = TEST_LOCK.lock().unwrap();
-        SETTINGS.lock().unwrap().minimize_hint_count = 42;
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 42;
 
         assert_eq!(minimize_hint_count(), 42);
 
         // Clean up
-        SETTINGS.lock().unwrap().minimize_hint_count = 0;
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
     }
 
     #[test]
     fn save_and_increment_round_trip() {
         let _lock = TEST_LOCK.lock().unwrap();
-        let path = settings_path().unwrap();
+        let path = use_temp_path("save_increment_rt");
 
-        // Backup existing file (if any) so we don't lose real settings
-        let backup = path.exists().then(|| fs::read_to_string(&path).unwrap());
-
-        // Set known state, save, verify
-        SETTINGS.lock().unwrap().minimize_hint_count = 3;
+        // Set a known state, save, verify
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 3;
         save();
         assert!(path.exists());
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("minimize_hint_count = 3"));
+        assert!(content.contains("minimize_to_tray = 3"));
 
         // Increment, verify in-memory and on-disk
         increment_minimize_hint();
         assert_eq!(minimize_hint_count(), 4);
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("minimize_hint_count = 4"));
+        assert!(content.contains("minimize_to_tray = 4"));
 
-        // Restore original state
-        match backup {
-            Some(original) => fs::write(&path, original).unwrap(),
-            None => { let _ = fs::remove_file(&path); }
-        }
-        SETTINGS.lock().unwrap().minimize_hint_count = 0;
+        // Clean up
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
+        reset_path_override();
     }
 
     #[test]
     fn increment_stops_at_max() {
         let _lock = TEST_LOCK.lock().unwrap();
+        let _path = use_temp_path("increment_max");
 
         // Just below the cap: increment succeeds
-        SETTINGS.lock().unwrap().minimize_hint_count = MINIMIZE_HINT_MAX - 1;
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = MINIMIZE_HINT_MAX - 1;
         increment_minimize_hint();
         assert_eq!(minimize_hint_count(), MINIMIZE_HINT_MAX);
 
@@ -346,11 +383,12 @@ mod tests {
         assert_eq!(minimize_hint_count(), MINIMIZE_HINT_MAX);
 
         // Well above the cap (e.g. from an old settings file): still a no-op
-        SETTINGS.lock().unwrap().minimize_hint_count = 100;
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 100;
         increment_minimize_hint();
         assert_eq!(minimize_hint_count(), 100);
 
         // Clean up
-        SETTINGS.lock().unwrap().minimize_hint_count = 0;
+        SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
+        reset_path_override();
     }
 }

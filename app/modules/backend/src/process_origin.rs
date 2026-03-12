@@ -6,8 +6,6 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::game;
-
 /// Whether the game was launched via Daystrom's "Launch Game" button.
 static GAME_STARTED_BY_US: AtomicBool = AtomicBool::new(false);
 
@@ -16,14 +14,14 @@ static LAUNCHER_STARTED_BY_US: AtomicBool = AtomicBool::new(false);
 
 /// Mark the game as having been started by Daystrom.
 ///
-/// Called from [`crate::commands::launch_game`] after a successful spawn.
+/// Called from [`crate::commands::launch_game`] after successful spawn.
 pub fn mark_game_started() {
     GAME_STARTED_BY_US.store(true, Ordering::SeqCst);
 }
 
 /// Mark the launcher as having been started by Daystrom.
 ///
-/// Called from [`crate::commands::launch_updater`] after a successful spawn.
+/// Called from [`crate::commands::launch_updater`] after successful spawn.
 pub fn mark_launcher_started() {
     LAUNCHER_STARTED_BY_US.store(true, Ordering::SeqCst);
 }
@@ -44,11 +42,22 @@ pub fn clear_launcher_started() {
 
 /// Whether quitting the app should be blocked.
 ///
-/// Returns `true` when a process that Daystrom started is still running. Externally started
-/// processes do not block quit.
+/// Returns `true` when a process that Daystrom started is still running. The monitor clears the
+/// flags when processes exit, so a simple flag check is sufficient. No expensive process lookups
+/// on the UI thread.
 pub fn should_block_quit() -> bool {
-    (game::is_game_running() && GAME_STARTED_BY_US.load(Ordering::SeqCst))
-        || (game::is_launcher_running() && LAUNCHER_STARTED_BY_US.load(Ordering::SeqCst))
+    GAME_STARTED_BY_US.load(Ordering::SeqCst)
+        || LAUNCHER_STARTED_BY_US.load(Ordering::SeqCst)
+}
+
+/// Whether the game-started flag is set.
+pub fn is_game_started() -> bool {
+    GAME_STARTED_BY_US.load(Ordering::SeqCst)
+}
+
+/// Whether the launcher-started flag is set.
+pub fn is_launcher_started() -> bool {
+    LAUNCHER_STARTED_BY_US.load(Ordering::SeqCst)
 }
 
 // ---- Tests ----------------------------------------------------------------------
@@ -108,17 +117,22 @@ mod tests {
     }
 
     #[test]
-    fn should_block_quit_false_when_no_processes_running() {
-        // In the test environment, no game or launcher processes are running.
-        // Even with flags set, should_block_quit returns false because the
-        // process check (is_game_running/is_launcher_running) is the first condition.
+    fn should_block_quit_follows_flags() {
         let _lock = TEST_LOCK.lock().unwrap();
         reset_flags();
 
         assert!(!should_block_quit());
 
         mark_game_started();
+        assert!(should_block_quit(), "game flag alone blocks quit");
+
+        clear_game_started();
+        assert!(!should_block_quit());
+
         mark_launcher_started();
-        assert!(!should_block_quit(), "flags alone do not block quit without running processes");
+        assert!(should_block_quit(), "launcher flag alone blocks quit");
+
+        clear_launcher_started();
+        assert!(!should_block_quit());
     }
 }
