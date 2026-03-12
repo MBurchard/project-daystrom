@@ -105,12 +105,22 @@ pub fn minimize_hint_count() -> u32 {
     SETTINGS.lock().unwrap().minimize_hint_count
 }
 
+/// Maximum value for the minimize hint counter.
+///
+/// Once this threshold is reached the hint level is [`Silent`](crate::HintLevel::Silent) and
+/// further increments would only waste disk writes.
+const MINIMIZE_HINT_MAX: u32 = 5;
+
 /// Increment the minimize hint count and persist to disk.
 ///
 /// Called after each minimize-to-tray action so the hint becomes less intrusive over time.
+/// Stops incrementing (and writing) once [`MINIMIZE_HINT_MAX`] is reached.
 pub fn increment_minimize_hint() {
     {
         let mut s = SETTINGS.lock().unwrap();
+        if s.minimize_hint_count >= MINIMIZE_HINT_MAX {
+            return;
+        }
         s.minimize_hint_count += 1;
     }
     save();
@@ -302,23 +312,45 @@ mod tests {
         let backup = path.exists().then(|| fs::read_to_string(&path).unwrap());
 
         // Set known state, save, verify
-        SETTINGS.lock().unwrap().minimize_hint_count = 50;
+        SETTINGS.lock().unwrap().minimize_hint_count = 3;
         save();
         assert!(path.exists());
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("minimize_hint_count = 50"));
+        assert!(content.contains("minimize_hint_count = 3"));
 
         // Increment, verify in-memory and on-disk
         increment_minimize_hint();
-        assert_eq!(minimize_hint_count(), 51);
+        assert_eq!(minimize_hint_count(), 4);
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("minimize_hint_count = 51"));
+        assert!(content.contains("minimize_hint_count = 4"));
 
         // Restore original state
         match backup {
             Some(original) => fs::write(&path, original).unwrap(),
             None => { let _ = fs::remove_file(&path); }
         }
+        SETTINGS.lock().unwrap().minimize_hint_count = 0;
+    }
+
+    #[test]
+    fn increment_stops_at_max() {
+        let _lock = TEST_LOCK.lock().unwrap();
+
+        // Just below the cap: increment succeeds
+        SETTINGS.lock().unwrap().minimize_hint_count = MINIMIZE_HINT_MAX - 1;
+        increment_minimize_hint();
+        assert_eq!(minimize_hint_count(), MINIMIZE_HINT_MAX);
+
+        // At the cap: increment is a no-op
+        increment_minimize_hint();
+        assert_eq!(minimize_hint_count(), MINIMIZE_HINT_MAX);
+
+        // Well above the cap (e.g. from an old settings file): still a no-op
+        SETTINGS.lock().unwrap().minimize_hint_count = 100;
+        increment_minimize_hint();
+        assert_eq!(minimize_hint_count(), 100);
+
+        // Clean up
         SETTINGS.lock().unwrap().minimize_hint_count = 0;
     }
 }

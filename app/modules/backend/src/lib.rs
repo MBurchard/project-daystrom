@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Listener, Manager};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -22,36 +22,41 @@ use_log!("Startup");
 fn quit_blocked_message(launcher_running: bool, game_running: bool) -> Option<&'static str> {
     match (launcher_running, game_running) {
         (true, true) => Some(
-            "The Scopely Launcher and the game were started by Daystrom and are still \
-             running.\nClosing the app may terminate these processes.\n\n\
-             The window has been minimised to the tray instead.",
+            "The launcher and the game are still running.\n\
+             Daystrom has been minimised to the tray instead.",
         ),
         (true, false) => Some(
-            "The Scopely Launcher was started by Daystrom and is still running.\n\
-             Closing the app may terminate this process.\n\n\
-             The window has been minimised to the tray instead.",
+            "The launcher is still running.\n\
+             Daystrom has been minimised to the tray instead.",
         ),
         (false, true) => Some(
-            "The game was started by Daystrom and is still running.\n\
-             Closing the app may terminate this process.\n\n\
-             The window has been minimised to the tray instead.",
+            "The game is still running.\n\
+             Daystrom has been minimised to the tray instead.",
         ),
         (false, false) => None,
     }
 }
 
-/// Show a warning dialog explaining that quitting is blocked because the game or launcher was
-/// started by Daystrom and is still running.
+/// Show a warning dialog and ensure the window stays in the tray afterwards.
+///
+/// Called from all quit paths (Close button, Tray menu, Cmd+Q, Dock) when
+/// [`process_origin::should_block_quit`] returns `true`. Skips the dialog when the window is
+/// already hidden (the user already knows the app is in the tray).
 pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
+    if !window.is_visible().unwrap_or(false) {
+        log_debug!("Quit blocked silently (window already hidden)");
+        return;
+    }
     let Some(message) = quit_blocked_message(game::is_launcher_running(), game::is_game_running())
     else {
         return;
     };
     window.dialog()
         .message(message)
-        .title("Quit Blocked")
-        .kind(MessageDialogKind::Warning)
+        .title("Still Running")
+        .kind(MessageDialogKind::Info)
         .show(|_| {});
+    let _ = window.hide();
 }
 
 /// How intrusively the minimize-to-tray action should notify the user.
@@ -150,6 +155,13 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
+            // Sync quit item with process-status changes from the monitor.
+            let quit_ref = quit_item.clone();
+            app.listen("process-status", move |_event| {
+                let enabled = !process_origin::should_block_quit();
+                let _ = quit_ref.set_enabled(enabled);
+            });
+
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Project Daystrom")
@@ -167,10 +179,7 @@ pub fn run() {
                         log_debug!("[EVENT] Tray menu: Quit clicked");
                         if process_origin::should_block_quit() {
                             if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
                                 warn_quit_blocked(&window);
-                                let _ = window.hide();
                             }
                         } else {
                             app.exit(0);
@@ -218,12 +227,9 @@ pub fn run() {
                     log_debug!("[EVENT] CloseRequested on window '{}'", window.label());
                     if process_origin::should_block_quit() {
                         api.prevent_close();
-                        let _ = window.show();
-                        let _ = window.set_focus();
                         if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
                             warn_quit_blocked(&wv);
                         }
-                        let _ = window.hide();
                     } else {
                         window.app_handle().exit(0);
                     }
@@ -233,7 +239,6 @@ pub fn run() {
                 #[cfg(not(target_os = "macos"))]
                 tauri::WindowEvent::Resized { .. } => {
                     if window.is_minimized().unwrap_or(false) {
-                        let _ = window.unminimize();
                         if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
                             minimize_to_tray(&wv);
                         }
@@ -277,21 +282,21 @@ mod tests {
     fn quit_blocked_both_running() {
         let msg = quit_blocked_message(true, true);
         assert!(msg.is_some());
-        assert!(msg.unwrap().contains("Launcher and the game"));
+        assert!(msg.unwrap().contains("launcher and the game"));
     }
 
     #[test]
     fn quit_blocked_launcher_only() {
         let msg = quit_blocked_message(true, false);
         assert!(msg.is_some());
-        assert!(msg.unwrap().contains("Launcher was started"));
+        assert!(msg.unwrap().contains("launcher is still running"));
     }
 
     #[test]
     fn quit_blocked_game_only() {
         let msg = quit_blocked_message(false, true);
         assert!(msg.is_some());
-        assert!(msg.unwrap().contains("game was started"));
+        assert!(msg.unwrap().contains("game is still running"));
     }
 
     #[test]

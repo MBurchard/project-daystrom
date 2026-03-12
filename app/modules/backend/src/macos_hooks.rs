@@ -5,14 +5,16 @@
 //! `RunEvent::ExitRequested` for `[NSApplication terminate:]`, so the existing quit-blocking logic would
 //! be bypassed without this hook.
 //!
-//! **Minimize guard:** Intercepts `windowShouldMiniaturize:` on the window's delegate class to prevent
-//! the native Genie animation and instead hide the window to the system tray.
+//! **Minimize guard:** Overrides `miniaturize:` on tao's NSWindow subclass to prevent the native
+//! Genie animation and instead hide the window to the system tray. This is more reliable than
+//! hooking `windowShouldMiniaturize:` on the delegate, which `performMiniaturize:` may not consult
+//! in all configurations.
 
 use std::ffi::c_char;
 use std::sync::OnceLock;
 
 use objc2::ffi;
-use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
+use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::sel;
 use objc2_app_kit::NSApplicationTerminateReply;
 
@@ -67,7 +69,7 @@ pub(crate) fn install_quit_guard() {
         );
 
         if success.as_bool() {
-            log_info!("Quit guard installed (applicationShouldTerminate: added)");
+            log_debug!("Quit guard installed (applicationShouldTerminate: added)");
         } else {
             log_error!("Failed to add applicationShouldTerminate: to TaoAppDelegateParent");
         }
@@ -84,14 +86,11 @@ unsafe extern "C-unwind" fn should_terminate(
     _sender: *const AnyObject,
 ) -> usize {
     if process_origin::should_block_quit() {
-        log_info!("Quit blocked (Daystrom-started process still running)");
+        log_debug!("Quit blocked (Daystrom-started process still running)");
         if let Some(handle) = APP_HANDLE.get() {
             use tauri::Manager;
             if let Some(window) = handle.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
                 crate::warn_quit_blocked(&window);
-                let _ = window.hide();
             }
         }
         NSApplicationTerminateReply::TerminateCancel.0
@@ -103,14 +102,15 @@ unsafe extern "C-unwind" fn should_terminate(
 
 // ---- Minimize Guard -------------------------------------------------------------
 
-/// Install `windowShouldMiniaturize:` on the window's delegate class.
+/// Override `miniaturize:` on the NSWindow's runtime class to intercept all minimize paths.
 ///
-/// Prevents the native Genie minimize animation. Instead, the callback hides the window to the
-/// system tray via [`crate::minimize_to_tray`].
+/// Uses `class_addMethod` to shadow the inherited `NSWindow::miniaturize:` on the concrete
+/// subclass (typically tao's `TaoWindow`). This catches traffic-light button clicks
+/// (`performMiniaturize:` → `miniaturize:`), programmatic calls, and double-click-titlebar
+/// minimize. The override hides the window to the system tray instead of performing the
+/// native Genie animation.
 pub(crate) fn install_minimize_guard(window: &tauri::WebviewWindow) {
     unsafe {
-        use objc2::msg_send;
-
         let ns_window_raw = match window.ns_window() {
             Ok(ptr) => ptr,
             Err(e) => {
@@ -119,31 +119,17 @@ pub(crate) fn install_minimize_guard(window: &tauri::WebviewWindow) {
             }
         };
 
-        // Get the delegate object from the NSWindow
         let ns_window: *const AnyObject = ns_window_raw.cast();
-        let delegate: *const AnyObject = msg_send![ns_window, delegate];
+        let cls = (*ns_window).class();
+        let sel = sel!(miniaturize:);
 
-        if delegate.is_null() {
-            log_error!("NSWindow delegate is null; minimize guard NOT installed");
-            return;
-        }
-
-        let cls = (*delegate).class();
-        let sel = sel!(windowShouldMiniaturize:);
-
-        // If the method already exists on this exact class, skip.
-        if cls.instance_method(sel).is_some() {
-            log_warn!("windowShouldMiniaturize: already exists on delegate; skipping");
-            return;
-        }
-
-        // windowShouldMiniaturize: signature: (self, _cmd, NSWindow*) -> BOOL.
-        // Type encoding: B = BOOL (C99 _Bool on 64-bit), @ = object, : = selector.
-        let types: *const c_char = c"B@:@".as_ptr();
+        // miniaturize: signature: (self, _cmd, sender) -> void.
+        // Type encoding: v = void, @ = object, : = selector.
+        let types: *const c_char = c"v@:@".as_ptr();
 
         let imp: Imp = std::mem::transmute(
-            window_should_miniaturize
-                as unsafe extern "C-unwind" fn(*const AnyObject, Sel, *const AnyObject) -> Bool,
+            intercept_miniaturize
+                as unsafe extern "C-unwind" fn(*const AnyObject, Sel, *const AnyObject),
         );
 
         let success = ffi::class_addMethod(
@@ -154,21 +140,23 @@ pub(crate) fn install_minimize_guard(window: &tauri::WebviewWindow) {
         );
 
         if success.as_bool() {
-            log_info!("Minimize guard installed (windowShouldMiniaturize: added)");
+            log_debug!("Minimize guard installed (miniaturize: overridden on {:?})", cls.name());
         } else {
-            log_error!("Failed to add windowShouldMiniaturize: to window delegate");
+            log_error!(
+                "Failed to override miniaturize: on {:?} (method may already exist on this class)",
+                cls.name(),
+            );
         }
     }
 }
 
-/// ObjC callback: intercepts the minimize action to hide to tray instead.
-///
-/// Always returns `NO` to prevent the native Genie animation, then triggers the tray-hide logic.
-unsafe extern "C-unwind" fn window_should_miniaturize(
+/// ObjC callback: replaces `miniaturize:` to hide to tray instead of performing the Genie
+/// animation.
+unsafe extern "C-unwind" fn intercept_miniaturize(
     _this: *const AnyObject,
     _cmd: Sel,
-    _window: *const AnyObject,
-) -> Bool {
+    _sender: *const AnyObject,
+) {
     log_debug!("Minimize intercepted, hiding to tray");
     if let Some(handle) = APP_HANDLE.get() {
         use tauri::Manager;
@@ -176,5 +164,4 @@ unsafe extern "C-unwind" fn window_should_miniaturize(
             crate::minimize_to_tray(&window);
         }
     }
-    Bool::NO
 }
