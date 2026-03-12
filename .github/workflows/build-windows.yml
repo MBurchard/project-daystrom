@@ -109,7 +109,8 @@ jobs:
         run: |
           $exe = Get-ChildItem app/modules/backend/target/release/bundle/nsis/*.exe |
             Select-Object -First 1
-          & $env:SIGNTOOL_PATH sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /sha1 $env:CERT_THUMBPRINT $exe.FullName
+          & $env:SIGNTOOL_PATH sign /fd sha256 /tr http://timestamp.digicert.com `
+            /td sha256 /sha1 $env:CERT_THUMBPRINT $exe.FullName
           Write-Host "Signed $($exe.Name)"
         shell: pwsh
 
