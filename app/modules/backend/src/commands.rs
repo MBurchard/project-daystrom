@@ -1,5 +1,3 @@
-use std::thread;
-
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 #[cfg(target_os = "windows")]
@@ -12,7 +10,7 @@ use crate::use_log;
 use_log!("Commands");
 
 /// STFC installation and entitlement status as returned to the frontend.
-#[derive(Clone, Serialize, TS)]
+#[derive(Clone, PartialEq, Serialize, TS)]
 #[ts(export)]
 pub struct GameStatus {
     /// Whether STFC was found on this machine.
@@ -21,13 +19,13 @@ pub struct GameStatus {
     pub game_version: Option<u32>,
     /// Whether the mod library was found in the app's resource directory.
     pub mod_available: bool,
-    /// Whether the mod can be installed or updated (game found and mod library bundled).
+    /// Whether the mod can be installed or updated (game found and the mod library bundled).
     pub mod_installable: bool,
     /// Whether the mod is deployed and ready (macOS: entitlements OK, Windows: DLL up to date).
     pub mod_deployed: bool,
     /// Whether the mod DLL exists but is outdated (hash mismatch). Always `false` on macOS.
     pub mod_outdated: bool,
-    /// Whether the mod can be removed from disk (Windows: DLL deployed or outdated, macOS: always false).
+    /// Whether the mod can be removed from the disk (Windows: DLL deployed or outdated, macOS: always false).
     pub mod_removable: bool,
     /// Whether the game process is currently running.
     pub game_running: bool,
@@ -88,7 +86,8 @@ fn build_game_status(
 }
 
 /// Detect the STFC installation and check its entitlements, mod availability, and running state.
-#[tauri::command]
+///
+/// Not a Tauri command: called by the monitor on startup and after state-changing actions.
 pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
     let mod_library = game::find_mod_library(&app);
     let mod_available = mod_library.is_some();
@@ -141,28 +140,16 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
         }
     });
 
-    let result = build_game_status(detection.as_ref(), mod_available, launcher_running);
-
-    // Kick off an async update check if the game is installed
-    if result.installed {
-        thread::spawn(move || {
-            match check_for_update() {
-                Ok(check) => { let _ = app.emit("update-check", check); }
-                Err(_) => { let _ = app.emit("update-check-failed", ()); }
-            }
-        });
-    }
-
-    result
+    build_game_status(detection.as_ref(), mod_available, launcher_running)
 }
 
 // ---- Mod Preparation / Removal --------------------------------------------------
 
 /// Prepare the mod for use: patch entitlements on macOS, deploy the DLL on Windows.
 ///
-/// Returns the refreshed game status so the frontend can update in one step.
+/// Updates the game state store on success, which automatically notifies the frontend.
 #[tauri::command]
-pub fn prepare_mod(app: tauri::AppHandle) -> Result<GameStatus, String> {
+pub fn prepare_mod(app: tauri::AppHandle) -> Result<(), String> {
     let info = game::detect().ok_or("STFC not found")?;
 
     if game::is_running(&info.executable) {
@@ -181,22 +168,26 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<GameStatus, String> {
         game::deploy_mod(&info.install_dir, &mod_library)?;
     }
 
-    Ok(get_game_status(app))
+    crate::game_state::update(&app, |s| {
+        s.mod_deployed = true;
+        s.mod_outdated = false;
+        s.mod_removable = cfg!(target_os = "windows");
+    });
+    Ok(())
 }
 
 /// Remove the deployed mod from the game directory after user confirmation.
 ///
 /// Shows a warning dialogue explaining that the game will only be launchable via the Scopely
-/// Launcher afterwards. Returns the refreshed game status regardless of whether the user
-/// confirmed or cancelled.
+/// Launcher afterwards. Updates the game state store on confirmed removal.
 #[tauri::command]
-pub fn remove_mod(window: tauri::WebviewWindow) -> Result<GameStatus, String> {
-    // macOS: mod is injected via DYLD at launch, nothing to remove from disk
+pub fn remove_mod(window: tauri::WebviewWindow) -> Result<(), String> {
+    // macOS: mod is injected via DYLD at launch, nothing to remove from the disk
     #[cfg(not(target_os = "windows"))]
     #[allow(clippy::needless_return)]
     {
         log_warn!("remove_mod called on macOS, this should not happen");
-        return Ok(get_game_status(window.app_handle().clone()));
+        return Ok(());
     }
 
     #[cfg(target_os = "windows")]
@@ -217,12 +208,19 @@ pub fn remove_mod(window: tauri::WebviewWindow) -> Result<GameStatus, String> {
 
         if !confirmed {
             log_info!("Mod removal cancelled by user");
-            return Ok(get_game_status(window.app_handle().clone()));
+            return Ok(());
         }
 
         log_info!("User confirmed mod removal");
         game::remove_mod(&info.install_dir)?;
-        Ok(get_game_status(window.app_handle().clone()))
+
+        let app = window.app_handle().clone();
+        crate::game_state::update(&app, |s| {
+            s.mod_deployed = false;
+            s.mod_outdated = false;
+            s.mod_removable = false;
+        });
+        Ok(())
     }
 }
 
@@ -266,6 +264,16 @@ fn build_update_check(
     }
 }
 
+/// Run an update check and emit the result (or failure) to the frontend.
+///
+/// Convenience wrapper around [`check_for_update`] that handles the emit boilerplate.
+pub fn emit_update_check(app: &tauri::AppHandle) {
+    match check_for_update() {
+        Ok(check) => { let _ = app.emit("update-check", check); }
+        Err(_) => { let _ = app.emit("update-check-failed", ()); }
+    }
+}
+
 /// Check whether a game update is available.
 ///
 /// Compares the local `.version` file against the Scopely update API. Uses [`build_update_check`]
@@ -276,18 +284,19 @@ pub fn check_for_update() -> Result<UpdateCheck, String> {
     build_update_check(installed, game::version::fetch_remote(installed))
 }
 
-// ---- Process Status -------------------------------------------------------------
+// ---- Cached Status --------------------------------------------------------------
 
-/// Lightweight process check for polling.
+/// Return the current cached game status, or `None` if the initial detection hasn't completed.
 ///
-/// Only runs process listing (`pgrep`/`tasklist`), no filesystem I/O.
-#[derive(Clone, Serialize, TS)]
-#[ts(export)]
-pub struct ProcessStatus {
-    /// Whether the game process is currently running.
-    pub game_running: bool,
-    /// Whether the Scopely launcher is currently running.
-    pub launcher_running: bool,
+/// Reads from the in-memory store without triggering any I/O. The frontend calls this once after
+/// registering event listeners to get the current state immediately (if available).
+#[tauri::command]
+pub fn get_cached_game_status() -> Option<GameStatus> {
+    if crate::game_state::is_initialized() {
+        Some(crate::game_state::get())
+    } else {
+        None
+    }
 }
 
 // ---- Launch Commands ------------------------------------------------------------

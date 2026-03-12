@@ -5,6 +5,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 mod commands;
 mod game;
+mod game_state;
 mod logging;
 #[cfg(target_os = "macos")]
 mod macos_hooks;
@@ -12,7 +13,7 @@ mod monitor;
 mod process_origin;
 mod settings;
 
-use commands::{get_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
+use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
 
 use_log!("Startup");
 
@@ -47,8 +48,10 @@ pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
         log_debug!("Quit blocked silently (window already hidden)");
         return;
     }
-    let Some(message) = quit_blocked_message(game::is_launcher_running(), game::is_game_running())
-    else {
+    let Some(message) = quit_blocked_message(
+        process_origin::is_launcher_started(),
+        process_origin::is_game_started(),
+    ) else {
         return;
     };
     window.dialog()
@@ -124,8 +127,8 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
 
 /// Bootstrap and run the Tauri application.
 ///
-/// Sets up logging, builds the system tray, and opens DevTools in debug builds.
-/// Game detection runs lazily on the first `get_game_status` command from the frontend.
+/// Sets up logging, builds the system tray, starts the background monitor, and opens DevTools in
+/// debug builds.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -155,9 +158,9 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
-            // Sync quit item with process-status changes from the monitor.
+            // Sync quit item with game-status changes from the store.
             let quit_ref = quit_item.clone();
-            app.listen("process-status", move |_event| {
+            app.listen("game-status", move |_event| {
                 let enabled = !process_origin::should_block_quit();
                 let _ = quit_ref.set_enabled(enabled);
             });
@@ -172,6 +175,7 @@ pub fn run() {
                         log_debug!("[EVENT] Tray menu: Show Window clicked");
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.unminimize();
                             let _ = window.set_focus();
                         }
                     }
@@ -197,6 +201,7 @@ pub fn run() {
                         log_debug!("[EVENT] Tray icon left-clicked");
                         if let Some(window) = tray.app_handle().get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.unminimize();
                             let _ = window.set_focus();
                         }
                     }
@@ -215,7 +220,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_game_status,
+            get_cached_game_status,
             launch_updater,
             prepare_mod,
             remove_mod,
