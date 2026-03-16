@@ -30,6 +30,18 @@ public:
     ZoomCameraAtWorldPoint(this);
   }
 
+  /**
+   * Set the camera zoom to a specific distance.
+   *
+   * PR #111 introduced a game method call (AnimateToZoomDistance) for v48084's
+   * lerp system, but testing shows it produces incorrect zoom levels. The direct
+   * Distance property setter works correctly across all tested versions.
+   */
+  void AnimateToZoomDistance(float distance)
+  {
+    Distance = distance;
+  }
+
   __declspec(property(get = __get_Distance, put = __set_Distance)) float Distance;
 
   __declspec(property(get = __get__depth, put = __set_depth)) NodeDepth _depth;
