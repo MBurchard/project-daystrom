@@ -1,0 +1,18 @@
+[package]
+name = "stfc-mod"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = [ "cdylib" ]
+
+[features]
+default = [ "max_level_debug" ]
+max_level_debug = [ "log/max_level_debug" ]
+max_level_trace = [ "log/max_level_trace" ]
+
+[dependencies]
+chrono = "0.4"
+ctor = "0.6"
+dirs = "6"
+log = "0.4"
