@@ -45,14 +45,25 @@ pub fn is_initialized() -> bool {
 ///
 /// The updater closure receives a mutable reference to the current status. After the closure
 /// returns, the store compares old and new state and emits only when something actually changed.
+///
+/// The mutex is released before emitting so that event listeners (e.g. tray menu sync) can
+/// safely call back into the store or dispatch to the main thread without deadlocking.
 pub fn update(app: &tauri::AppHandle, updater: impl FnOnce(&mut GameStatus)) {
-    let mut status = STATE.lock().unwrap();
-    let old = status.clone();
-    updater(&mut status);
-    INITIALIZED.store(true, Ordering::SeqCst);
-    if *status != old {
+    let changed = {
+        let mut status = STATE.lock().unwrap();
+        let old = status.clone();
+        updater(&mut status);
+        INITIALIZED.store(true, Ordering::SeqCst);
+        if *status != old {
+            Some(status.clone())
+        } else {
+            None
+        }
+    };
+
+    if let Some(payload) = changed {
         log_debug!("Status changed, emitting to frontend");
-        let _ = app.emit("game-status", status.clone());
+        let _ = app.emit("game-status", payload);
     }
 }
 
