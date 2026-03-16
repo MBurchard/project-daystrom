@@ -195,17 +195,18 @@ pub fn is_launcher_running() -> bool {
     is_process_active("Star Trek Fleet Command.app/Contents/MacOS/launcher")
 }
 
+/// Base name of the mod library (without platform prefix/suffix).
+const MOD_LIBRARY_NAME: &str = "stfc-mod";
+
 /// Locate the bundled mod library in the app's resource directory.
 /// Returns `None` if the resource directory is unavailable or the library does not exist.
 pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     let resource_dir = app.path().resource_dir().ok()?;
 
     #[cfg(target_os = "macos")]
-    let library = resource_dir.join("mod/libstfc-community-patch.dylib");
+    let library = resource_dir.join(format!("mod/lib{MOD_LIBRARY_NAME}.dylib"));
     #[cfg(target_os = "windows")]
-    let library = resource_dir.join("mod/stfc-community-patch.dll");
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let library = resource_dir.join("mod/libstfc-community-patch.so");
+    let library = resource_dir.join(format!("mod/{MOD_LIBRARY_NAME}.dll"));
 
     if library.exists() {
         Some(library)

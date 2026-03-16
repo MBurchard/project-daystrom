@@ -257,7 +257,9 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<(), String> {
 /// Shows a warning dialogue explaining that the game will only be launchable via the Scopely
 /// Launcher afterwards. Updates the game state store on confirmed removal.
 #[tauri::command]
-pub fn remove_mod(window: tauri::WebviewWindow) -> Result<(), String> {
+pub fn remove_mod(
+    #[cfg_attr(not(target_os = "windows"), allow(unused))] window: tauri::WebviewWindow,
+) -> Result<(), String> {
     // macOS: mod is injected via DYLD at launch, nothing to remove from the disk
     #[cfg(not(target_os = "windows"))]
     #[allow(clippy::needless_return)]

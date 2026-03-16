@@ -20,6 +20,8 @@
     "test:app:frontend:coverage": "node scripts/build.ts test:frontend:coverage",
     "test:app:backend": "node scripts/build.ts test:backend",
     "test:app:backend:coverage": "node scripts/build.ts test:backend:coverage",
+    "test:mod": "node scripts/build.ts test:mod",
+    "test:mod:coverage": "node scripts/build.ts test:mod:coverage",
     "build": "node scripts/build.ts build",
     "build:app": "node scripts/build.ts build:app",
     "build:mod": "node scripts/build.ts build:mod",
