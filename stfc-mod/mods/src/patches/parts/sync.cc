@@ -2041,6 +2041,11 @@ void InstallSyncPatches()
 {
   load_previously_sent_logs();
 
+  // Track the ProcessResultInternal address to avoid double-hooking. On ARM64 macOS, IL2CPP's
+  // generic sharing can fold GameServerModelRegistry and PlatformModelRegistry into the same
+  // method body. A second SPUD detour on the same address corrupts the first trampoline.
+  void* processResultInternalPtr = nullptr;
+
   if (auto game_server_model_registry =
           il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServerModelRegistry");
       !game_server_model_registry.isValidHelper()) {
@@ -2051,6 +2056,7 @@ void InstallSyncPatches()
       ErrorMsg::MissingMethod("GameServerModelRegistry", "ProcessResultInterval");
     } else {
       SPUD_STATIC_DETOUR(ptr, GameServerModelRegistry_ProcessResultInternal);
+      processResultInternalPtr = ptr;
     }
 
     ptr = game_server_model_registry.GetMethod("HandleBinaryObjects");
@@ -2068,7 +2074,7 @@ void InstallSyncPatches()
   } else {
     if (const auto ptr = platform_model_registry.GetMethod("ProcessResultInternal"); ptr == nullptr) {
       ErrorMsg::MissingMethod("PlatformModelRegistry", "ProcessResultInterval");
-    } else {
+    } else if (ptr != processResultInternalPtr) {
       SPUD_STATIC_DETOUR(ptr, GameServerModelRegistry_ProcessResultInternal);
     }
   }
