@@ -1,8 +1,8 @@
 //! In-memory tracking of whether the game or launcher was started by Daystrom.
 //!
-//! This module provides the central `should_block_quit()` predicate that all quit paths use to
-//! decide whether exiting the app should be prevented. Quit is blocked only when a process that
-//! **we** started is still running.
+//! Provides atomic flags that survive across monitor ticks. The flags are synced into the
+//! [`GameStatus`](crate::commands::GameStatus) store by the commands and monitor, where the
+//! `should_block_quit` derived field replaces the former predicate function.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -40,25 +40,6 @@ pub fn clear_launcher_started() {
     LAUNCHER_STARTED_BY_US.store(false, Ordering::SeqCst);
 }
 
-/// Whether quitting the app should be blocked.
-///
-/// Returns `true` when a process that Daystrom started is still running. The monitor clears the
-/// flags when processes exit, so a simple flag check is sufficient. No expensive process lookups
-/// on the UI thread.
-pub fn should_block_quit() -> bool {
-    GAME_STARTED_BY_US.load(Ordering::SeqCst)
-        || LAUNCHER_STARTED_BY_US.load(Ordering::SeqCst)
-}
-
-/// Whether the game-started flag is set.
-pub fn is_game_started() -> bool {
-    GAME_STARTED_BY_US.load(Ordering::SeqCst)
-}
-
-/// Whether the launcher-started flag is set.
-pub fn is_launcher_started() -> bool {
-    LAUNCHER_STARTED_BY_US.load(Ordering::SeqCst)
-}
 
 // ---- Tests ----------------------------------------------------------------------
 
@@ -114,25 +95,5 @@ mod tests {
         clear_game_started();
         assert!(!GAME_STARTED_BY_US.load(Ordering::SeqCst));
         assert!(LAUNCHER_STARTED_BY_US.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn should_block_quit_follows_flags() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        reset_flags();
-
-        assert!(!should_block_quit());
-
-        mark_game_started();
-        assert!(should_block_quit(), "game flag alone blocks quit");
-
-        clear_game_started();
-        assert!(!should_block_quit());
-
-        mark_launcher_started();
-        assert!(should_block_quit(), "launcher flag alone blocks quit");
-
-        clear_launcher_started();
-        assert!(!should_block_quit());
     }
 }

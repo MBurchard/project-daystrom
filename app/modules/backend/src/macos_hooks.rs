@@ -18,8 +18,6 @@ use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::sel;
 use objc2_app_kit::NSApplicationTerminateReply;
 
-use crate::process_origin;
-
 crate::use_log!("MacHooks");
 
 /// Global handle so ObjC callbacks can reach Tauri.
@@ -85,7 +83,7 @@ unsafe extern "C-unwind" fn should_terminate(
     _cmd: Sel,
     _sender: *const AnyObject,
 ) -> usize {
-    if process_origin::should_block_quit() {
+    if crate::game_state::get().should_block_quit {
         log_debug!("Quit blocked (Daystrom-started process still running)");
         if let Some(handle) = APP_HANDLE.get() {
             use tauri::Manager;

@@ -1,5 +1,6 @@
 use serde::Serialize;
-use tauri::{Emitter, Manager};
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 #[cfg(target_os = "windows")]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use ts_rs::TS;
@@ -10,9 +11,14 @@ use crate::use_log;
 use_log!("Commands");
 
 /// STFC installation and entitlement status as returned to the frontend.
-#[derive(Clone, PartialEq, Serialize, TS)]
+///
+/// Contains both base fields (set by detection/commands) and derived fields (computed automatically
+/// by [`recompute_derived`]). The frontend treats all fields as read-only display data.
+#[derive(Clone, Default, PartialEq, Serialize, TS)]
 #[ts(export)]
 pub struct GameStatus {
+    // ---- Base fields (set by detection, commands, monitor) ----
+
     /// Whether STFC was found on this machine.
     pub installed: bool,
     /// Installed game version from the `.version` file, if available.
@@ -31,6 +37,31 @@ pub struct GameStatus {
     pub game_running: bool,
     /// Whether the Scopely launcher is currently running.
     pub launcher_running: bool,
+    /// Latest version reported by the Scopely update API, if reachable.
+    pub remote_version: Option<u32>,
+    /// Whether the last update check failed (network error, API down, etc.).
+    pub update_check_failed: bool,
+    /// Whether the game was launched via Daystrom's "Launch Game" button.
+    pub game_started_by_us: bool,
+    /// Whether the Scopely launcher was opened via Daystrom's "Update" button.
+    pub launcher_started_by_us: bool,
+
+    // ---- Derived fields (computed by recompute_derived) ----
+
+    /// Whether a game update is available (remote > installed).
+    pub update_available: bool,
+    /// Whether all preconditions for launching the game are met.
+    pub can_launch: bool,
+    /// Whether the mod install/reinstall button should be enabled.
+    pub can_install_mod: bool,
+    /// Whether the mod remove button should be enabled.
+    pub can_remove_mod: bool,
+    /// Whether the updater button should be enabled.
+    pub can_launch_updater: bool,
+    /// Whether quitting the app should be blocked (Daystrom-started process still running).
+    pub should_block_quit: bool,
+    /// CSS class for the version-check checklist item: `"warn"`, `"ok"`, or `"neutral"`.
+    pub version_check_class: String,
 }
 
 // ---- Game Status Builder --------------------------------------------------------
@@ -50,16 +81,57 @@ struct DetectedGame {
     game_running: bool,
 }
 
+/// Recompute all derived fields from the base fields.
+///
+/// Called automatically by [`crate::game_state::update`] after every mutation. Pure function: no
+/// I/O, no side effects beyond the mutable reference.
+pub fn recompute_derived(s: &mut GameStatus) {
+    s.update_available = match (s.game_version, s.remote_version) {
+        (Some(installed), Some(remote)) => remote > installed,
+        _ => false,
+    };
+
+    s.can_launch = s.mod_deployed
+        && !s.update_available
+        && !s.game_running
+        && !s.launcher_running;
+
+    s.can_install_mod = s.mod_installable
+        && !s.update_available
+        && !s.game_running
+        && !s.launcher_running;
+
+    s.can_remove_mod = s.mod_removable
+        && !s.game_running
+        && !s.launcher_running;
+
+    s.can_launch_updater = s.update_available && !s.launcher_running;
+
+    s.should_block_quit = (s.game_started_by_us && s.game_running)
+        || (s.launcher_started_by_us && s.launcher_running);
+
+    s.version_check_class = if s.update_available {
+        "warn".to_string()
+    } else if s.update_check_failed {
+        "neutral".to_string()
+    } else if s.remote_version.is_some() {
+        "ok".to_string()
+    } else {
+        "neutral".to_string()
+    };
+}
+
 /// Assemble a [`GameStatus`] from already-gathered inputs.
 ///
 /// Pure function: no I/O, no Tauri dependency. All platform-specific decisions about
 /// `mod_removable` are resolved via `cfg!()` so the logic is testable on any platform.
+/// Derived fields are computed automatically via [`recompute_derived`].
 fn build_game_status(
     detection: Option<&DetectedGame>,
     mod_available: bool,
     launcher_running: bool,
 ) -> GameStatus {
-    match detection {
+    let mut status = match detection {
         Some(det) => GameStatus {
             installed: true,
             game_version: det.installed_version,
@@ -70,6 +142,7 @@ fn build_game_status(
             mod_removable: cfg!(target_os = "windows") && (det.mod_deployed || det.mod_outdated),
             game_running: det.game_running,
             launcher_running,
+            ..GameStatus::default()
         },
         None => GameStatus {
             installed: false,
@@ -81,8 +154,11 @@ fn build_game_status(
             mod_removable: false,
             game_running: false,
             launcher_running,
+            ..GameStatus::default()
         },
-    }
+    };
+    recompute_derived(&mut status);
+    status
 }
 
 /// Detect the STFC installation and check its entitlements, mod availability, and running state.
@@ -226,62 +302,35 @@ pub fn remove_mod(window: tauri::WebviewWindow) -> Result<(), String> {
 
 // ---- Update Check ---------------------------------------------------------------
 
-/// Result of checking the Scopely update API for a game update.
-#[derive(Clone, Serialize, TS)]
-#[ts(export)]
-pub struct UpdateCheck {
-    /// Currently installed game version from the `.version` file.
-    pub installed_version: u32,
-    /// Latest version reported by the Scopely update API, if reachable.
-    pub remote_version: Option<u32>,
-    /// Whether an update is available (remote > installed).
-    pub update_available: bool,
-}
-
-/// Assemble an [`UpdateCheck`] from an installed version and a remote lookup result.
+/// Run an update check and write the result into the game state store.
 ///
-/// Pure function: no I/O. Separated from [`check_for_update`] so the comparison logic can be
-/// tested without hitting the network or filesystem.
-fn build_update_check(
-    installed: u32,
-    remote: Result<Option<u32>, String>,
-) -> Result<UpdateCheck, String> {
-    match remote {
-        Ok(Some(remote)) => Ok(UpdateCheck {
-            installed_version: installed,
-            remote_version: Some(remote),
-            update_available: remote > installed,
-        }),
-        Ok(None) => Ok(UpdateCheck {
-            installed_version: installed,
-            remote_version: None,
-            update_available: false,
-        }),
+/// On success, sets `remote_version` and clears `update_check_failed`. On failure, sets
+/// `update_check_failed` and clears `remote_version`. The store's automatic change detection
+/// handles frontend notification.
+pub fn update_check_into_store(app: &tauri::AppHandle) {
+    let result = (|| -> Result<(u32, Option<u32>), String> {
+        let info = game::detect().ok_or("STFC not found")?;
+        let installed = info.installed_version.ok_or("Could not read installed game version")?;
+        let remote = game::version::fetch_remote(installed)?;
+        Ok((installed, remote))
+    })();
+
+    match result {
+        Ok((installed, remote)) => {
+            crate::game_state::update(app, |s| {
+                // When the API says "no update" (None), use the installed version so the
+                // frontend knows the check completed successfully.
+                s.remote_version = Some(remote.unwrap_or(installed));
+                s.update_check_failed = false;
+            });
+        }
         Err(e) => {
             log_warn!("Update check failed: {e}");
-            Err(format!("Update check failed: {e}"))
+            crate::game_state::update(app, |s| {
+                s.update_check_failed = true;
+            });
         }
     }
-}
-
-/// Run an update check and emit the result (or failure) to the frontend.
-///
-/// Convenience wrapper around [`check_for_update`] that handles the emit boilerplate.
-pub fn emit_update_check(app: &tauri::AppHandle) {
-    match check_for_update() {
-        Ok(check) => { let _ = app.emit("update-check", check); }
-        Err(_) => { let _ = app.emit("update-check-failed", ()); }
-    }
-}
-
-/// Check whether a game update is available.
-///
-/// Compares the local `.version` file against the Scopely update API. Uses [`build_update_check`]
-/// for the actual comparison logic.
-pub fn check_for_update() -> Result<UpdateCheck, String> {
-    let info = game::detect().ok_or("STFC not found")?;
-    let installed = info.installed_version.ok_or("Could not read installed game version")?;
-    build_update_check(installed, game::version::fetch_remote(installed))
 }
 
 // ---- Cached Status --------------------------------------------------------------
@@ -303,9 +352,12 @@ pub fn get_cached_game_status() -> Option<GameStatus> {
 
 /// Open the Scopely launcher so the user can install an update.
 #[tauri::command]
-pub fn launch_updater(_app: tauri::AppHandle) -> Result<(), String> {
+pub fn launch_updater(app: tauri::AppHandle) -> Result<(), String> {
     game::launcher::open_updater()?;
     crate::process_origin::mark_launcher_started();
+    crate::game_state::update(&app, |s| {
+        s.launcher_started_by_us = true;
+    });
     Ok(())
 }
 
@@ -333,6 +385,9 @@ pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
 
     game::launcher::launch(&info, &mod_library)?;
     crate::process_origin::mark_game_started();
+    crate::game_state::update(&app, |s| {
+        s.game_started_by_us = true;
+    });
     Ok(())
 }
 
@@ -466,57 +521,235 @@ mod tests {
         assert!(status.launcher_running);
     }
 
-    // -- build_update_check --
+    // -- recompute_derived --
 
-    #[test]
-    fn update_available() {
-        let result = build_update_check(100, Ok(Some(200)));
-        let check = result.unwrap();
-        assert_eq!(check.installed_version, 100);
-        assert_eq!(check.remote_version, Some(200));
-        assert!(check.update_available);
+    /// Helper: build a GameStatus with base fields set, derived fields at default.
+    fn make_status(f: impl FnOnce(&mut GameStatus)) -> GameStatus {
+        let mut s = GameStatus::default();
+        f(&mut s);
+        recompute_derived(&mut s);
+        s
     }
 
     #[test]
-    fn no_update_same_version() {
-        let result = build_update_check(100, Ok(Some(100)));
-        let check = result.unwrap();
-        assert_eq!(check.remote_version, Some(100));
-        assert!(!check.update_available);
+    fn update_available_when_remote_exceeds_installed() {
+        let s = make_status(|s| {
+            s.game_version = Some(100);
+            s.remote_version = Some(200);
+        });
+        assert!(s.update_available);
     }
 
     #[test]
-    fn no_update_older_remote() {
-        let result = build_update_check(200, Ok(Some(100)));
-        let check = result.unwrap();
-        assert!(!check.update_available);
+    fn no_update_when_same_version() {
+        let s = make_status(|s| {
+            s.game_version = Some(100);
+            s.remote_version = Some(100);
+        });
+        assert!(!s.update_available);
     }
 
     #[test]
-    fn remote_version_unavailable() {
-        let result = build_update_check(100, Ok(None));
-        let check = result.unwrap();
-        assert_eq!(check.installed_version, 100);
-        assert!(check.remote_version.is_none());
-        assert!(!check.update_available);
+    fn no_update_when_remote_older() {
+        let s = make_status(|s| {
+            s.game_version = Some(200);
+            s.remote_version = Some(100);
+        });
+        assert!(!s.update_available);
     }
 
     #[test]
-    fn remote_check_failed() {
-        let result = build_update_check(100, Err("network error".to_string()));
-        let Err(err) = result else { panic!("expected Err for failed remote check") };
-        assert!(err.contains("network error"));
+    fn no_update_when_remote_missing() {
+        let s = make_status(|s| {
+            s.game_version = Some(100);
+        });
+        assert!(!s.update_available);
     }
-
-    // -- check_for_update (integration, no Tauri dependency) --
 
     #[test]
-    fn check_for_update_without_game_installed() {
-        // In the test environment, STFC is not installed: game::detect() returns None.
-        let result = check_for_update();
-        let Err(err) = result else { return }; // game installed on dev machine: skip gracefully
-        assert_eq!(err, "STFC not found");
+    fn no_update_when_game_version_missing() {
+        let s = make_status(|s| {
+            s.remote_version = Some(200);
+        });
+        assert!(!s.update_available);
     }
 
-    // ts-rs binding exports are auto-generated by #[ts(export)] on the structs
+    #[test]
+    fn can_launch_all_conditions_met() {
+        let s = make_status(|s| {
+            s.mod_deployed = true;
+        });
+        assert!(s.can_launch);
+    }
+
+    #[test]
+    fn can_launch_false_when_mod_not_deployed() {
+        let s = make_status(|_| {});
+        assert!(!s.can_launch);
+    }
+
+    #[test]
+    fn can_launch_false_when_update_available() {
+        let s = make_status(|s| {
+            s.mod_deployed = true;
+            s.game_version = Some(100);
+            s.remote_version = Some(200);
+        });
+        assert!(!s.can_launch);
+    }
+
+    #[test]
+    fn can_launch_false_when_game_running() {
+        let s = make_status(|s| {
+            s.mod_deployed = true;
+            s.game_running = true;
+        });
+        assert!(!s.can_launch);
+    }
+
+    #[test]
+    fn can_launch_false_when_launcher_running() {
+        let s = make_status(|s| {
+            s.mod_deployed = true;
+            s.launcher_running = true;
+        });
+        assert!(!s.can_launch);
+    }
+
+    #[test]
+    fn can_install_mod_all_conditions_met() {
+        let s = make_status(|s| {
+            s.mod_installable = true;
+        });
+        assert!(s.can_install_mod);
+    }
+
+    #[test]
+    fn can_install_mod_false_when_not_installable() {
+        let s = make_status(|_| {});
+        assert!(!s.can_install_mod);
+    }
+
+    #[test]
+    fn can_install_mod_false_when_update_available() {
+        let s = make_status(|s| {
+            s.mod_installable = true;
+            s.game_version = Some(100);
+            s.remote_version = Some(200);
+        });
+        assert!(!s.can_install_mod);
+    }
+
+    #[test]
+    fn can_install_mod_false_when_game_running() {
+        let s = make_status(|s| {
+            s.mod_installable = true;
+            s.game_running = true;
+        });
+        assert!(!s.can_install_mod);
+    }
+
+    #[test]
+    fn can_remove_mod_when_removable_nothing_running() {
+        let s = make_status(|s| {
+            s.mod_removable = true;
+        });
+        assert!(s.can_remove_mod);
+    }
+
+    #[test]
+    fn can_remove_mod_false_when_game_running() {
+        let s = make_status(|s| {
+            s.mod_removable = true;
+            s.game_running = true;
+        });
+        assert!(!s.can_remove_mod);
+    }
+
+    #[test]
+    fn can_launch_updater_when_update_available() {
+        let s = make_status(|s| {
+            s.game_version = Some(100);
+            s.remote_version = Some(200);
+        });
+        assert!(s.can_launch_updater);
+    }
+
+    #[test]
+    fn can_launch_updater_false_when_launcher_running() {
+        let s = make_status(|s| {
+            s.game_version = Some(100);
+            s.remote_version = Some(200);
+            s.launcher_running = true;
+        });
+        assert!(!s.can_launch_updater);
+    }
+
+    #[test]
+    fn should_block_quit_when_game_started_by_us_and_running() {
+        let s = make_status(|s| {
+            s.game_started_by_us = true;
+            s.game_running = true;
+        });
+        assert!(s.should_block_quit);
+    }
+
+    #[test]
+    fn should_block_quit_when_launcher_started_by_us_and_running() {
+        let s = make_status(|s| {
+            s.launcher_started_by_us = true;
+            s.launcher_running = true;
+        });
+        assert!(s.should_block_quit);
+    }
+
+    #[test]
+    fn should_not_block_quit_when_process_not_started_by_us() {
+        let s = make_status(|s| {
+            s.game_running = true;
+            s.launcher_running = true;
+        });
+        assert!(!s.should_block_quit);
+    }
+
+    #[test]
+    fn should_not_block_quit_when_started_process_exited() {
+        let s = make_status(|s| {
+            s.game_started_by_us = true;
+            s.game_running = false;
+        });
+        assert!(!s.should_block_quit);
+    }
+
+    #[test]
+    fn version_check_class_warn_when_update_available() {
+        let s = make_status(|s| {
+            s.game_version = Some(100);
+            s.remote_version = Some(200);
+        });
+        assert_eq!(s.version_check_class, "warn");
+    }
+
+    #[test]
+    fn version_check_class_ok_when_up_to_date() {
+        let s = make_status(|s| {
+            s.game_version = Some(100);
+            s.remote_version = Some(100);
+        });
+        assert_eq!(s.version_check_class, "ok");
+    }
+
+    #[test]
+    fn version_check_class_neutral_when_check_failed() {
+        let s = make_status(|s| {
+            s.update_check_failed = true;
+        });
+        assert_eq!(s.version_check_class, "neutral");
+    }
+
+    #[test]
+    fn version_check_class_neutral_when_no_remote() {
+        let s = make_status(|_| {});
+        assert_eq!(s.version_check_class, "neutral");
+    }
 }
