@@ -6,21 +6,9 @@ const {
   version,
   status,
   loading,
-  installed,
   error,
   actionError,
   actionPending,
-  remoteVersion,
-  updateCheckFailed,
-  launcherRunning,
-  gameRunning,
-  updaterStartedByUs,
-  updateAvailable,
-  canLaunch,
-  versionCheckClass,
-  canInstallMod,
-  canRemoveMod,
-  canLaunchUpdater,
   installMod,
   removeMod,
   openUpdater,
@@ -48,24 +36,24 @@ onUnmounted(() => destroy());
         <li v-if="loading" class="neutral">
           Detecting STFC...
         </li>
-        <li v-else :class="installed ? 'ok' : 'fail'">
+        <li v-else :class="status.installed ? 'ok' : 'fail'">
           STFC installed
-          <template v-if="installed && status.game_version">
+          <template v-if="status.installed && status.game_version">
             (v{{ status.game_version }})
           </template>
         </li>
 
-        <li v-if="installed" :class="versionCheckClass">
-          <template v-if="updateAvailable">
-            v{{ remoteVersion }} available
-            <button :disabled="!canLaunchUpdater || actionPending" @click="openUpdater">
+        <li v-if="status.installed" :class="status.version_check_class">
+          <template v-if="status.update_available">
+            v{{ status.remote_version }} available
+            <button :disabled="!status.can_launch_updater || actionPending" @click="openUpdater">
               Update
             </button>
           </template>
-          <template v-else-if="updateCheckFailed">
+          <template v-else-if="status.update_check_failed">
             Version check failed
           </template>
-          <template v-else-if="remoteVersion != null">
+          <template v-else-if="status.remote_version != null">
             Version check: up to date
           </template>
           <template v-else>
@@ -73,26 +61,29 @@ onUnmounted(() => destroy());
           </template>
         </li>
 
-        <li v-if="launcherRunning" class="warn">
+        <li v-if="status.launcher_running" class="warn">
           Scopely Launcher running
         </li>
 
-        <li v-if="installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
+        <li v-if="status.installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
           Community Mod
-          <button v-if="status.mod_available" :disabled="!canInstallMod || actionPending" @click="installMod">
+          <button v-if="status.mod_available" :disabled="!status.can_install_mod || actionPending" @click="installMod">
             {{ status.mod_deployed ? 'Reinstall' : status.mod_outdated ? 'Update' : 'Install' }}
           </button>
-          <button v-if="status.mod_removable" :disabled="!canRemoveMod || actionPending" @click="removeMod">
+          <button v-if="status.mod_removable" :disabled="!status.can_remove_mod || actionPending" @click="removeMod">
             Remove
           </button>
         </li>
 
-        <li v-if="installed" :class="gameRunning ? 'ok' : 'fail'">
+        <li v-if="status.installed" :class="status.game_running ? 'ok' : 'fail'">
           Game running
         </li>
       </ul>
 
-      <button v-if="installed" :disabled="!canLaunch || actionPending" class="launch-btn" @click="launchGame">
+      <button v-if="status.installed"
+          :disabled="!status.can_launch || actionPending"
+          class="launch-btn"
+          @click="launchGame">
         Launch Game
       </button>
 
@@ -100,12 +91,12 @@ onUnmounted(() => destroy());
         {{ actionError }}
       </p>
 
-      <p v-if="updaterStartedByUs" class="info-message">
+      <p v-if="status.launcher_started_by_us" class="info-message">
         The Scopely Launcher has been started. Update the game there, then close the launcher.
         Do not start the game from the Scopely Launcher. Use Daystrom instead.
       </p>
 
-      <p v-else-if="launcherRunning" class="info-message">
+      <p v-else-if="status.launcher_running" class="info-message">
         Close the Scopely Launcher to continue. Do not start the game from there, use Daystrom instead.
       </p>
     </section>

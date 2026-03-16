@@ -141,7 +141,7 @@ fn run_loop(app: tauri::AppHandle) {
     let installed = status.installed;
     crate::game_state::update(&app, |s| *s = status);
     if installed {
-        commands::emit_update_check(&app);
+        commands::update_check_into_store(&app);
     }
 
     let mut state = MonitorState::new();
@@ -156,19 +156,36 @@ fn run_loop(app: tauri::AppHandle) {
             match action {
                 MonitorAction::ClearGameStarted => {
                     crate::process_origin::clear_game_started();
+                    crate::game_state::update(&app, |s| {
+                        s.game_started_by_us = false;
+                    });
                     log_debug!("Game process ended");
                 }
                 MonitorAction::ClearLauncherStarted => {
                     crate::process_origin::clear_launcher_started();
+                    crate::game_state::update(&app, |s| {
+                        s.launcher_started_by_us = false;
+                    });
                     log_debug!("Launcher process ended");
                 }
                 MonitorAction::RefreshGameStatus => {
-                    let status = commands::get_game_status(app.clone());
-                    crate::game_state::update(&app, |s| *s = status);
+                    let fresh = commands::get_game_status(app.clone());
+                    crate::game_state::update(&app, |s| {
+                        // Preserve fields not covered by get_game_status
+                        let remote_version = s.remote_version;
+                        let update_check_failed = s.update_check_failed;
+                        let game_started_by_us = s.game_started_by_us;
+                        let launcher_started_by_us = s.launcher_started_by_us;
+                        *s = fresh;
+                        s.remote_version = remote_version;
+                        s.update_check_failed = update_check_failed;
+                        s.game_started_by_us = game_started_by_us;
+                        s.launcher_started_by_us = launcher_started_by_us;
+                    });
                 }
                 MonitorAction::RecheckUpdateApi => {
                     log_debug!("Periodic update check");
-                    commands::emit_update_check(&app);
+                    commands::update_check_into_store(&app);
                 }
             }
         }

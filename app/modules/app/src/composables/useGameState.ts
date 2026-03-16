@@ -1,11 +1,10 @@
 import type {GameStatus} from '@generated/GameStatus';
-import type {UpdateCheck} from '@generated/UpdateCheck';
 import type {Ref} from 'vue';
 import {getLogger} from '@app/log';
 import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
-import {computed, ref} from 'vue';
+import {ref} from 'vue';
 
 const log = getLogger('App');
 
@@ -19,6 +18,17 @@ const DEFAULT_GAME_STATUS: GameStatus = {
   mod_removable: false,
   game_running: false,
   launcher_running: false,
+  remote_version: null,
+  update_check_failed: false,
+  game_started_by_us: false,
+  launcher_started_by_us: false,
+  update_available: false,
+  can_launch: false,
+  can_install_mod: false,
+  can_remove_mod: false,
+  can_launch_updater: false,
+  should_block_quit: false,
+  version_check_class: 'neutral',
 };
 
 // ---- Public Interface -----------------------------------------------------------
@@ -30,36 +40,12 @@ export interface GameState {
   status: Readonly<Ref<GameStatus>>;
   /** True while the initial status load is in flight. */
   loading: Readonly<Ref<boolean>>;
-  /** Whether the game is installed (false while status is loading). */
-  installed: Readonly<Ref<boolean>>;
   /** Fatal error during the initial status load. */
   error: Readonly<Ref<string | null>>;
   /** Error from the last user-triggered action. */
   actionError: Readonly<Ref<string | null>>;
   /** Whether a user action is currently in flight. */
   actionPending: Readonly<Ref<boolean>>;
-  /** Remote game version from the Scopely update API. */
-  remoteVersion: Readonly<Ref<number | null>>;
-  /** Whether the last update check failed. */
-  updateCheckFailed: Readonly<Ref<boolean>>;
-  /** Whether the Scopely launcher process is running. */
-  launcherRunning: Readonly<Ref<boolean>>;
-  /** Whether the game process is running. */
-  gameRunning: Readonly<Ref<boolean>>;
-  /** Whether we started the updater in this session. */
-  updaterStartedByUs: Readonly<Ref<boolean>>;
-  /** True when the remote version exceeds the installed version. */
-  updateAvailable: Readonly<Ref<boolean>>;
-  /** True when all preconditions for launching the game are met. */
-  canLaunch: Readonly<Ref<boolean>>;
-  /** CSS class for the version-check checklist item. */
-  versionCheckClass: Readonly<Ref<string>>;
-  /** True when the mod install/reinstall button should be enabled. */
-  canInstallMod: Readonly<Ref<boolean>>;
-  /** True when the mod remove button should be enabled. */
-  canRemoveMod: Readonly<Ref<boolean>>;
-  /** True when the updater button should be enabled. */
-  canLaunchUpdater: Readonly<Ref<boolean>>;
   /** Prepare the mod (patch entitlements on macOS, deploy DLL on Windows). */
   installMod: () => void;
   /** Remove the deployed mod from the game directory. */
@@ -76,9 +62,12 @@ export interface GameState {
 
 /**
  * Composable that encapsulates all game state management, backend communication,
- * event handling, computed guards, and user actions.
+ * event handling, and user actions.
  *
- * @returns reactive state, computed guards, actions, and lifecycle functions
+ * The backend computes all derived state (guards, version check class, etc.).
+ * The frontend only displays data and dispatches user actions.
+ *
+ * @returns reactive state, actions, and lifecycle functions
  */
 export function useGameState(): GameState {
   // ---- Reactive State -------------------------------------------------------------
@@ -89,84 +78,8 @@ export function useGameState(): GameState {
   const error = ref<string | null>(null);
   const actionError = ref<string | null>(null);
   const actionPending = ref(false);
-  const remoteVersion = ref<number | null>(null);
-  const updateCheckFailed = ref(false);
-  const launcherRunning = ref(false);
-  const gameRunning = ref(false);
-  const updaterStartedByUs = ref(false);
 
   let unlistenGameStatus: (() => void) | null = null;
-  let unlistenUpdateCheck: (() => void) | null = null;
-  let unlistenUpdateCheckFailed: (() => void) | null = null;
-
-  // ---- Computed Guards --------------------------------------------------------------
-
-  /**
-   * Whether the game is installed.
-   * @returns false while status is still loading or when the game is not found
-   */
-  const installed = computed(() => status.value.installed);
-
-  /**
-   * Whether a game update is available.
-   * @returns true when the remote version exceeds the installed version
-   */
-  const updateAvailable = computed(() => {
-    const s = status.value;
-    if (!s.game_version || remoteVersion.value == null) {
-      return false;
-    }
-    return remoteVersion.value > s.game_version;
-  });
-
-  /**
-   * Whether all conditions for launching the game are met.
-   * @returns true when mod deployed (implies installed), nothing running, no update
-   */
-  const canLaunch = computed(() => {
-    return status.value.mod_deployed && !updateAvailable.value && !gameRunning.value && !launcherRunning.value;
-  });
-
-  /**
-   * CSS class for the version check checklist item.
-   * @returns 'ok' when up to date, 'warn' when update available, 'neutral' when check failed/pending
-   */
-  const versionCheckClass = computed(() => {
-    if (updateAvailable.value) {
-      return 'warn';
-    }
-    if (updateCheckFailed.value) {
-      return 'neutral';
-    }
-    if (remoteVersion.value != null) {
-      return 'ok';
-    }
-    return 'neutral';
-  });
-
-  /**
-   * Whether the mod install/reinstall button should be enabled.
-   * @returns true when mod_installable (implies installed and mod available), nothing running, no update
-   */
-  const canInstallMod = computed(() => {
-    return status.value.mod_installable && !updateAvailable.value && !gameRunning.value && !launcherRunning.value;
-  });
-
-  /**
-   * Whether the mod remove button should be enabled.
-   * @returns true when mod_removable (implies installed) and nothing running
-   */
-  const canRemoveMod = computed(() => {
-    return status.value.mod_removable && !gameRunning.value && !launcherRunning.value;
-  });
-
-  /**
-   * Whether the Update button should be shown and enabled.
-   * @returns true when an update is available, launcher is not already running, and no action pending
-   */
-  const canLaunchUpdater = computed(() => {
-    return updateAvailable.value && !launcherRunning.value;
-  });
 
   // ---- Actions ----------------------------------------------------------------------
 
@@ -174,17 +87,13 @@ export function useGameState(): GameState {
    * Run a backend command triggered by a user action (button click).
    *
    * Sets `actionPending` while the command is in flight and captures errors in `actionError`.
-   * An optional `onSuccess` callback allows optimistic UI updates (e.g. setting process flags
-   * immediately after a launch command succeeds).
    *
    * @param command - the Tauri command name to invoke
-   * @param onSuccess - optional callback executed on success before pending clears
    */
-  function runAction(command: string, onSuccess?: () => void): void {
+  function runAction(command: string): void {
     actionPending.value = true;
     actionError.value = null;
     invoke(command)
-      .then(onSuccess)
       .catch((err) => {
         actionError.value = String(err);
       })
@@ -229,10 +138,7 @@ export function useGameState(): GameState {
    */
   function openUpdater(): void {
     log.debug('User clicked Update');
-    runAction('launch_updater', () => {
-      launcherRunning.value = true;
-      updaterStartedByUs.value = true;
-    });
+    runAction('launch_updater');
   }
 
   /**
@@ -240,9 +146,7 @@ export function useGameState(): GameState {
    */
   function launchGame(): void {
     log.debug('User clicked Launch Game');
-    runAction('launch_game', () => {
-      gameRunning.value = true;
-    });
+    runAction('launch_game');
   }
 
   // ---- Lifecycle --------------------------------------------------------------------
@@ -273,21 +177,6 @@ export function useGameState(): GameState {
     }).then((unlisten) => {
       unlistenGameStatus = unlisten;
     }).catch(reason => log.error('Failed to listen for game-status:', reason));
-
-    // Backend pushes update check results (initial + periodic rechecks from monitor)
-    listen<UpdateCheck>('update-check', (event) => {
-      updateCheckFailed.value = false;
-      remoteVersion.value = event.payload.remote_version ?? event.payload.installed_version;
-    }).then((unlisten) => {
-      unlistenUpdateCheck = unlisten;
-    }).catch(reason => log.error('Failed to listen for update-check:', reason));
-
-    // Backend pushes this event when the update check fails (network error, API down, etc.)
-    listen('update-check-failed', () => {
-      updateCheckFailed.value = true;
-    }).then((unlisten) => {
-      unlistenUpdateCheckFailed = unlisten;
-    }).catch(reason => log.error('Failed to listen for update-check-failed:', reason));
   }
 
   /**
@@ -299,11 +188,6 @@ export function useGameState(): GameState {
    */
   function applyGameStatus(s: GameStatus): void {
     status.value = s;
-    gameRunning.value = s.game_running;
-    launcherRunning.value = s.launcher_running;
-    if (!s.launcher_running) {
-      updaterStartedByUs.value = false;
-    }
     loading.value = false;
   }
 
@@ -315,33 +199,15 @@ export function useGameState(): GameState {
     if (unlistenGameStatus) {
       unlistenGameStatus();
     }
-    if (unlistenUpdateCheck) {
-      unlistenUpdateCheck();
-    }
-    if (unlistenUpdateCheckFailed) {
-      unlistenUpdateCheckFailed();
-    }
   }
 
   return {
     version,
     status,
     loading,
-    installed,
     error,
     actionError,
     actionPending,
-    remoteVersion,
-    updateCheckFailed,
-    launcherRunning,
-    gameRunning,
-    updaterStartedByUs,
-    updateAvailable,
-    canLaunch,
-    versionCheckClass,
-    canInstallMod,
-    canRemoveMod,
-    canLaunchUpdater,
     installMod,
     removeMod,
     openUpdater,

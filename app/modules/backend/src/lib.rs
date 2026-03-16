@@ -48,9 +48,10 @@ pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
         log_debug!("Quit blocked silently (window already hidden)");
         return;
     }
+    let status = game_state::get();
     let Some(message) = quit_blocked_message(
-        process_origin::is_launcher_started(),
-        process_origin::is_game_started(),
+        status.launcher_started_by_us,
+        status.game_started_by_us,
     ) else {
         return;
     };
@@ -161,7 +162,7 @@ pub fn run() {
             // Sync quit item with game-status changes from the store.
             let quit_ref = quit_item.clone();
             app.listen("game-status", move |_event| {
-                let enabled = !process_origin::should_block_quit();
+                let enabled = !game_state::get().should_block_quit;
                 let _ = quit_ref.set_enabled(enabled);
             });
 
@@ -181,7 +182,7 @@ pub fn run() {
                     }
                     "quit" => {
                         log_debug!("[EVENT] Tray menu: Quit clicked");
-                        if process_origin::should_block_quit() {
+                        if game_state::get().should_block_quit {
                             if let Some(window) = app.get_webview_window("main") {
                                 warn_quit_blocked(&window);
                             }
@@ -230,7 +231,7 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     log_debug!("[EVENT] CloseRequested on window '{}'", window.label());
-                    if process_origin::should_block_quit() {
+                    if game_state::get().should_block_quit {
                         api.prevent_close();
                         if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
                             warn_quit_blocked(&wv);

@@ -26,6 +26,17 @@ static STATE: Mutex<GameStatus> = Mutex::new(GameStatus {
     mod_removable: false,
     game_running: false,
     launcher_running: false,
+    remote_version: None,
+    update_check_failed: false,
+    game_started_by_us: false,
+    launcher_started_by_us: false,
+    update_available: false,
+    can_launch: false,
+    can_install_mod: false,
+    can_remove_mod: false,
+    can_launch_updater: false,
+    should_block_quit: false,
+    version_check_class: String::new(),
 });
 
 /// Whether the store has been populated at least once by the monitor's initial detection.
@@ -53,6 +64,7 @@ pub fn update(app: &tauri::AppHandle, updater: impl FnOnce(&mut GameStatus)) {
         let mut status = STATE.lock().unwrap();
         let old = status.clone();
         updater(&mut status);
+        crate::commands::recompute_derived(&mut status);
         INITIALIZED.store(true, Ordering::SeqCst);
         if *status != old {
             Some(status.clone())
@@ -75,17 +87,7 @@ mod tests {
 
     /// Reset the store to its default state. Must only be called from serialized tests.
     fn reset() {
-        *STATE.lock().unwrap() = GameStatus {
-            installed: false,
-            game_version: None,
-            mod_available: false,
-            mod_installable: false,
-            mod_deployed: false,
-            mod_outdated: false,
-            mod_removable: false,
-            game_running: false,
-            launcher_running: false,
-        };
+        *STATE.lock().unwrap() = GameStatus::default();
         INITIALIZED.store(false, Ordering::SeqCst);
     }
 
