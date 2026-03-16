@@ -156,26 +156,25 @@ static eastl::unordered_set<void*> seen_destroy;
 template <typename T> void TrackObject()
 {
   auto& object_class = T::get_class_helper();
-  if (!object_class.isValidHelper()) {
-    spdlog::error("ObjectTracker: Unable to find class for tracking");
+  auto  ctor         = object_class.GetMethod(".ctor");
+  auto  on_destroy   = object_class.GetMethod("OnDestroy");
+
+  if (ctor == nullptr) {
+    spdlog::error("ObjectTracker: Unable to find .ctor for '{}'", object_class.get_cls() ? object_class.get_cls()->name : "unknown");
     return;
   }
 
-  const auto* class_name = object_class.get_cls()->name;
+  if (on_destroy == nullptr) {
+    spdlog::error("ObjectTracker: Unable to find OnDestroy for '{}'", object_class.get_cls() ? object_class.get_cls()->name : "unknown");
+    return;
+  }
 
-  auto ctor       = object_class.GetMethod(".ctor");
-  auto on_destroy = object_class.GetMethod("OnDestroy");
-
-  if (ctor == nullptr) {
-    ErrorMsg::MissingMethod(class_name, ".ctor");
-  } else if (seen_ctor.find(ctor) == seen_ctor.end()) {
+  if (seen_ctor.find(ctor) == seen_ctor.end()) {
     SPUD_STATIC_DETOUR(ctor, track_ctor);
     seen_ctor.emplace(ctor);
   }
 
-  if (on_destroy == nullptr) {
-    ErrorMsg::MissingMethod(class_name, "OnDestroy");
-  } else if (seen_destroy.find(on_destroy) == seen_destroy.end()) {
+  if (seen_destroy.find(on_destroy) == seen_destroy.end()) {
     SPUD_STATIC_DETOUR(on_destroy, track_destroy);
     seen_destroy.emplace(on_destroy);
   }
@@ -213,10 +212,9 @@ void InstallObjectTrackers()
 #endif
 
   if (GC_register_finalizer_inner_matches.size() == 0) {
-    spdlog::error("ObjectTracker: Unable to find GC_register_finalizer_inner signature");
-    return;
+    spdlog::error("ObjectTracker: Failed to find GC_register_finalizer_inner signature");
+  } else {
+    const auto GC_register_finalizer_inner_match = GC_register_finalizer_inner_matches.get(0);
+    GC_register_finalizer_inner = (decltype(GC_register_finalizer_inner))GC_register_finalizer_inner_match.address();
   }
-
-  const auto GC_register_finalizer_inner_match = GC_register_finalizer_inner_matches.get(0);
-  GC_register_finalizer_inner = (decltype(GC_register_finalizer_inner))GC_register_finalizer_inner_match.address();
 }

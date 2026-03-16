@@ -12,6 +12,8 @@
 
 #include <spud/detour.h>
 
+#include "patches/safe_detour.h"
+
 #if _WIN32
 #include <Windows.h>
 #endif
@@ -51,12 +53,7 @@ void InstallMiscPatches()
   if (!h.isValidHelper()) {
     ErrorMsg::MissingHelper("Digit.Prime.Inventories", "InventoryForPopup");
   } else {
-    auto ptr = h.GetMethod("set_MaxItemsToUse");
-    if (!ptr) {
-      ErrorMsg::MissingMethod("InventoryForPopup", "set_MaxItemsToUse");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, InventoryForPopup_set_MaxItemsToUse);
-    }
+    SAFE_STATIC_DETOUR(h, "InventoryForPopup", "set_MaxItemsToUse", 1, InventoryForPopup_set_MaxItemsToUse);
   }
 #endif
 
@@ -64,80 +61,7 @@ void InstallMiscPatches()
   if (!bundle_data_widget.isValidHelper()) {
     ErrorMsg::MissingHelper("Digit.Prime.Shop", "BundleDataWidget");
   } else {
-    auto ptr = bundle_data_widget.GetMethod("OnActionButtonPressedCallback");
-    if (!ptr) {
-      ErrorMsg::MissingMethod("BundleDataWidget", "OnActionButtonPressedCallback");
-    } else
-      SPUD_STATIC_DETOUR(ptr, BundleDataWidget_OnActionButtonPressedCallback);
-  }
-}
-
-struct Resolution {
-  int m_Width;
-  int m_Height;
-  int m_RefreshRate;
-
-  bool operator==(const Resolution& other) const
-  {
-    return this->m_Height == other.m_Height && this->m_Width == other.m_Width;
-  }
-};
-
-struct ResolutionArray {
-  Il2CppObject obj;
-  void*        bounds;
-  size_t       maxlength;
-  Resolution   data[1];
-};
-
-ResolutionArray* GetResolutions_Hook(auto original)
-{
-  auto resolutions = original();
-
-#if _WIN32
-  // Modify
-  auto screenWidth  = GetSystemMetrics(SM_CXSCREEN);
-  auto screenHeight = GetSystemMetrics(SM_CYSCREEN);
-
-  int targetRefreshRate = 0;
-  for (int i = 0; i < resolutions->maxlength; ++i) {
-    auto ores = resolutions->data[i];
-    if (ores.m_Width == screenWidth && ores.m_Height == screenHeight) {
-      targetRefreshRate = std::max(ores.m_RefreshRate, targetRefreshRate);
-    }
-  }
-
-  std::vector<Resolution> res;
-  for (int i = 0; i < resolutions->maxlength; ++i) {
-    if (Config::Get().show_all_resolutions)
-      resolutions->data[i].m_RefreshRate = targetRefreshRate;
-
-    auto ores = resolutions->data[i];
-    if (Config::Get().show_all_resolutions || (ores.m_RefreshRate == targetRefreshRate || targetRefreshRate == 0)) {
-      res.push_back(ores);
-    }
-  }
-
-  res.erase(unique(res.begin(), res.end()), res.end());
-
-  int i = 0;
-  for (const auto& resultRes : res) {
-    resolutions->data[i] = resultRes;
-    ++i;
-  }
-  resolutions->maxlength = res.size();
-#endif
-
-  return resolutions;
-}
-
-void InstallResolutionListFix()
-{
-  auto get_resolutions = il2cpp_resolve_icall_typed<ResolutionArray*()>("UnityEngine.Screen::get_resolutions()");
-  if (!get_resolutions) {
-    ErrorMsg::MissingMethod("UnityEngine.Screen", "get_resolutions");
-  } else {
-    SPUD_STATIC_DETOUR(get_resolutions, GetResolutions_Hook);
+    SAFE_STATIC_DETOUR(bundle_data_widget, "BundleDataWidget", "OnActionButtonPressedCallback", 0, BundleDataWidget_OnActionButtonPressedCallback);
   }
 }
 
@@ -277,24 +201,14 @@ void InstallTempCrashFixes()
   if (!BuffService_helper.isValidHelper()) {
     ErrorMsg::MissingHelper("Services", "BuffService");
   } else {
-    auto ptr_extract_buffs_of_type = BuffService_helper.GetMethod("ExtractBuffsOfType");
-    if (ptr_extract_buffs_of_type == nullptr) {
-      ErrorMsg::MissingMethod("BuffService", "ExtractBuffsOfType");
-    } else {
-      SPUD_STATIC_DETOUR(ptr_extract_buffs_of_type, ExtractBuffsOfType_Hook);
-    }
+    SAFE_STATIC_DETOUR(BuffService_helper, "BuffService", "ExtractBuffsOfType", 2, ExtractBuffsOfType_Hook);
   }
 
   auto shop_scene_manager = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager");
   if (!shop_scene_manager.isValidHelper()) {
     ErrorMsg::MissingHelper("Shop", "ShopSceneManager");
   } else {
-    auto reveal_show = shop_scene_manager.GetMethod("ShouldShowRevealSequence");
-    if (reveal_show == nullptr) {
-      ErrorMsg::MissingMethod("ShopSceneManager", "ShouldShowRevealSequence");
-    } else {
-      SPUD_STATIC_DETOUR(reveal_show, ShouldShowRevealHook);
-    }
+    SAFE_STATIC_DETOUR(shop_scene_manager, "ShopSceneManager", "ShouldShowRevealSequence", 1, ShouldShowRevealHook);
   }
 
   static auto interstitial_controller =
@@ -302,12 +216,7 @@ void InstallTempCrashFixes()
   if (!interstitial_controller.isValidHelper()) {
     ErrorMsg::MissingHelper("Interstitial", "InterstitialViewController");
   } else {
-    auto interstitial_show = interstitial_controller.GetMethod("AboutToShow");
-    if (interstitial_show == nullptr) {
-      ErrorMsg::MissingMethod("InterstitialViewController", "AboutToShow");
-    } else {
-      SPUD_STATIC_DETOUR(interstitial_show, InterstitialViewController_AboutToShow);
-    }
+    SAFE_STATIC_DETOUR(interstitial_controller, "InterstitialViewController", "AboutToShow", 0, InterstitialViewController_AboutToShow);
   }
 
   static auto actionqueue_manager =
