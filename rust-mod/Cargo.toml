@@ -15,4 +15,6 @@ max_level_trace = [ "log/max_level_trace" ]
 chrono = "0.4"
 ctor = "0.6"
 dirs = "6"
+libc = "0.2"
+libloading = "0.8"
 log = "0.4"
