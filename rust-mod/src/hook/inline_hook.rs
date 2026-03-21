@@ -22,10 +22,12 @@ const HOOK_SIZE: usize = 14;
 /// # Safety
 ///
 /// - `target` must point to the start of a function with at least `HOOK_SIZE` bytes.
-/// - The overwritten instructions must not contain PC-relative operations (function prologues
-///   are typically safe). PC-relative relocation is not yet implemented.
 /// - This function is not thread-safe: the target function must not be executing on another
 ///   thread while the hook is being installed.
+///
+/// On ARM64 the overwritten bytes are copied verbatim (prologues are PC-relative-safe).
+/// On x86_64, instructions are decoded and RIP-relative references are relocated.
+#[cfg(target_arch = "aarch64")]
 pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*const (), String> {
     let target_addr = target as usize;
 
@@ -49,6 +51,94 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     flush_icache(target_addr, HOOK_SIZE);
 
     Ok(trampoline)
+}
+
+/// Install an inline hook with x86_64 instruction-aware relocation.
+///
+/// Decodes instructions at the hook target to find a clean boundary (>= 14 bytes), copies
+/// them to a trampoline with RIP-relative displacement fixups, and writes a jump back to the
+/// continuation address. This correctly handles LEA [RIP+...], MOV [RIP+...], CALL rel32, etc.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*const (), String> {
+    let target_addr = target as usize;
+
+    // Read enough bytes from the target for instruction decoding.
+    // Functions are always larger than 64 bytes, so this won't cross an unmapped page.
+    let code = unsafe { std::slice::from_raw_parts(target as *const u8, 64) };
+
+    // Decode instructions until we have enough bytes to fit our 14-byte jump patch
+    let mut decoded: Vec<super::x86_64::Insn> = Vec::new();
+    let mut total_len = 0;
+    while total_len < HOOK_SIZE {
+        let insn = super::x86_64::decode(&code[total_len..])
+            .map_err(|e| format!("decode at +{total_len}: {e}"))?;
+        total_len += insn.len;
+        decoded.push(insn);
+    }
+
+    // Save original bytes
+    let mut saved = vec![0u8; total_len];
+    unsafe { std::ptr::copy_nonoverlapping(target as *const u8, saved.as_mut_ptr(), total_len) };
+
+    // Allocate trampoline within ±2GB of target so relocated RIP-relative
+    // displacements still fit in 32 bits.
+    let trampoline_size = total_len + HOOK_SIZE;
+    let trampoline_mem = unsafe { alloc_near(target_addr, trampoline_size)? };
+    let trampoline_addr = trampoline_mem as usize;
+
+    // Copy instructions to trampoline, relocating RIP-relative references
+    let mut src_offset = 0;
+    let mut dst_offset = 0;
+    for insn in &decoded {
+        let src = &saved[src_offset..src_offset + insn.len];
+        let dst = unsafe {
+            std::slice::from_raw_parts_mut(
+                (trampoline_mem as *mut u8).add(dst_offset),
+                insn.len,
+            )
+        };
+        dst.copy_from_slice(src);
+
+        // Fix up RIP-relative displacement if present
+        if let Some(reloc_off) = insn.reloc_offset {
+            let disp_ptr = unsafe {
+                (trampoline_mem as *mut u8).add(dst_offset + reloc_off) as *mut i32
+            };
+            let old_disp = unsafe { disp_ptr.read_unaligned() } as i64;
+            let old_rip = (target_addr + src_offset + insn.len) as i64;
+            let new_rip = (trampoline_addr + dst_offset + insn.len) as i64;
+            let abs_target = old_rip + old_disp;
+            let new_disp = abs_target - new_rip;
+
+            if new_disp > i32::MAX as i64 || new_disp < i32::MIN as i64 {
+                return Err(format!(
+                    "relocation overflow: trampoline too far from original code \
+                     (delta: {new_disp:#x}, max ±{:#x}). \
+                     Consider allocating trampoline near the target.",
+                    i32::MAX
+                ));
+            }
+            unsafe { disp_ptr.write_unaligned(new_disp as i32) };
+        }
+
+        src_offset += insn.len;
+        dst_offset += insn.len;
+    }
+
+    // Write jump back to the instruction after our patch
+    unsafe { write_branch(trampoline_addr + dst_offset, target_addr + total_len) };
+
+    // Make trampoline executable
+    unsafe { make_executable(trampoline_addr, trampoline_size)? };
+    flush_icache(trampoline_addr, trampoline_size);
+
+    // Patch the target: overwrite with jump to replacement
+    unsafe { make_writable(target_addr, HOOK_SIZE)? };
+    unsafe { write_branch(target_addr, replacement as usize) };
+    unsafe { make_executable(target_addr, HOOK_SIZE)? };
+    flush_icache(target_addr, HOOK_SIZE);
+
+    Ok(trampoline_mem as *const ())
 }
 
 // ---- ARM64 branch encoding ------------------------------------------------
@@ -94,7 +184,7 @@ unsafe fn write_branch(addr: usize, target: usize) {
 
 // ---- Trampoline allocation ------------------------------------------------
 
-/// Allocate executable memory for the trampoline.
+/// Allocate executable memory for the trampoline (ARM64 only).
 ///
 /// The trampoline contains the saved original instructions followed by a branch back to the
 /// continuation address (original function + HOOK_SIZE).
@@ -102,6 +192,7 @@ unsafe fn write_branch(addr: usize, target: usize) {
 /// The allocated memory is intentionally never freed. Trampolines must remain valid for the entire
 /// process lifetime because the hooked function's original code has been overwritten and the
 /// trampoline is the only way to call the original implementation.
+#[cfg(target_arch = "aarch64")]
 unsafe fn allocate_trampoline(saved: &[u8; HOOK_SIZE], continuation: usize) -> Result<*const (), String> {
     // Trampoline = saved instructions + branch sequence
     let trampoline_size = HOOK_SIZE + HOOK_SIZE;
@@ -206,6 +297,7 @@ unsafe extern "C" {
 // ---- Platform: Windows (x86_64) -------------------------------------------
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)] // kept for symmetry with macOS; Windows x86_64 uses alloc_near instead
 unsafe fn alloc_executable(size: usize) -> Result<*mut c_void, String> {
     unsafe extern "system" {
         fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void;
@@ -216,6 +308,100 @@ unsafe fn alloc_executable(size: usize) -> Result<*mut c_void, String> {
         return Err("VirtualAlloc failed".to_string());
     }
     Ok(ptr)
+}
+
+/// Allocate executable memory within ±1GB of `target` for RIP-relative relocation.
+///
+/// Searches **outward from the target** (first below, then above) to find the closest
+/// free region. This ensures relocated RIP-relative displacements fit in a signed 32-bit
+/// value even when the original instruction references data up to ~1GB away.
+#[cfg(target_os = "windows")]
+unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> {
+    #[repr(C)]
+    struct MemBasicInfo {
+        base_address: *mut c_void,
+        allocation_base: *mut c_void,
+        allocation_protect: u32,
+        region_size: usize,
+        state: u32,
+        protect: u32,
+        mem_type: u32,
+    }
+
+    unsafe extern "system" {
+        fn VirtualQuery(addr: *const c_void, info: *mut MemBasicInfo, len: usize) -> usize;
+        fn VirtualAlloc(
+            addr: *mut c_void, size: usize, alloc_type: u32, protect: u32,
+        ) -> *mut c_void;
+    }
+
+    const MEM_FREE: u32 = 0x10000;
+    const MEM_COMMIT_RESERVE: u32 = 0x3000;
+    const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    const GRANULARITY: usize = 0x10000; // 64KB Windows allocation granularity
+    // 1GB range leaves ~1GB headroom for RIP-relative offsets within the target module
+    const MAX_RANGE: usize = 0x4000_0000;
+    let mbi_size = std::mem::size_of::<MemBasicInfo>();
+
+    let min_addr = target.saturating_sub(MAX_RANGE).max(GRANULARITY);
+    let max_addr = target.saturating_add(MAX_RANGE);
+
+    // Helper: try to allocate within a free region
+    let try_alloc = |region_base: usize, region_size: usize| -> *mut c_void {
+        let alloc_at = (region_base + GRANULARITY - 1) & !(GRANULARITY - 1);
+        if alloc_at + size <= region_base + region_size
+            && alloc_at >= min_addr
+            && alloc_at + size <= max_addr
+        {
+            unsafe { VirtualAlloc(alloc_at as *mut c_void, size, MEM_COMMIT_RESERVE, PAGE_EXECUTE_READWRITE) }
+        } else {
+            std::ptr::null_mut()
+        }
+    };
+
+    // 1. Search BELOW the target, scanning downward (closest first)
+    let mut scan = target & !(GRANULARITY - 1);
+    while scan >= min_addr && scan > 0 {
+        let mut mbi = unsafe { std::mem::zeroed::<MemBasicInfo>() };
+        if unsafe { VirtualQuery(scan as *const c_void, &mut mbi, mbi_size) } == 0 {
+            break;
+        }
+        let base = mbi.base_address as usize;
+        if mbi.state == MEM_FREE && mbi.region_size >= size {
+            let ptr = try_alloc(base, mbi.region_size);
+            if !ptr.is_null() {
+                return Ok(ptr);
+            }
+        }
+        // Move to the region before this one
+        if base == 0 || base <= min_addr {
+            break;
+        }
+        scan = base.saturating_sub(1);
+    }
+
+    // 2. Search ABOVE the target, scanning upward (closest first)
+    scan = (target & !(GRANULARITY - 1)) + GRANULARITY;
+    while scan < max_addr {
+        let mut mbi = unsafe { std::mem::zeroed::<MemBasicInfo>() };
+        if unsafe { VirtualQuery(scan as *const c_void, &mut mbi, mbi_size) } == 0 {
+            break;
+        }
+        let base = mbi.base_address as usize;
+        let region_size = mbi.region_size;
+        if mbi.state == MEM_FREE && region_size >= size {
+            let ptr = try_alloc(base, region_size);
+            if !ptr.is_null() {
+                return Ok(ptr);
+            }
+        }
+        // Move to the next region
+        scan = base + region_size.max(GRANULARITY);
+    }
+
+    Err(format!(
+        "could not allocate {size} bytes within ±1GB of {target:#x}"
+    ))
 }
 
 #[cfg(target_os = "windows")]
