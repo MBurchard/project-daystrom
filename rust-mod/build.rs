@@ -13,6 +13,16 @@ fn main() {
         .unwrap_or_else(|| panic!("No \"identifier\" field found in {conf_path}"));
 
     println!("cargo:rustc-env=TAURI_IDENTIFIER={identifier}");
+
+    // On Windows, link the version.def file so our DLL exports the version.dll API symbols.
+    // The actual forwarding is handled at runtime in src/proxy.rs.
+    #[cfg(target_os = "windows")]
+    {
+        let def_path = std::path::Path::new("version.def").canonicalize()
+            .expect("version.def not found in rust-mod root");
+        println!("cargo:rerun-if-changed=version.def");
+        println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
+    }
 }
 
 /// Extract the `"identifier"` value from a JSON string without pulling in a full JSON parser.
