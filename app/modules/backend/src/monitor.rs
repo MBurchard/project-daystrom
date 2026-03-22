@@ -11,6 +11,9 @@ use_log!("Monitor");
 /// Interval between process checks.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Interval between profile directory scans.
+const PROFILE_SCAN_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Interval for re-checking the Scopely update API while the launcher is open.
 const API_RECHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
@@ -144,9 +147,20 @@ fn run_loop(app: tauri::AppHandle) {
         commands::update_check_into_store(&app);
     }
 
+    // Initial profile scan
+    let profiles = crate::profile_state::scan_profiles();
+    crate::profile_state::update(&app, |s| s.profiles = profiles);
+
     let mut state = MonitorState::new();
+    let mut last_profile_scan = Instant::now();
 
     loop {
+        // Periodic profile directory scan
+        if last_profile_scan.elapsed() >= PROFILE_SCAN_INTERVAL {
+            let profiles = crate::profile_state::scan_profiles();
+            crate::profile_state::update(&app, |s| s.profiles = profiles);
+            last_profile_scan = Instant::now();
+        }
         let game = game::is_game_running();
         let launcher = game::is_launcher_running();
 

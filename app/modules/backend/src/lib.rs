@@ -11,6 +11,7 @@ mod logging;
 mod macos_hooks;
 mod monitor;
 mod process_origin;
+mod profile_state;
 mod settings;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
@@ -222,6 +223,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_cached_game_status,
+            profile_state::get_cached_profile_state,
             launch_updater,
             prepare_mod,
             remove_mod,
