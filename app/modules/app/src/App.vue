@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {useGameState} from '@app/composables/useGameState';
+import {useProfileState} from '@app/composables/useProfileState';
 import {onMounted, onUnmounted} from 'vue';
 
 const {
@@ -13,12 +14,24 @@ const {
   removeMod,
   openUpdater,
   launchGame,
-  init,
-  destroy,
+  init: initGameState,
+  destroy: destroyGameState,
 } = useGameState();
 
-onMounted(() => init());
-onUnmounted(() => destroy());
+const {
+  launchLabel,
+  init: initProfileState,
+  destroy: destroyProfileState,
+} = useProfileState();
+
+onMounted(() => {
+  initGameState();
+  initProfileState();
+});
+onUnmounted(() => {
+  destroyGameState();
+  destroyProfileState();
+});
 </script>
 
 <template>
@@ -84,7 +97,7 @@ onUnmounted(() => destroy());
           :disabled="!status.can_launch || actionPending"
           class="launch-btn"
           @click="launchGame">
-        Launch Game
+        {{ launchLabel }}
       </button>
 
       <p v-if="actionError" class="error">
