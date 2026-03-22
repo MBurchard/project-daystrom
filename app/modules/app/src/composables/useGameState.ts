@@ -52,8 +52,8 @@ export interface GameState {
   removeMod: () => void;
   /** Open the Scopely launcher for updating. */
   openUpdater: () => void;
-  /** Launch the game with the mod injected. */
-  launchGame: () => void;
+  /** Launch the game with the mod injected. Optionally specify a profile. */
+  launchGame: (profile?: string) => void;
   /** Register event listeners and load the initial state. Call from onMounted. */
   init: () => void;
   /** Unregister event listeners. Call from onUnmounted. */
@@ -143,10 +143,20 @@ export function useGameState(): GameState {
 
   /**
    * Launch the game with the mod injected.
+   *
+   * @param profile - optional profile stem (e.g. "106_Nabor" or "new_account")
    */
-  function launchGame(): void {
+  function launchGame(profile?: string): void {
     log.debug('User clicked Launch Game');
-    runAction('launch_game');
+    actionPending.value = true;
+    actionError.value = null;
+    invoke('launch_game', {profile: profile ?? null})
+      .catch((err) => {
+        actionError.value = String(err);
+      })
+      .finally(() => {
+        actionPending.value = false;
+      });
   }
 
   // ---- Lifecycle --------------------------------------------------------------------

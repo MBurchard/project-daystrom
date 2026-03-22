@@ -15,7 +15,7 @@ const LAUNCHER_APP: &str = "/Applications/Star Trek Fleet Command.app";
 /// The child process is spawned but not awaited — the game runs independently of Project Daystrom.
 /// Returns an error if the game is already running or the process fails to spawn.
 #[cfg(target_os = "macos")]
-pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
+pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<(), String> {
     if super::is_running(&game.executable) {
         return Err("Game is already running".to_string());
     }
@@ -26,15 +26,18 @@ pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
 
     log_info!("Launching {} with mod {}", game.executable.display(), mod_library.display());
 
-    Command::new(&game.executable)
-        .current_dir(&game.install_dir)
+    let mut cmd = Command::new(&game.executable);
+    cmd.current_dir(&game.install_dir)
         .env("DYLD_INSERT_LIBRARIES", mod_library)
-        .env("DYLD_LIBRARY_PATH", lib_dir)
-        .spawn()
-        .map_err(|e| {
-            log_error!("Failed to spawn game process: {e}");
-            "Failed to launch game (see log for details)".to_string()
-        })?;
+        .env("DYLD_LIBRARY_PATH", lib_dir);
+    if let Some(p) = profile {
+        log_info!("Setting DAYSTROM_PROFILE={p}");
+        cmd.env("DAYSTROM_PROFILE", p);
+    }
+    cmd.spawn().map_err(|e| {
+        log_error!("Failed to spawn game process: {e}");
+        "Failed to launch game (see log for details)".to_string()
+    })?;
 
     log_info!("Game process spawned");
     Ok(())
@@ -45,8 +48,13 @@ pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
 /// If `version.dll` is missing or outdated in the game directory, the bundled DLL is copied before spawning
 /// the game process.
 /// Windows loads `version.dll` from the application directory automatically (DLL proxy injection).
+///
+/// `profile` sets the `DAYSTROM_PROFILE` environment variable for the game process:
+/// - `None`: first start (Registry import mode)
+/// - `Some("106_Nabor")`: known profile
+/// - `Some("new_account")`: new account mode
 #[cfg(target_os = "windows")]
-pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
+pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<(), String> {
     if super::is_running(&game.executable) {
         return Err("Game is already running".to_string());
     }
@@ -62,13 +70,16 @@ pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
 
     log_info!("Launching {}", game.executable.display());
 
-    Command::new(&game.executable)
-        .current_dir(&game.install_dir)
-        .spawn()
-        .map_err(|e| {
-            log_error!("Failed to spawn game process: {e}");
-            "Failed to launch game (see log for details)".to_string()
-        })?;
+    let mut cmd = Command::new(&game.executable);
+    cmd.current_dir(&game.install_dir);
+    if let Some(p) = profile {
+        log_info!("Setting DAYSTROM_PROFILE={p}");
+        cmd.env("DAYSTROM_PROFILE", p);
+    }
+    cmd.spawn().map_err(|e| {
+        log_error!("Failed to spawn game process: {e}");
+        "Failed to launch game (see log for details)".to_string()
+    })?;
 
     log_info!("Game process spawned");
     Ok(())
@@ -76,7 +87,7 @@ pub fn launch(game: &GameInfo, mod_library: &Path) -> Result<(), String> {
 
 /// Stub — game launching is not yet supported on this platform.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn launch(_game: &GameInfo, _mod_library: &Path) -> Result<(), String> {
+pub fn launch(_game: &GameInfo, _mod_library: &Path, _profile: Option<&str>) -> Result<(), String> {
     Err("Game launching is not yet supported on this platform".to_string())
 }
 

@@ -19,7 +19,8 @@ const {
 } = useGameState();
 
 const {
-  launchLabel,
+  profiles,
+  hasProfiles,
   init: initProfileState,
   destroy: destroyProfileState,
 } = useProfileState();
@@ -93,12 +94,28 @@ onUnmounted(() => {
         </li>
       </ul>
 
-      <button v-if="status.installed"
+      <button v-if="status.installed && !hasProfiles"
           :disabled="!status.can_launch || actionPending"
           class="launch-btn"
-          @click="launchGame">
-        {{ launchLabel }}
+          @click="launchGame()">
+        Launch Game
       </button>
+
+      <template v-if="status.installed && hasProfiles">
+        <button v-for="p in profiles.profiles" :key="p.filename"
+            :disabled="!status.mod_deployed || actionPending"
+            class="launch-btn"
+            @click="launchGame(p.filename.replace('.toml', ''))">
+          {{ p.name }} (Server {{ p.server }})
+        </button>
+
+        <button :disabled="!status.mod_deployed || actionPending"
+            class="launch-btn add-account-btn"
+            title="Add Account"
+            @click="launchGame('new_account')">
+          +
+        </button>
+      </template>
 
       <p v-if="actionError" class="error">
         {{ actionError }}
@@ -189,6 +206,17 @@ body {
   margin-top: 1rem;
   padding: 0.5rem 1.5rem;
   font-size: 1rem;
+}
+
+.launch-btn + .launch-btn {
+  margin-left: 6px;
+}
+
+.add-account-btn {
+  padding: 0.5rem 0.75rem;
+  font-size: 1.2rem;
+  font-weight: bold;
+  line-height: 1;
 }
 
 .error {

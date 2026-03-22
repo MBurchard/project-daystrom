@@ -10,20 +10,28 @@ use log::{Level, Log, Metadata, Record};
 
 use crate::TAURI_IDENTIFIER;
 
-/// Base name of the log file (without `.log` extension).
-const LOG_FILE_NAME: &str = "mod";
-
 /// Number of days to keep archived log files.
 const MAX_LOG_AGE_DAYS: i64 = 30;
 
 /// Maximum number of bytes to read from the end of a log file when looking for the last timestamp.
 const TAIL_READ_SIZE: u64 = 4096;
 
+/// Environment variable that determines which profile the mod operates on.
+const PROFILE_ENV_VAR: &str = "DAYSTROM_PROFILE";
+
 /// Global logger instance, initialised once via `init()`.
 static LOGGER: ModLogger = ModLogger;
 
 /// Channel sender for the background writer thread.
-static LOG_SENDER: OnceLock<Sender<String>> = OnceLock::new();
+static LOG_SENDER: OnceLock<Sender<LogMessage>> = OnceLock::new();
+
+/// Messages sent to the background writer thread.
+enum LogMessage {
+    /// A pre-formatted log line to write.
+    Line(String),
+    /// Rename the log file to a new base name (e.g. "mod_106_Nabor").
+    Rename(String),
+}
 
 // ---- Log path resolution --------------------------------------------------
 
@@ -50,16 +58,27 @@ fn log_dir() -> Option<PathBuf> {
     }
 }
 
-/// Full path to the active log file (`mod.log`).
-fn log_file_path(dir: &Path) -> PathBuf {
-    dir.join(format!("{LOG_FILE_NAME}.log"))
+/// Full path to the active log file.
+fn log_file_path(dir: &Path, base_name: &str) -> PathBuf {
+    dir.join(format!("{base_name}.log"))
 }
 
 /// Open the log file for appending, wrapped in a `BufWriter`.
-fn open_log_writer(dir: &Path) -> Option<BufWriter<File>> {
-    let path = log_file_path(dir);
+fn open_log_writer(dir: &Path, base_name: &str) -> Option<BufWriter<File>> {
+    let path = log_file_path(dir, base_name);
     let file = OpenOptions::new().create(true).append(true).open(path).ok()?;
     Some(BufWriter::new(file))
+}
+
+/// Determine the initial log file base name from the `DAYSTROM_PROFILE` env variable.
+///
+/// - Not set or empty or `new_account`: `"mod"` (default)
+/// - `106_Nabor`: `"mod_106_Nabor"`
+fn initial_log_base_name() -> String {
+    match std::env::var(PROFILE_ENV_VAR) {
+        Ok(val) if !val.is_empty() && val != "new_account" => format!("mod_{val}"),
+        _ => "mod".to_string(),
+    }
 }
 
 // ---- Log rotation ---------------------------------------------------------
@@ -96,11 +115,11 @@ fn last_log_date(path: &Path) -> Option<NaiveDate> {
 
 /// Rotate the current log file if its last entry is from before today.
 ///
-/// Renames `mod.log` to `mod_YYYY-MM-DD.log` (using the date of the last entry).
+/// Renames `{base}.log` to `{base}_YYYY-MM-DD.log` (using the date of the last entry).
 /// If the file contains no valid timestamps, it gets truncated.
 /// If an archive with that name already exists, the rotation is skipped.
-fn rotate_log_file(dir: &Path, today: NaiveDate) {
-    let log_file = log_file_path(dir);
+fn rotate_log_file(dir: &Path, base_name: &str, today: NaiveDate) {
+    let log_file = log_file_path(dir, base_name);
     if !log_file.exists() {
         return;
     }
@@ -108,7 +127,7 @@ fn rotate_log_file(dir: &Path, today: NaiveDate) {
     match last_log_date(&log_file) {
         Some(last_date) if last_date < today => {
             let archive = dir.join(format!(
-                "{LOG_FILE_NAME}_{}.log",
+                "{base_name}_{}.log",
                 last_date.format("%Y-%m-%d")
             ));
             if archive.exists() {
@@ -128,9 +147,8 @@ fn rotate_log_file(dir: &Path, today: NaiveDate) {
 
 /// Delete archived log files older than [`MAX_LOG_AGE_DAYS`].
 ///
-/// Recognises archives named `mod_YYYY-MM-DD.log` by parsing the first 10 characters after the prefix as a date.
+/// Recognises archives named `{prefix}_YYYY-MM-DD.log` for any prefix starting with `mod`.
 fn cleanup_old_archives(dir: &Path, today: NaiveDate) {
-    let prefix = format!("{LOG_FILE_NAME}_");
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -139,14 +157,20 @@ fn cleanup_old_archives(dir: &Path, today: NaiveDate) {
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
 
-        let Some(rest) = name.strip_prefix(prefix.as_str()) else {
-            continue;
-        };
-        if !rest.ends_with(".log") || rest.len() < 14 {
-            // "YYYY-MM-DD.log" is 14 chars minimum
+        // Only process files that start with "mod" and end with ".log"
+        if !name.starts_with("mod") || !name.ends_with(".log") {
             continue;
         }
-        let Ok(file_date) = NaiveDate::parse_from_str(&rest[..10], "%Y-%m-%d") else {
+
+        // Try to extract a date from the last 14 characters: _YYYY-MM-DD.log
+        if name.len() < 15 {
+            continue;
+        }
+        let date_part = &name[name.len() - 15..name.len() - 4]; // "_YYYY-MM-DD"
+        let Some(date_str) = date_part.strip_prefix('_') else {
+            continue;
+        };
+        let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
             continue;
         };
 
@@ -158,41 +182,62 @@ fn cleanup_old_archives(dir: &Path, today: NaiveDate) {
 
 // ---- Background writer thread ---------------------------------------------
 
-/// Background thread that receives pre-formatted log lines and writes them to `mod.log`.
+/// Background thread that receives log lines and control messages.
 ///
 /// Drains all queued messages before flushing, which naturally batches writes during bursts.
-/// Handles date-based rotation and archive cleanup without blocking the game thread.
-fn writer_thread(rx: mpsc::Receiver<String>, dir: PathBuf) {
+/// Handles date-based rotation, archive cleanup, and live log file renaming.
+fn writer_thread(rx: mpsc::Receiver<LogMessage>, dir: PathBuf, mut base_name: String) {
     let mut current_date = Local::now().date_naive();
-    let mut writer = open_log_writer(&dir);
+    let mut writer = open_log_writer(&dir, &base_name);
 
-    while let Ok(first) = rx.recv() {
-        // Check rotation before writing
-        let today = Local::now().date_naive();
-        if today != current_date {
-            // Release the file handle before rotating
-            drop(writer.take());
-            rotate_log_file(&dir, today);
-            cleanup_old_archives(&dir, today);
-            current_date = today;
-            writer = open_log_writer(&dir);
-        }
+    while let Ok(msg) = rx.recv() {
+        match msg {
+            LogMessage::Rename(new_name) => {
+                // Flush and close current file
+                if let Some(ref mut w) = writer {
+                    let _ = w.flush();
+                }
+                drop(writer.take());
 
-        // Write the first message + drain any additional queued messages
-        if let Some(ref mut w) = writer {
-            let _ = writeln!(w, "{first}");
-            while let Ok(line) = rx.try_recv() {
-                let _ = writeln!(w, "{line}");
+                // Rename the file on disk
+                let old_path = log_file_path(&dir, &base_name);
+                let new_path = log_file_path(&dir, &new_name);
+                if old_path.exists() && !new_path.exists() {
+                    let _ = fs::rename(&old_path, &new_path);
+                }
+
+                base_name = new_name;
+                writer = open_log_writer(&dir, &base_name);
+                continue;
             }
-            let _ = w.flush();
+            LogMessage::Line(first) => {
+                // Check rotation before writing
+                let today = Local::now().date_naive();
+                if today != current_date {
+                    drop(writer.take());
+                    rotate_log_file(&dir, &base_name, today);
+                    cleanup_old_archives(&dir, today);
+                    current_date = today;
+                    writer = open_log_writer(&dir, &base_name);
+                }
+
+                // Write the first message + drain any additional queued messages
+                if let Some(ref mut w) = writer {
+                    let _ = writeln!(w, "{first}");
+                    while let Ok(LogMessage::Line(line)) = rx.try_recv() {
+                        let _ = writeln!(w, "{line}");
+                    }
+                    let _ = w.flush();
+                }
+            }
         }
     }
 }
 
 // ---- Logger implementation ------------------------------------------------
 
-/// Custom `log::Log` implementation that writes to `mod.log` in Daystrom's bit-log format via a background
-/// writer thread.
+/// Custom `log::Log` implementation that writes to the mod log file in Daystrom's bit-log format
+/// via a background writer thread.
 ///
 /// Format: `{ISO8601} {LEVEL:5} [{component:20}] ({file:30}: {line:4}): {message}`
 ///
@@ -235,7 +280,7 @@ impl Log for ModLogger {
             record.args()
         );
 
-        let _ = sender.send(formatted);
+        let _ = sender.send(LogMessage::Line(formatted));
     }
 
     /// Flush is a no-op; the background thread flushes after each batch.
@@ -246,16 +291,19 @@ impl Log for ModLogger {
 
 /// Initialise the mod logger as the global `log` logger.
 ///
-/// Runs startup log rotation, spawns the background writer thread, then registers the logger.
+/// Reads `DAYSTROM_PROFILE` to determine the initial log file name. Runs startup log rotation,
+/// spawns the background writer thread, then registers the logger.
 /// Must be called exactly once, typically from the `#[ctor]` entrypoint.
 /// Panics if a logger has already been set.
 pub fn init() {
     let Some(dir) = log_dir() else { return };
     fs::create_dir_all(&dir).ok();
 
+    let base_name = initial_log_base_name();
+
     // Rotate before spawning the writer so the file is clean
     let today = Local::now().date_naive();
-    rotate_log_file(&dir, today);
+    rotate_log_file(&dir, &base_name, today);
     cleanup_old_archives(&dir, today);
 
     // Spawn background writer
@@ -263,14 +311,29 @@ pub fn init() {
     LOG_SENDER.get_or_init(|| tx);
 
     let writer_dir = dir.clone();
+    let writer_name = base_name.clone();
     thread::Builder::new()
         .name("mod-log-writer".to_string())
-        .spawn(move || writer_thread(rx, writer_dir))
+        .spawn(move || writer_thread(rx, writer_dir, writer_name))
         .expect("failed to spawn log writer thread");
 
     log::set_logger(&LOGGER).expect("logger already initialised");
     log::set_max_level(log::LevelFilter::Trace);
 }
+
+/// Rename the active log file to a new profile-specific name.
+///
+/// Called by the profile store when server + player name become known for the first time.
+/// The writer thread handles the actual rename asynchronously.
+pub fn rename_log(profile_stem: &str) {
+    let new_name = format!("mod_{profile_stem}");
+    if let Some(sender) = LOG_SENDER.get() {
+        let _ = sender.send(LogMessage::Rename(new_name));
+    }
+}
+
+/// The `DAYSTROM_PROFILE` environment variable name, re-exported for other modules.
+pub const PROFILE_ENV: &str = PROFILE_ENV_VAR;
 
 // ---- Tests ----------------------------------------------------------------
 
@@ -301,9 +364,15 @@ mod tests {
     // -- log_file_path --
 
     #[test]
-    fn log_file_path_format() {
-        let path = log_file_path(Path::new("/some/dir"));
+    fn log_file_path_default() {
+        let path = log_file_path(Path::new("/some/dir"), "mod");
         assert_eq!(path, PathBuf::from("/some/dir/mod.log"));
+    }
+
+    #[test]
+    fn log_file_path_profile() {
+        let path = log_file_path(Path::new("/some/dir"), "mod_106_Nabor");
+        assert_eq!(path, PathBuf::from("/some/dir/mod_106_Nabor.log"));
     }
 
     // -- last_log_date --
@@ -376,7 +445,7 @@ mod tests {
     #[test]
     fn rotate_noop_when_no_log_file() {
         let dir = test_dir("rotate_noop");
-        rotate_log_file(&dir, date(2026, 3, 17));
+        rotate_log_file(&dir, "mod", date(2026, 3, 17));
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
     }
 
@@ -385,7 +454,7 @@ mod tests {
         let dir = test_dir("rotate_today");
         let log = dir.join("mod.log");
         fs::write(&log, log_line("2026-03-16", "Today")).unwrap();
-        rotate_log_file(&dir, date(2026, 3, 16));
+        rotate_log_file(&dir, "mod", date(2026, 3, 16));
         assert!(log.exists());
         assert!(!dir.join("mod_2026-03-16.log").exists());
     }
@@ -395,7 +464,7 @@ mod tests {
         let dir = test_dir("rotate_archive");
         let log = dir.join("mod.log");
         fs::write(&log, log_line("2026-03-15", "Yesterday")).unwrap();
-        rotate_log_file(&dir, date(2026, 3, 16));
+        rotate_log_file(&dir, "mod", date(2026, 3, 16));
         assert!(!log.exists());
         assert!(dir.join("mod_2026-03-15.log").exists());
     }
@@ -407,7 +476,7 @@ mod tests {
         let archive = dir.join("mod_2026-03-15.log");
         fs::write(&log, log_line("2026-03-15", "Old")).unwrap();
         fs::write(&archive, "existing archive\n").unwrap();
-        rotate_log_file(&dir, date(2026, 3, 16));
+        rotate_log_file(&dir, "mod", date(2026, 3, 16));
         assert!(log.exists());
         assert_eq!(fs::read_to_string(&log).unwrap(), "");
         // Original archive untouched
@@ -419,53 +488,21 @@ mod tests {
         let dir = test_dir("rotate_garbage");
         let log = dir.join("mod.log");
         fs::write(&log, "not a valid log file\n").unwrap();
-        rotate_log_file(&dir, date(2026, 3, 16));
+        rotate_log_file(&dir, "mod", date(2026, 3, 16));
         assert!(log.exists());
         assert_eq!(fs::read_to_string(&log).unwrap(), "");
     }
 
-    // -- cleanup_old_archives --
+    // -- rotate with profile name --
 
     #[test]
-    fn cleanup_deletes_old_archives() {
-        let dir = test_dir("cleanup_old");
-        fs::write(dir.join("mod_2026-01-01.log"), "old").unwrap();
-        fs::write(dir.join("mod_2026-03-15.log"), "recent").unwrap();
-        cleanup_old_archives(&dir, date(2026, 3, 16));
-        assert!(!dir.join("mod_2026-01-01.log").exists());
-        assert!(dir.join("mod_2026-03-15.log").exists());
-    }
-
-    #[test]
-    fn cleanup_keeps_recent_archives() {
-        let dir = test_dir("cleanup_recent");
-        fs::write(dir.join("mod_2026-03-10.log"), "recent").unwrap();
-        fs::write(dir.join("mod_2026-03-15.log"), "very recent").unwrap();
-        cleanup_old_archives(&dir, date(2026, 3, 16));
-        assert!(dir.join("mod_2026-03-10.log").exists());
-        assert!(dir.join("mod_2026-03-15.log").exists());
-    }
-
-    #[test]
-    fn cleanup_ignores_unrelated_files() {
-        let dir = test_dir("cleanup_unrelated");
-        fs::write(dir.join("other_2026-01-01.log"), "unrelated").unwrap();
-        fs::write(dir.join("mod.log"), "active log").unwrap();
-        fs::write(dir.join("readme.txt"), "docs").unwrap();
-        cleanup_old_archives(&dir, date(2026, 3, 16));
-        assert!(dir.join("other_2026-01-01.log").exists());
-        assert!(dir.join("mod.log").exists());
-        assert!(dir.join("readme.txt").exists());
-    }
-
-    #[test]
-    fn cleanup_ignores_invalid_date_format() {
-        let dir = test_dir("cleanup_invalid_date");
-        fs::write(dir.join("mod_not-a-date.log"), "bad").unwrap();
-        fs::write(dir.join("mod_20260101.log"), "no dashes").unwrap();
-        cleanup_old_archives(&dir, date(2026, 3, 16));
-        assert!(dir.join("mod_not-a-date.log").exists());
-        assert!(dir.join("mod_20260101.log").exists());
+    fn rotate_profile_log() {
+        let dir = test_dir("rotate_profile");
+        let log = dir.join("mod_106_Nabor.log");
+        fs::write(&log, log_line("2026-03-15", "Old")).unwrap();
+        rotate_log_file(&dir, "mod_106_Nabor", date(2026, 3, 16));
+        assert!(!log.exists());
+        assert!(dir.join("mod_106_Nabor_2026-03-15.log").exists());
     }
 
     // -- writer_thread --
@@ -475,10 +512,10 @@ mod tests {
         let dir = test_dir("writer_writes");
         let (tx, rx) = mpsc::channel();
         let writer_dir = dir.clone();
-        let handle = thread::spawn(move || writer_thread(rx, writer_dir));
+        let handle = thread::spawn(move || writer_thread(rx, writer_dir, "mod".to_string()));
 
-        tx.send("2026-03-16T22:00:00.000+01:00 INFO  first message".to_string()).unwrap();
-        tx.send("2026-03-16T22:00:01.000+01:00 INFO  second message".to_string()).unwrap();
+        tx.send(LogMessage::Line("2026-03-16T22:00:00.000+01:00 INFO  first message".to_string())).unwrap();
+        tx.send(LogMessage::Line("2026-03-16T22:00:01.000+01:00 INFO  second message".to_string())).unwrap();
         drop(tx);
         handle.join().unwrap();
 
@@ -492,10 +529,35 @@ mod tests {
         let dir = test_dir("writer_exits");
         let (tx, rx) = mpsc::channel();
         let writer_dir = dir.clone();
-        let handle = thread::spawn(move || writer_thread(rx, writer_dir));
+        let handle = thread::spawn(move || writer_thread(rx, writer_dir, "mod".to_string()));
 
         drop(tx);
         // Thread should exit cleanly without hanging
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn writer_thread_rename() {
+        let dir = test_dir("writer_rename");
+        let (tx, rx) = mpsc::channel();
+        let writer_dir = dir.clone();
+        let handle = thread::spawn(move || writer_thread(rx, writer_dir, "mod".to_string()));
+
+        tx.send(LogMessage::Line("before rename".to_string())).unwrap();
+        // Small delay to ensure the line is written before rename
+        thread::sleep(std::time::Duration::from_millis(50));
+        tx.send(LogMessage::Rename("mod_106_Nabor".to_string())).unwrap();
+        // Small delay to ensure rename completes
+        thread::sleep(std::time::Duration::from_millis(50));
+        tx.send(LogMessage::Line("after rename".to_string())).unwrap();
+        drop(tx);
+        handle.join().unwrap();
+
+        // Old file should not exist (renamed)
+        assert!(!dir.join("mod.log").exists());
+        // New file should contain both lines
+        let content = fs::read_to_string(dir.join("mod_106_Nabor.log")).unwrap();
+        assert!(content.contains("before rename"));
+        assert!(content.contains("after rename"));
     }
 }

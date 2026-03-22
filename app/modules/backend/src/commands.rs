@@ -366,8 +366,12 @@ pub fn launch_updater(app: tauri::AppHandle) -> Result<(), String> {
 /// Launch the game with the mod library injected.
 ///
 /// On macOS, checks entitlements before launching. On Windows, auto-deploys the DLL if needed.
+/// The optional `profile` parameter sets the `DAYSTROM_PROFILE` environment variable:
+/// - `None`: first start (Registry import)
+/// - `Some("106_Nabor")`: launch with a known profile
+/// - `Some("new_account")`: start a fresh account
 #[tauri::command]
-pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
+pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(), String> {
     let info = game::detect().ok_or("STFC not found")?;
 
     let mod_library = game::find_mod_library(&app)
@@ -385,7 +389,7 @@ pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
 
-    game::launcher::launch(&info, &mod_library)?;
+    game::launcher::launch(&info, &mod_library, profile.as_deref())?;
     crate::process_origin::mark_game_started();
     crate::game_state::update(&app, |s| {
         s.game_started_by_us = true;
