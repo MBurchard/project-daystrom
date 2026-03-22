@@ -163,15 +163,25 @@ enum PlayerValue<'a> {
 
 // ---- Store state ----------------------------------------------------------
 
+/// Profile mode, determined by the `DAYSTROM_PROFILE` environment variable.
+#[derive(Debug, PartialEq)]
+enum ProfileMode {
+    /// No env variable: first start, import from Registry.
+    Import,
+    /// Known profile (e.g. `106_Nabor`): load from TOML, no Registry.
+    Known(String),
+    /// New account: everything is None, no Registry, no TOML until name is known.
+    NewAccount,
+}
+
 /// In-memory profile store with dirty tracking and periodic flush.
 struct StoreState {
     data: ProfileData,
     dirty: bool,
     last_flush: Instant,
-    /// Path of the loaded file (if any). Will be used for rename detection
-    /// when the player changes their name.
-    #[allow(dead_code)]
-    loaded_from: Option<PathBuf>,
+    mode: ProfileMode,
+    /// Whether we already triggered the log rename for this session.
+    log_renamed: bool,
 }
 
 impl StoreState {
@@ -500,6 +510,16 @@ impl StoreState {
         if !self.can_flush() {
             return None; // waiting for server + name
         }
+
+        // Trigger log rename on first flush (server + name now known)
+        if !self.log_renamed {
+            self.log_renamed = true;
+            let stem = profile_stem(
+                self.data.profil.server_instance_id.unwrap_or(0),
+                self.data.profil.social_username.as_deref().unwrap_or("unknown"),
+            );
+            crate::logging::rename_log(&stem);
+        }
         match toml::to_string_pretty(&self.data) {
             Ok(content) => {
                 self.dirty = false;
@@ -533,16 +553,21 @@ fn profile_dir() -> Option<PathBuf> {
     Some(base.join(TAURI_IDENTIFIER))
 }
 
-/// Build a profile filename from server ID and player name.
+/// Build a profile stem (filename without `.toml`) from server ID and player name.
 ///
 /// Sanitises the name to ASCII-alphanumeric + underscore for safe filenames.
-fn profile_filename(server_id: i32, name: &str) -> String {
+fn profile_stem(server_id: i32, name: &str) -> String {
     let safe_name: String = name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
         .collect();
     let safe_name = if safe_name.is_empty() { "unknown".to_string() } else { safe_name };
-    format!("{server_id}_{safe_name}.toml")
+    format!("{server_id}_{safe_name}")
+}
+
+/// Build a profile filename from server ID and player name.
+fn profile_filename(server_id: i32, name: &str) -> String {
+    format!("{}.toml", profile_stem(server_id, name))
 }
 
 /// Find the first existing profile TOML in the profile directory.
@@ -578,25 +603,65 @@ where
 {
     let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
     let state = guard.get_or_insert_with(|| {
-        // Try to load existing profile
-        if let Some((path, data)) = find_existing_profile() {
-            let key_count = data.misc.len() + data.factions.len() + data.player.len();
-            info!(target: "ProfileStore", "Loaded profile from {} ({key_count} keys)", path.display());
-            return StoreState {
-                data,
-                dirty: false,
-                last_flush: Instant::now(),
-                loaded_from: Some(path),
-            };
-        }
+        let mode = match std::env::var(crate::logging::PROFILE_ENV) {
+            Ok(val) if val == "new_account" => ProfileMode::NewAccount,
+            Ok(val) if !val.is_empty() => ProfileMode::Known(val),
+            _ => ProfileMode::Import,
+        };
 
-        // No profile found: start fresh, will import from Registry
-        debug!(target: "ProfileStore", "No profile found, starting fresh (importing from Registry)");
-        StoreState {
-            data: ProfileData::default(),
-            dirty: false,
-            last_flush: Instant::now(),
-            loaded_from: None,
+        match &mode {
+            ProfileMode::Known(stem) => {
+                // Load the specific profile TOML
+                let filename = format!("{stem}.toml");
+                let path = profile_dir().map(|d| d.join(&filename));
+                let data = path.as_ref().and_then(|p| {
+                    fs::read_to_string(p).ok().and_then(|content| {
+                        toml::from_str::<ProfileData>(&content).ok()
+                    })
+                }).unwrap_or_default();
+                let key_count = data.misc.len() + data.factions.len() + data.player.len();
+                info!(target: "ProfileStore", "Loaded profile '{stem}' ({key_count} keys)");
+                StoreState {
+                    data,
+                    dirty: false,
+                    last_flush: Instant::now(),
+                    mode,
+                    log_renamed: true, // already has the right log name
+                }
+            }
+            ProfileMode::NewAccount => {
+                info!(target: "ProfileStore", "New account mode: all values empty");
+                StoreState {
+                    data: ProfileData::default(),
+                    dirty: false,
+                    last_flush: Instant::now(),
+                    mode,
+                    log_renamed: false,
+                }
+            }
+            ProfileMode::Import => {
+                // Try to load an existing profile, otherwise start fresh
+                if let Some((path, data)) = find_existing_profile() {
+                    let key_count = data.misc.len() + data.factions.len() + data.player.len();
+                    info!(target: "ProfileStore", "Loaded profile from {} ({key_count} keys)", path.display());
+                    StoreState {
+                        data,
+                        dirty: false,
+                        last_flush: Instant::now(),
+                        mode,
+                        log_renamed: false,
+                    }
+                } else {
+                    debug!(target: "ProfileStore", "No profile found, importing from Registry");
+                    StoreState {
+                        data: ProfileData::default(),
+                        dirty: false,
+                        last_flush: Instant::now(),
+                        mode,
+                        log_renamed: false,
+                    }
+                }
+            }
         }
     });
     Some(f(state))
@@ -702,6 +767,15 @@ pub fn is_routed(_key: &str) -> bool {
     true
 }
 
+/// Whether the store should block Registry fallthrough for unknown values.
+///
+/// In `NewAccount` and `Known` modes, unknown values must NOT fall through to
+/// the Registry. Only in `Import` mode (first start) do we allow it.
+pub fn should_block_registry() -> bool {
+    with_store(|state| state.mode != ProfileMode::Import)
+    .unwrap_or(false)
+}
+
 // ---- Tests ----------------------------------------------------------------
 
 #[cfg(test)]
@@ -713,7 +787,8 @@ mod tests {
             data: ProfileData::default(),
             dirty: false,
             last_flush: Instant::now(),
-            loaded_from: None,
+            mode: ProfileMode::Import,
+            log_renamed: true, // skip log rename in tests
         }
     }
 

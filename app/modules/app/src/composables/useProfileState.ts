@@ -9,8 +9,8 @@ import {computed, ref} from 'vue';
 export interface ProfileStateComposable {
   /** All detected profiles. */
   profiles: Readonly<Ref<ProfileState>>;
-  /** Label for the launch button (e.g. "Nabor (Server 106)" or "Launch Game"). */
-  launchLabel: Readonly<Ref<string>>;
+  /** Whether at least one profile exists. */
+  hasProfiles: Readonly<Ref<boolean>>;
   /** Register event listeners and load the initial state. Call from onMounted. */
   init: () => void;
   /** Unregister event listeners. Call from onUnmounted. */
@@ -39,14 +39,7 @@ export function useProfileState(): ProfileStateComposable {
    * - No profiles: "Launch Game"
    * - One profile: "{name} (Server {server})"
    */
-  const launchLabel = computed(() => {
-    const list = profiles.value.profiles;
-    if (list.length === 0) {
-      return 'Launch Game';
-    }
-    const p = list[0]!;
-    return `${p.name} (Server ${p.server})`;
-  });
+  const hasProfiles = computed(() => profiles.value.profiles.length > 0);
 
   /**
    * Apply a profile state update from the backend.
@@ -84,7 +77,7 @@ export function useProfileState(): ProfileStateComposable {
 
   return {
     profiles,
-    launchLabel,
+    hasProfiles,
     init,
     destroy,
   };

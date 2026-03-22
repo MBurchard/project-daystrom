@@ -122,6 +122,14 @@ fn make_il2cpp_string(value: &str) -> *mut Il2CppString {
     unsafe { (api.string_new)(c_str.as_ptr()) }
 }
 
+/// Whether the Registry fallthrough is blocked (NewAccount or Known profile mode).
+///
+/// When blocked, hooks return empty/default values instead of calling the original
+/// PlayerPrefs function for keys not in the store.
+fn registry_blocked() -> bool {
+    profile_store::should_block_registry()
+}
+
 // ---- Hook callbacks -------------------------------------------------------
 
 /// Hook for `PlayerPrefs.SetString(string key, string value)`.
@@ -193,17 +201,21 @@ extern "C" fn hook_get_string_2(
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
 
-            // Try store first for routed keys
+            // Try store first
             if let Some(stored) = profile_store::get(&k) {
                 return make_il2cpp_string(&stored);
             }
 
-            // Fall through to Registry
+            // Block Registry in NewAccount/Known modes
+            if registry_blocked() {
+                return default_value;
+            }
+
+            // Import mode: fall through to Registry
             let original: GetString2Fn =
                 unsafe { std::mem::transmute(ORIGINAL_GET_STRING_2.load(Relaxed)) };
             let result = unsafe { original(key, default_value, method_info) };
 
-            // Capture the value if routed
             let v = display_string(result);
             let known = profile_store::record(&k, &v);
             if !known {
@@ -218,7 +230,6 @@ extern "C" fn hook_get_string_2(
         }
     }
 
-    // Fallback: call original
     let original: GetString2Fn =
         unsafe { std::mem::transmute(ORIGINAL_GET_STRING_2.load(Relaxed)) };
     unsafe { original(key, default_value, method_info) }
@@ -226,7 +237,7 @@ extern "C" fn hook_get_string_2(
 
 /// Hook for `PlayerPrefs.GetString(string key)` (no default parameter).
 ///
-/// The same logic as `hook_get_string_2` but without the default value parameter.
+/// Same logic as `hook_get_string_2` but without the default value parameter.
 extern "C" fn hook_get_string_1(
     key: *mut Il2CppString,
     method_info: *const MethodInfo,
@@ -235,17 +246,18 @@ extern "C" fn hook_get_string_1(
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
 
-            // Try store first for routed keys
             if let Some(stored) = profile_store::get(&k) {
                 return make_il2cpp_string(&stored);
             }
 
-            // Fall through to Registry
+            if registry_blocked() {
+                return make_il2cpp_string("");
+            }
+
             let original: GetString1Fn =
                 unsafe { std::mem::transmute(ORIGINAL_GET_STRING_1.load(Relaxed)) };
             let result = unsafe { original(key, method_info) };
 
-            // Capture the value if routed
             let v = display_string(result);
             let known = profile_store::record(&k, &v);
             if !known {
@@ -260,7 +272,6 @@ extern "C" fn hook_get_string_1(
         }
     }
 
-    // Fallback: call original
     let original: GetString1Fn =
         unsafe { std::mem::transmute(ORIGINAL_GET_STRING_1.load(Relaxed)) };
     unsafe { original(key, method_info) }
@@ -317,6 +328,10 @@ extern "C" fn hook_get_int(
 
             if let Some(stored) = profile_store::get_int(&k) {
                 return stored;
+            }
+
+            if registry_blocked() {
+                return default_value;
             }
 
             let original: GetIntFn = unsafe { std::mem::transmute(ORIGINAL_GET_INT.load(Relaxed)) };
@@ -387,6 +402,10 @@ extern "C" fn hook_get_float(
 
             if let Some(stored) = profile_store::get_float(&k) {
                 return stored;
+            }
+
+            if registry_blocked() {
+                return default_value;
             }
 
             let original: GetFloatFn =
