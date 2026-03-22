@@ -338,28 +338,34 @@ impl StoreState {
             return self.put_player_int(suffix, value);
         }
         match route_key(key) {
-            KeyRoute::Profil("player_level") => self.set_opt_int(&mut self.data.profil.player_level.clone(), value, |s, v| s.data.profil.player_level = v),
-            KeyRoute::Profil("server_instance_id") => self.set_opt_int(&mut self.data.profil.server_instance_id.clone(), value, |s, v| s.data.profil.server_instance_id = v),
-            KeyRoute::Auth("current_version") => self.set_opt_int(&mut self.data.auth.current_version.clone(), value, |s, v| s.data.auth.current_version = v),
-            KeyRoute::Auth("scopely_id_allow_association") => self.set_opt_int(&mut self.data.auth.scopely_id_allow_association.clone(), value, |s, v| s.data.auth.scopely_id_allow_association = v),
-            KeyRoute::Profil(_) | KeyRoute::Auth(_) => {
+            KeyRoute::Profil("player_level") => {
+                if self.data.profil.player_level == Some(value) { return false; }
+                self.data.profil.player_level = Some(value);
+                self.dirty = true;
+                true
+            }
+            KeyRoute::Profil("server_instance_id") => {
+                if self.data.profil.server_instance_id == Some(value) { return false; }
+                self.data.profil.server_instance_id = Some(value);
+                self.dirty = true;
+                true
+            }
+            KeyRoute::Auth("current_version") => {
+                if self.data.auth.current_version == Some(value) { return false; }
+                self.data.auth.current_version = Some(value);
+                self.dirty = true;
+                true
+            }
+            KeyRoute::Auth("scopely_id_allow_association") => {
+                if self.data.auth.scopely_id_allow_association == Some(value) { return false; }
+                self.data.auth.scopely_id_allow_association = Some(value);
+                self.dirty = true;
+                true
+            }
+            KeyRoute::Profil(_) | KeyRoute::Auth(_) | KeyRoute::Misc => {
                 self.put_misc(key, toml::Value::Integer(value as i64))
             }
-            KeyRoute::Misc => self.put_misc(key, toml::Value::Integer(value as i64)),
         }
-    }
-
-    /// Helper: set an `Option<i32>` field if changed.
-    fn set_opt_int<F>(&mut self, current: &Option<i32>, value: i32, setter: F) -> bool
-    where
-        F: FnOnce(&mut Self, Option<i32>),
-    {
-        if *current == Some(value) {
-            return false;
-        }
-        setter(self, Some(value));
-        self.dirty = true;
-        true
     }
 
     /// Store a float value. Returns `true` if changed.
@@ -579,16 +585,17 @@ fn find_existing_profile() -> Option<(PathBuf, ProfileData)> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            let name = path.file_stem()?.to_str()?;
-            // Profile files have the format {server}_{name}
-            if name.contains('_') && name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(data) = toml::from_str::<ProfileData>(&content) {
-                        return Some((path, data));
-                    }
-                }
-            }
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        let name = path.file_stem()?.to_str()?;
+        // Profile files have the format {server}_{name}
+        if name.contains('_')
+            && name.chars().next().is_some_and(|c| c.is_ascii_digit())
+            && let Ok(content) = fs::read_to_string(&path)
+            && let Ok(data) = toml::from_str::<ProfileData>(&content)
+        {
+            return Some((path, data));
         }
     }
     None

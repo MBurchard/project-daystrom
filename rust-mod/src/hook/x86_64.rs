@@ -182,11 +182,11 @@ pub fn decode(code: &[u8]) -> Result<Insn, String> {
     }
 
     // 2. REX prefix (0x40-0x4F)
-    if let Some(&b) = code.get(pos) {
-        if (0x40..=0x4F).contains(&b) {
-            rex_w = b & 0x08 != 0;
-            pos += 1;
-        }
+    if let Some(&b) = code.get(pos)
+        && (0x40..=0x4F).contains(&b)
+    {
+        rex_w = b & 0x08 != 0;
+        pos += 1;
     }
 
     // 3. Opcode
