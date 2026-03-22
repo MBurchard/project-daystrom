@@ -1,6 +1,7 @@
 use log::debug;
 
 pub mod il2cpp_init;
+mod player_prefs;
 mod user_profile;
 
 /// Install all game hooks after IL2CPP has been initialised.
@@ -13,6 +14,7 @@ pub fn install_all_hooks() {
     };
 
     user_profile::install(api);
+    player_prefs::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }
