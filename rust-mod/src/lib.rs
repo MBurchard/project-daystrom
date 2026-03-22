@@ -11,6 +11,7 @@ mod hooks;
 mod il2cpp;
 #[cfg_attr(test, allow(dead_code))]
 mod logging;
+mod profile_store;
 // Windows DLL proxy: forwards version.dll API calls to the real system DLL.
 // Must be compiled in so the linker sees the exported symbols from version.def.
 #[cfg(target_os = "windows")]
@@ -28,7 +29,7 @@ pub(crate) const TAURI_IDENTIFIER: &str = env!("TAURI_IDENTIFIER");
 /// On Windows, it only activates when loaded by `prime.exe` (the game). Other processes that
 /// happen to load version.dll from this directory get the proxy forwarding but no hooks.
 ///
-/// Initialises the logger, then hooks `il2cpp_init` as the entry point for all further hooks.
+/// Initializes the logger, then hooks `il2cpp_init` as the entry point for all further hooks.
 /// The actual game hooks are installed later, inside the `il2cpp_init` callback, once the
 /// IL2CPP runtime is ready.
 #[cfg(not(test))]

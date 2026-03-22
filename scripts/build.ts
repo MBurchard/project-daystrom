@@ -289,9 +289,13 @@ function buildRustMod(config: PlatformConfig): void {
   execSync('cargo build --release', {cwd: RUST_MOD_DIR, stdio: 'inherit'});
 
   const src = join(RUST_MOD_DIR, config.rustLibrary);
-  const dest = join(MOD_OUTPUT_DIR, config.outputLibrary);
-  cpSync(src, dest);
-  log.info(`Copied ${dest}`);
+  const libName = config.outputLibrary;
+  for (const dir of [MOD_OUTPUT_DIR, ...TAURI_MOD_DIRS]) {
+    mkdirSync(dir, {recursive: true});
+    const dest = join(dir, libName);
+    cpSync(src, dest);
+    log.info(`Copied ${dest}`);
+  }
 }
 
 /**

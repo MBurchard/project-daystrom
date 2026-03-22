@@ -36,6 +36,9 @@ pub type Il2CppRuntimeInvokeFn = unsafe extern "C" fn(
     *mut *mut Il2CppException,
 ) -> *mut Il2CppObject;
 
+/// Type alias for `il2cpp_string_new(str) -> Il2CppString*`.
+type Il2CppStringNewFn = unsafe extern "C" fn(*const c_char) -> *mut Il2CppString;
+
 // ---- IL2CPP API struct ----------------------------------------------------
 
 /// All IL2CPP API functions resolved at runtime from the GameAssembly library.
@@ -49,6 +52,7 @@ pub struct Il2CppApi {
     pub class_from_name: Il2CppClassFromNameFn,
     pub class_get_method_from_name: Il2CppClassGetMethodFromNameFn,
     pub runtime_invoke: Il2CppRuntimeInvokeFn,
+    pub string_new: Il2CppStringNewFn,
 }
 
 // ---- Loading --------------------------------------------------------------
@@ -99,6 +103,7 @@ pub fn load() -> Result<Il2CppApi, Il2CppError> {
             class_from_name: resolve(lib, "il2cpp_class_from_name\0")?,
             class_get_method_from_name: resolve(lib, "il2cpp_class_get_method_from_name\0")?,
             runtime_invoke: resolve(lib, "il2cpp_runtime_invoke\0")?,
+            string_new: resolve(lib, "il2cpp_string_new\0")?,
         })
     }
 }
