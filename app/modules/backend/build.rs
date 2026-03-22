@@ -34,12 +34,10 @@ fn check_version_sync() {
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         .and_then(|json| json.get("version").and_then(|v| v.as_str()).map(String::from));
 
-    if let Some(pkg_version) = pkg_version {
-        if cargo_version != pkg_version {
-            println!(
-                "cargo:warning=Version mismatch: Cargo.toml has {cargo_version}, \
-                 root package.json has {pkg_version} — please update Cargo.toml"
-            );
-        }
+    if let Some(pkg_version) = pkg_version.filter(|v| v != &cargo_version) {
+        println!(
+            "cargo:warning=Version mismatch: Cargo.toml has {cargo_version}, \
+             root package.json has {pkg_version} — please update Cargo.toml"
+        );
     }
 }
