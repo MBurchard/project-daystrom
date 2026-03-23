@@ -15,11 +15,7 @@ const LAUNCHER_APP: &str = "/Applications/Star Trek Fleet Command.app";
 /// The child process is spawned but not awaited — the game runs independently of Project Daystrom.
 /// Returns an error if the game is already running or the process fails to spawn.
 #[cfg(target_os = "macos")]
-pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<(), String> {
-    if super::is_running(&game.executable) {
-        return Err("Game is already running".to_string());
-    }
-
+pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<u32, String> {
     let lib_dir = mod_library
         .parent()
         .ok_or_else(|| "Could not determine mod library directory".to_string())?;
@@ -34,13 +30,14 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
         log_info!("Setting DAYSTROM_PROFILE={p}");
         cmd.env("DAYSTROM_PROFILE", p);
     }
-    cmd.spawn().map_err(|e| {
+    let child = cmd.spawn().map_err(|e| {
         log_error!("Failed to spawn game process: {e}");
         "Failed to launch game (see log for details)".to_string()
     })?;
 
-    log_info!("Game process spawned");
-    Ok(())
+    let pid = child.id();
+    log_info!("Game process spawned (PID {pid})");
+    Ok(pid)
 }
 
 /// Launch the game on Windows with automatic mod DLL deployment.
@@ -54,11 +51,7 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
 /// - `Some("106_Nabor")`: known profile
 /// - `Some("new_account")`: new account mode
 #[cfg(target_os = "windows")]
-pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<(), String> {
-    if super::is_running(&game.executable) {
-        return Err("Game is already running".to_string());
-    }
-
+pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<u32, String> {
     // Auto-deploy: copy the bundled DLL if missing or outdated
     match super::check_mod_deployment(&game.install_dir, mod_library) {
         super::ModDeploymentState::UpToDate => {}
@@ -76,18 +69,19 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
         log_info!("Setting DAYSTROM_PROFILE={p}");
         cmd.env("DAYSTROM_PROFILE", p);
     }
-    cmd.spawn().map_err(|e| {
+    let child = cmd.spawn().map_err(|e| {
         log_error!("Failed to spawn game process: {e}");
         "Failed to launch game (see log for details)".to_string()
     })?;
 
-    log_info!("Game process spawned");
-    Ok(())
+    let pid = child.id();
+    log_info!("Game process spawned (PID {pid})");
+    Ok(pid)
 }
 
 /// Stub — game launching is not yet supported on this platform.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn launch(_game: &GameInfo, _mod_library: &Path, _profile: Option<&str>) -> Result<(), String> {
+pub fn launch(_game: &GameInfo, _mod_library: &Path, _profile: Option<&str>) -> Result<u32, String> {
     Err("Game launching is not yet supported on this platform".to_string())
 }
 

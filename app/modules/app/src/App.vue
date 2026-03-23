@@ -21,6 +21,9 @@ const {
 const {
   profiles,
   hasProfiles,
+  externalGameRunning,
+  isProfileRunning,
+  markLaunched,
   init: initProfileState,
   destroy: destroyProfileState,
 } = useProfileState();
@@ -95,17 +98,17 @@ onUnmounted(() => {
       </ul>
 
       <button v-if="status.installed && !hasProfiles"
-          :disabled="!status.can_launch || actionPending"
+          :disabled="!status.can_launch || actionPending || externalGameRunning"
           class="launch-btn"
           @click="launchGame()">
         Launch Game
       </button>
 
-      <template v-if="status.installed && hasProfiles">
-        <button v-for="p in profiles.profiles" :key="p.filename"
-            :disabled="!status.mod_deployed || actionPending"
+      <template v-if="status.installed && hasProfiles && !externalGameRunning">
+        <button v-for="p in profiles.profiles" :key="p.stem"
+            :disabled="!status.mod_deployed || actionPending || isProfileRunning(p.stem)"
             class="launch-btn"
-            @click="launchGame(p.filename.replace('.toml', ''))">
+            @click="markLaunched(p.stem); launchGame(p.stem)">
           {{ p.name }} (Server {{ p.server }})
         </button>
 
@@ -116,6 +119,10 @@ onUnmounted(() => {
           +
         </button>
       </template>
+
+      <p v-if="externalGameRunning" class="info-message">
+        The game was started externally. Close it to use Daystrom.
+      </p>
 
       <p v-if="actionError" class="error">
         {{ actionError }}

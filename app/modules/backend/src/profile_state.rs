@@ -23,8 +23,8 @@ pub struct ProfileInfo {
     pub name: String,
     /// Server/universe ID (from filename, e.g. 106).
     pub server: i32,
-    /// TOML filename (e.g. "106_Nabor.toml").
-    pub filename: String,
+    /// Profile stem used for launching (e.g. "106_Nabor").
+    pub stem: String,
 }
 
 /// State of all known profiles.
@@ -33,11 +33,17 @@ pub struct ProfileInfo {
 pub struct ProfileState {
     /// All detected profile files.
     pub profiles: Vec<ProfileInfo>,
+    /// Profile stems of game instances currently running (launched by Daystrom).
+    pub running_profiles: Vec<String>,
+    /// Whether a game process is running that was NOT launched by Daystrom.
+    pub external_game_running: bool,
 }
 
 /// Global profile state.
 static STATE: Mutex<ProfileState> = Mutex::new(ProfileState {
     profiles: Vec::new(),
+    running_profiles: Vec::new(),
+    external_game_running: false,
 });
 
 /// Return a snapshot of the current profile state.
@@ -111,7 +117,7 @@ fn parse_profile_filename(stem: &str) -> Option<ProfileInfo> {
     Some(ProfileInfo {
         name: name.to_string(),
         server,
-        filename: format!("{stem}.toml"),
+        stem: stem.to_string(),
     })
 }
 
@@ -143,7 +149,7 @@ mod tests {
         let info = parse_profile_filename("106_Nabor").unwrap();
         assert_eq!(info.name, "Nabor");
         assert_eq!(info.server, 106);
-        assert_eq!(info.filename, "106_Nabor.toml");
+        assert_eq!(info.stem, "106_Nabor");
     }
 
     #[test]
