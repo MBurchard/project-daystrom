@@ -224,10 +224,30 @@ fn writer_thread(rx: mpsc::Receiver<LogMessage>, dir: PathBuf, mut base_name: St
                 // Write the first message + drain any additional queued messages
                 if let Some(ref mut w) = writer {
                     let _ = writeln!(w, "{first}");
-                    while let Ok(LogMessage::Line(line)) = rx.try_recv() {
-                        let _ = writeln!(w, "{line}");
+                    loop {
+                        match rx.try_recv() {
+                            Ok(LogMessage::Line(line)) => {
+                                let _ = writeln!(w, "{line}");
+                            }
+                            Ok(LogMessage::Rename(new_name)) => {
+                                // Flush, rename, reopen mid-batch
+                                let _ = w.flush();
+                                drop(writer.take());
+                                let old_path = log_file_path(&dir, &base_name);
+                                let new_path = log_file_path(&dir, &new_name);
+                                if old_path.exists() && !new_path.exists() {
+                                    let _ = fs::rename(&old_path, &new_path);
+                                }
+                                base_name = new_name;
+                                writer = open_log_writer(&dir, &base_name);
+                                break;
+                            }
+                            Err(_) => break, // queue empty
+                        }
                     }
-                    let _ = w.flush();
+                    if let Some(ref mut w) = writer {
+                        let _ = w.flush();
+                    }
                 }
             }
         }
