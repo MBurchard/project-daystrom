@@ -210,6 +210,15 @@ fn run_loop(app: tauri::AppHandle) {
             s.launcher_running = launcher;
         });
 
+        // Track which of our launched profiles are still running
+        let running = crate::process_origin::running_profiles();
+        let external = game && running.is_empty()
+            && !crate::process_origin::is_game_started();
+        crate::profile_state::update(&app, |s| {
+            s.running_profiles = running;
+            s.external_game_running = external;
+        });
+
         thread::sleep(POLL_INTERVAL);
     }
 }
@@ -383,9 +392,13 @@ mod tests {
     fn api_recheck_timer_resets_after_recheck() {
         let mut state = MonitorState::new();
 
-        // Force the timer to be "expired" (checked_sub avoids underflow on Windows)
+        // Force the timer to be "expired" (checked_sub avoids underflow on short-uptime Windows)
         let expired = API_RECHECK_INTERVAL + Duration::from_secs(1);
-        state.last_api_check = Instant::now().checked_sub(expired).unwrap_or(Instant::now());
+        let Some(past) = Instant::now().checked_sub(expired) else {
+            // System uptime too short to represent the interval; skip this test
+            return;
+        };
+        state.last_api_check = past;
 
         // Launcher running + timer expired: triggers recheck
         let actions = state.tick(false, true);
