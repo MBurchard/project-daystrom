@@ -19,13 +19,13 @@ static HOOK_INFO: HookInfo = HookInfo::new("GetLocalUserProfile");
 /// Thread-safe wrapper for a raw IL2CPP class pointer.
 ///
 /// Raw pointers are not `Send`/`Sync`, but IL2CPP class pointers are stable for the entire process
-/// lifetime and only read after initialisation. This wrapper is safe because the pointer is set
+/// lifetime and only read after initialization. This wrapper is safe because the pointer is set
 /// once and never mutated.
 struct ClassPtr(*mut Il2CppClass);
 unsafe impl Send for ClassPtr {}
 unsafe impl Sync for ClassPtr {}
 
-/// Cached UserProfile class pointer, resolved once on first call.
+/// Cached UserProfile class pointer, resolved once on the first call.
 static PROFILE_CLASS: OnceLock<Option<ClassPtr>> = OnceLock::new();
 
 /// Type alias for the original function signature.
@@ -33,7 +33,7 @@ type GetLocalUserProfileFn = unsafe extern "C" fn(*mut Il2CppObject) -> *mut Il2
 
 /// Assemblies to search for the UserProfile class.
 ///
-/// IL2CppDumper shows namespace `Digit.PrimeServer.Models` but doesn't reveal the assembly name. We try
+/// IL2CppDumper shows the namespace `Digit.PrimeServer.Models` but doesn't reveal the assembly name. We try
 /// the most likely candidates in order.
 const PROFILE_ASSEMBLIES: &[&str] = &[
     "Digit.Client.PrimeLib.Runtime",
@@ -86,7 +86,7 @@ fn resolve_profile_class(api: &Il2CppApi) -> Option<*mut Il2CppClass> {
 /// once every 5 minutes to avoid log spam.
 fn log_player_info(profile: *mut Il2CppObject) {
     // Check throttle first to avoid unnecessary reflection calls
-    if !crate::throttle::should_log("user_profile", Duration::from_secs(300)) {
+    if !crate::throttle::should_log("user_profile", Duration::from_secs(10)) {
         return;
     }
 
@@ -100,6 +100,12 @@ fn log_player_info(profile: *mut Il2CppObject) {
     let name = read_string_property(api, class, profile, "get_Name");
     let level = read_int_property(api, class, profile, "get_Level");
     let might = read_ulong_property(api, class, profile, "get_MilitaryMight");
+
+    // Keep the profile store in sync with the live player name.
+    // This catches in-game renames that don't go through PlayerPrefs.
+    if let Some(ref name) = name {
+        crate::profile_store::record("social_username", name);
+    }
 
     log::info!(
         target: "PlayerData",
@@ -150,11 +156,11 @@ fn read_int_property(
     }
 
     // Value types are boxed: the value sits right after the Il2CppObject header (2 pointers)
-    let value_ptr = unsafe { (result as *const u8).add(2 * std::mem::size_of::<usize>()) as *const i32 };
+    let value_ptr = unsafe { (result as *const u8).add(2 * size_of::<usize>()) as *const i32 };
     Some(unsafe { *value_ptr })
 }
 
-/// Call a parameterless method that returns a `ulong` (unboxed from Il2CppObject).
+/// Call a parameterless method that returns an ` ulong ` (unboxed from Il2CppObject).
 fn read_ulong_property(
     api: &Il2CppApi,
     class: *mut Il2CppClass,
@@ -172,7 +178,7 @@ fn read_ulong_property(
         return None;
     }
 
-    let value_ptr = unsafe { (result as *const u8).add(2 * std::mem::size_of::<usize>()) as *const u64 };
+    let value_ptr = unsafe { (result as *const u8).add(2 * size_of::<usize>()) as *const u64 };
     Some(unsafe { *value_ptr })
 }
 

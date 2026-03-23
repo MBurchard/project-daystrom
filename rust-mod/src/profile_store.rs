@@ -164,7 +164,7 @@ enum PlayerValue<'a> {
 // ---- Store state ----------------------------------------------------------
 
 /// Profile mode, determined by the `DAYSTROM_PROFILE` environment variable.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum ProfileMode {
     /// No env variable: first start, import from Registry.
     Import,
@@ -180,8 +180,8 @@ struct StoreState {
     dirty: bool,
     last_flush: Instant,
     mode: ProfileMode,
-    /// Whether we already triggered the log rename for this session.
-    log_renamed: bool,
+    /// Current profile stem (e.g. "106_Nabor"). Used to detect renames.
+    current_stem: Option<String>,
 }
 
 impl StoreState {
@@ -517,23 +517,25 @@ impl StoreState {
             return None; // waiting for server + name
         }
 
-        // Trigger log rename on first flush (server + name now known)
-        if !self.log_renamed {
-            self.log_renamed = true;
-            let stem = profile_stem(
-                self.data.profil.server_instance_id.unwrap_or(0),
-                self.data.profil.social_username.as_deref().unwrap_or("unknown"),
-            );
-            crate::logging::rename_log(&stem);
+        let new_stem = profile_stem(
+            self.data.profil.server_instance_id.unwrap_or(0),
+            self.data.profil.social_username.as_deref().unwrap_or("unknown"),
+        );
+
+        // Detect rename: stem changed since last flush (or first flush)
+        if self.current_stem.as_deref() != Some(new_stem.as_str()) {
+            if let Some(old_stem) = &self.current_stem {
+                rename_profile_file(old_stem, &new_stem);
+            }
+            crate::logging::rename_log(&new_stem);
+            self.current_stem = Some(new_stem.clone());
         }
+
         match toml::to_string_pretty(&self.data) {
             Ok(content) => {
                 self.dirty = false;
                 self.last_flush = Instant::now();
-                let filename = profile_filename(
-                    self.data.profil.server_instance_id.unwrap_or(0),
-                    self.data.profil.social_username.as_deref().unwrap_or("unknown"),
-                );
+                let filename = format!("{new_stem}.toml");
                 Some((content, filename))
             }
             Err(e) => {
@@ -559,6 +561,20 @@ fn profile_dir() -> Option<PathBuf> {
     Some(base.join(TAURI_IDENTIFIER))
 }
 
+/// Rename a profile TOML file on disk when the player name changes.
+fn rename_profile_file(old_stem: &str, new_stem: &str) {
+    let Some(dir) = profile_dir() else { return };
+    let old_path = dir.join(format!("{old_stem}.toml"));
+    let new_path = dir.join(format!("{new_stem}.toml"));
+    if old_path.exists() && !new_path.exists() {
+        if let Err(e) = fs::rename(&old_path, &new_path) {
+            warn!(target: "ProfileStore", "Failed to rename {old_stem}.toml to {new_stem}.toml: {e}");
+        } else {
+            info!(target: "ProfileStore", "Profile renamed: {old_stem} -> {new_stem}");
+        }
+    }
+}
+
 /// Build a profile stem (filename without `.toml`) from server ID and player name.
 ///
 /// Sanitises the name to ASCII-alphanumeric + underscore for safe filenames.
@@ -569,11 +585,6 @@ fn profile_stem(server_id: i32, name: &str) -> String {
         .collect();
     let safe_name = if safe_name.is_empty() { "unknown".to_string() } else { safe_name };
     format!("{server_id}_{safe_name}")
-}
-
-/// Build a profile filename from server ID and player name.
-fn profile_filename(server_id: i32, name: &str) -> String {
-    format!("{}.toml", profile_stem(server_id, name))
 }
 
 /// Find the first existing profile TOML in the profile directory.
@@ -627,13 +638,14 @@ where
                     })
                 }).unwrap_or_default();
                 let key_count = data.misc.len() + data.factions.len() + data.player.len();
+                let current_stem = Some(stem.clone());
                 info!(target: "ProfileStore", "Loaded profile '{stem}' ({key_count} keys)");
                 StoreState {
                     data,
                     dirty: false,
                     last_flush: Instant::now(),
-                    mode,
-                    log_renamed: true, // already has the right log name
+                    mode: mode.clone(),
+                    current_stem,
                 }
             }
             ProfileMode::NewAccount => {
@@ -643,7 +655,7 @@ where
                     dirty: false,
                     last_flush: Instant::now(),
                     mode,
-                    log_renamed: false,
+                    current_stem: None,
                 }
             }
             ProfileMode::Import => {
@@ -656,7 +668,7 @@ where
                         dirty: false,
                         last_flush: Instant::now(),
                         mode,
-                        log_renamed: false,
+                        current_stem: None,
                     }
                 } else {
                     debug!(target: "ProfileStore", "No profile found, importing from Registry");
@@ -665,7 +677,7 @@ where
                         dirty: false,
                         last_flush: Instant::now(),
                         mode,
-                        log_renamed: false,
+                        current_stem: None,
                     }
                 }
             }
@@ -795,7 +807,7 @@ mod tests {
             dirty: false,
             last_flush: Instant::now(),
             mode: ProfileMode::Import,
-            log_renamed: true, // skip log rename in tests
+            current_stem: None,
         }
     }
 
@@ -962,18 +974,18 @@ mod tests {
     // -- Filename --
 
     #[test]
-    fn profile_filename_basic() {
-        assert_eq!(profile_filename(106, "Nabor"), "106_Nabor.toml");
+    fn profile_stem_basic() {
+        assert_eq!(profile_stem(106, "Nabor"), "106_Nabor");
     }
 
     #[test]
-    fn profile_filename_sanitises_special_chars() {
-        assert_eq!(profile_filename(42, "My Player!"), "42_My_Player_.toml");
+    fn profile_stem_sanitises_special_chars() {
+        assert_eq!(profile_stem(42, "My Player!"), "42_My_Player_");
     }
 
     #[test]
-    fn profile_filename_empty_name() {
-        assert_eq!(profile_filename(1, ""), "1_unknown.toml");
+    fn profile_stem_empty_name() {
+        assert_eq!(profile_stem(1, ""), "1_unknown");
     }
 
     // -- Flush gating --
