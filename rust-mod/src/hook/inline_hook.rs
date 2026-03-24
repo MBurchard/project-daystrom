@@ -25,32 +25,55 @@ const HOOK_SIZE: usize = 14;
 /// - This function is not thread-safe: the target function must not be executing on another
 ///   thread while the hook is being installed.
 ///
-/// On ARM64 the overwritten bytes are copied verbatim (prologues are PC-relative-safe).
+/// ARM64 instructions are decoded and PC-relative references (ADRP, ADR, B, LDR literal, etc.)
+/// are relocated so the trampoline computes the same absolute addresses as the original code.
 /// On x86_64, instructions are decoded and RIP-relative references are relocated.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*const (), String> {
     let target_addr = target as usize;
+    let num_insns = HOOK_SIZE / 4; // 4 instructions (16 bytes / 4)
 
     // Save original bytes
     let mut saved = [0u8; HOOK_SIZE];
     unsafe { std::ptr::copy_nonoverlapping(target as *const u8, saved.as_mut_ptr(), HOOK_SIZE) };
 
-    // Allocate executable trampoline: saved instructions + branch back to (target + HOOK_SIZE)
-    let trampoline = unsafe { allocate_trampoline(&saved, target_addr + HOOK_SIZE)? };
+    // Allocate trampoline: relocated instructions + branch back
+    let trampoline_size = HOOK_SIZE + HOOK_SIZE; // saved + branch sequence
+    let trampoline_mem = unsafe { alloc_executable(trampoline_size)? };
+    let trampoline_addr = trampoline_mem as usize;
 
-    // Make target memory writable
+    // Decode, relocate, and write each instruction to the trampoline
+    for i in 0..num_insns {
+        let offset = i * 4;
+        let raw = u32::from_le_bytes(saved[offset..offset + 4].try_into().unwrap());
+        let decoded = super::aarch64::decode(raw);
+
+        let relocated = if let Some(ref reloc) = decoded.reloc {
+            let old_pc = (target_addr + offset) as u64;
+            let new_pc = (trampoline_addr + offset) as u64;
+            super::aarch64::relocate(raw, reloc, old_pc, new_pc)?
+        } else {
+            raw
+        };
+
+        let dst = unsafe { (trampoline_mem as *mut u32).add(i) };
+        unsafe { dst.write(relocated) };
+    }
+
+    // Write branch back to the instruction after our hook patch
+    unsafe { write_branch(trampoline_addr + HOOK_SIZE, target_addr + HOOK_SIZE) };
+
+    // Make trampoline executable
+    unsafe { make_executable(trampoline_addr, trampoline_size)? };
+    flush_icache(trampoline_addr, trampoline_size);
+
+    // Patch the target: overwrite with branch to replacement
     unsafe { make_writable(target_addr, HOOK_SIZE)? };
-
-    // Write the hook: branch to replacement
     unsafe { write_branch(target_addr, replacement as usize) };
-
-    // Restore target memory to executable (read + execute, no write)
     unsafe { make_executable(target_addr, HOOK_SIZE)? };
-
-    // Flush instruction cache so the CPU sees the new code
     flush_icache(target_addr, HOOK_SIZE);
 
-    Ok(trampoline)
+    Ok(trampoline_mem as *const ())
 }
 
 /// Install an inline hook with x86_64 instruction-aware relocation.
@@ -182,34 +205,6 @@ unsafe fn write_branch(addr: usize, target: usize) {
     }
 }
 
-// ---- Trampoline allocation ------------------------------------------------
-
-/// Allocate executable memory for the trampoline (ARM64 only).
-///
-/// The trampoline contains the saved original instructions followed by a branch back to the
-/// continuation address (original function + HOOK_SIZE).
-///
-/// The allocated memory is intentionally never freed. Trampolines must remain valid for the entire
-/// process lifetime because the hooked function's original code has been overwritten and the
-/// trampoline is the only way to call the original implementation.
-#[cfg(target_arch = "aarch64")]
-unsafe fn allocate_trampoline(saved: &[u8; HOOK_SIZE], continuation: usize) -> Result<*const (), String> {
-    // Trampoline = saved instructions + branch sequence
-    let trampoline_size = HOOK_SIZE + HOOK_SIZE;
-    let mem = unsafe { alloc_executable(trampoline_size)? };
-
-    // Copy saved instructions
-    unsafe { std::ptr::copy_nonoverlapping(saved.as_ptr(), mem as *mut u8, HOOK_SIZE) };
-
-    // Write branch back to original function (after our hook patch)
-    unsafe { write_branch(mem as usize + HOOK_SIZE, continuation) };
-
-    // Ensure trampoline is executable
-    unsafe { make_executable(mem as usize, trampoline_size)? };
-    flush_icache(mem as usize, trampoline_size);
-
-    Ok(mem as *const ())
-}
 
 // ---- Platform: macOS (ARM64 + x86_64) -------------------------------------
 
