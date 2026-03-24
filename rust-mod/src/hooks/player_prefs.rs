@@ -55,21 +55,14 @@ const HASKEY_SUPPRESS: &[&str] = &[
     "hailing_frequencies_send_receive_enabled",
     "hailing_frequencies_show_popup_on_tap_and_hold",
     "initial_experience_completed",
+    "intro_video_seen",
     "loading_screen_tips_key",
     "locale_debug_mode",
     "mission/away_team_unlock",
     "mission/daily_goals_unlock",
     "mission/holodeck",
-    "options/action_queue_enabled",
-    "options/allow_mission_dialogue_login",
-    "options/hard_currency_spend_confirmation",
-    "options/improve_system_view_ship_texture_setting",
-    "options/mute_music_setting",
-    "options/mute_sfx_setting",
-    "options/notification_setting",
-    "options/skip_animations",
-    "options/skip_toasts",
     "reported_players",
+    "slide_show_seen",
     "rtc_proxy",
     "shop/artifact_unlock",
     "shop/away_team_unlock",
@@ -83,6 +76,8 @@ const HASKEY_SUPPRESS_PREFIX: &[&str] = &[
     "FleetCommander/",
     "Playgami.",
     "PlcPopupBundleKeyPrefix_",
+    "QualityManager/",
+    "options/",
     "SP.",
     "ToastInventoryObserver_",
     "factions_",
@@ -575,7 +570,7 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
                     return found;
                 }
                 if !haskey_suppressed(&k) {
-                    debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\" (blocked)");
+                    debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\"");
                 }
                 return 0;
             }
