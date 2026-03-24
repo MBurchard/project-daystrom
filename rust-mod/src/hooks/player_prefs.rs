@@ -81,28 +81,6 @@ type HasKeyFn = unsafe extern "C" fn(*mut Il2CppString, *const MethodInfo) -> i3
 /// `static void DeleteKey(string key)`
 type DeleteKeyFn = unsafe extern "C" fn(*mut Il2CppString, *const MethodInfo);
 
-// ---- Sensitive key detection ----------------------------------------------
-
-/// Substrings that indicate a key holds sensitive data (token, password, etc.).
-/// Matched case-insensitively against the PlayerPrefs key.
-const SENSITIVE_PATTERNS: &[&str] = &[
-    "token", "auth", "session", "password", "secret", "credential",
-];
-
-/// Maximum number of characters to log for sensitive values.
-const SENSITIVE_MAX_LEN: usize = 20;
-
-/// Sanitize a value for logging. Sensitive keys get their values truncated.
-fn sanitise_value(key: &str, value: &str) -> String {
-    let key_lower = key.to_ascii_lowercase();
-    let is_sensitive = SENSITIVE_PATTERNS.iter().any(|p| key_lower.contains(p));
-    if is_sensitive && value.len() > SENSITIVE_MAX_LEN {
-        format!("{}...", &value[..SENSITIVE_MAX_LEN])
-    } else {
-        value.to_string()
-    }
-}
-
 /// Convert an `Il2CppString` pointer to a displayable string for logging.
 fn display_string(ptr: *const Il2CppString) -> String {
     if ptr.is_null() {
@@ -170,14 +148,8 @@ extern "C" fn hook_set_string(
     match handled {
         Ok(true) => {} // routed key, stored successfully
         Ok(false) => {
-            // Unrouted key: pass through to Registry and log
+            // Unrouted key: pass through to plist/Registry
             unsafe { original(key, value, method_info) };
-            if let Ok(()) = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                let k = display_string(key);
-                let v = display_string(value);
-                let v_safe = sanitise_value(&k, &v);
-                info!(target: "PlayerPrefs", "NEW SET \"{k}\" = \"{v_safe}\"");
-            })) {}
         }
         Err(_) => {
             // Panic: fall back to the original to prevent data loss
@@ -219,8 +191,7 @@ extern "C" fn hook_get_string_2(
             let v = display_string(result);
             let known = profile_store::record(&k, &v);
             if !known {
-                let v_safe = sanitise_value(&k, &v);
-                info!(target: "PlayerPrefs", "NEW GET \"{k}\" -> \"{v_safe}\"");
+                info!(target: "PlayerPrefs", "NEW GET \"{k}\"");
             }
             result
         }));
@@ -261,8 +232,7 @@ extern "C" fn hook_get_string_1(
             let v = display_string(result);
             let known = profile_store::record(&k, &v);
             if !known {
-                let v_safe = sanitise_value(&k, &v);
-                info!(target: "PlayerPrefs", "NEW GET \"{k}\" -> \"{v_safe}\"");
+                info!(target: "PlayerPrefs", "NEW GET \"{k}\"");
             }
             result
         }));
@@ -304,10 +274,6 @@ extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *con
         Ok(true) => {}
         Ok(false) => {
             unsafe { original(key, value, method_info) };
-            if let Ok(()) = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                let k = display_string(key);
-                info!(target: "PlayerPrefs", "NEW SET_INT \"{k}\" = {value}");
-            })) {}
         }
         Err(_) => {
             HOOK_SET_INT.record_error();
@@ -378,10 +344,6 @@ extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *c
         Ok(true) => {}
         Ok(false) => {
             unsafe { original(key, value, method_info) };
-            if let Ok(()) = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                let k = display_string(key);
-                info!(target: "PlayerPrefs", "NEW SET_FLOAT \"{k}\" = {value}");
-            })) {}
         }
         Err(_) => {
             HOOK_SET_FLOAT.record_error();
@@ -448,10 +410,7 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
 
             // Unrouted: fall through to Registry
             let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
-            let result = unsafe { original(key, method_info) };
-            let exists = result != 0;
-            info!(target: "PlayerPrefs", "NEW HAS_KEY \"{k}\" -> {exists}");
-            result
+            unsafe { original(key, method_info) }
         }));
         match result {
             Ok(val) => return val,
