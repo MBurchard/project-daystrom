@@ -76,7 +76,9 @@ fn open_log_writer(dir: &Path, base_name: &str) -> Option<BufWriter<File>> {
 /// - `106_Nabor`: `"mod_106_Nabor"`
 fn initial_log_base_name() -> String {
     match std::env::var(PROFILE_ENV_VAR) {
-        Ok(val) if !val.is_empty() && val != "new_account" => format!("mod_{val}"),
+        Ok(val) if !val.is_empty() && val != "new_account" && val != "initial" => {
+            format!("mod_{val}")
+        }
         _ => "mod".to_string(),
     }
 }
