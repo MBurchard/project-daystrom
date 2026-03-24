@@ -92,7 +92,11 @@ fn is_pid_alive(pid: u32) -> bool {
 /// Check whether a process with the given PID is still alive.
 #[cfg(target_os = "macos")]
 fn is_pid_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
 }
 
 /// Check whether a process with the given PID is still alive.
