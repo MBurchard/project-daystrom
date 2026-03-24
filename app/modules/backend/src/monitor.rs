@@ -11,8 +11,14 @@ use_log!("Monitor");
 /// Interval between process checks.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Interval between profile directory scans.
+/// Interval between profile directory scans after the fast phase.
 const PROFILE_SCAN_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Faster profile scan interval during the first minutes after launch.
+const PROFILE_SCAN_FAST: Duration = Duration::from_secs(5);
+
+/// Duration of the fast scanning phase after app start.
+const PROFILE_SCAN_FAST_PHASE: Duration = Duration::from_secs(180);
 
 /// Interval for re-checking the Scopely update API while the launcher is open.
 const API_RECHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -153,10 +159,16 @@ fn run_loop(app: tauri::AppHandle) {
 
     let mut state = MonitorState::new();
     let mut last_profile_scan = Instant::now();
+    let start_time = Instant::now();
 
     loop {
-        // Periodic profile directory scan
-        if last_profile_scan.elapsed() >= PROFILE_SCAN_INTERVAL {
+        // Periodic profile directory scan (fast in the first 3 minutes, then every 60s)
+        let scan_interval = if start_time.elapsed() < PROFILE_SCAN_FAST_PHASE {
+            PROFILE_SCAN_FAST
+        } else {
+            PROFILE_SCAN_INTERVAL
+        };
+        if last_profile_scan.elapsed() >= scan_interval {
             let profiles = crate::profile_state::scan_profiles();
             crate::profile_state::update(&app, |s| s.profiles = profiles);
             last_profile_scan = Instant::now();
