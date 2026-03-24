@@ -399,18 +399,35 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
 
-            // Check the store first for routed keys
             if profile_store::is_routed(&k) {
-                // Key is routed: check if we have a value stored
                 let exists = profile_store::get(&k).is_some()
                     || profile_store::get_int(&k).is_some()
                     || profile_store::get_float(&k).is_some();
-                return exists as i32;
+                if exists {
+                    return 1;
+                }
+                // Key is routed but not in store. For primary profiles
+                // (Import/Known+primary), fall through to plist/Registry.
+                if !registry_blocked() {
+                    let original: HasKeyFn =
+                        unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
+                    let found = unsafe { original(key, method_info) };
+                    if found == 0 {
+                        debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\"");
+                    }
+                    return found;
+                }
+                debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\" (blocked)");
+                return 0;
             }
 
-            // Unrouted: fall through to Registry
+            // Unrouted (Phase 1): fall through to plist/Registry
             let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
-            unsafe { original(key, method_info) }
+            let found = unsafe { original(key, method_info) };
+            if found == 0 {
+                debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\"");
+            }
+            found
         }));
         match result {
             Ok(val) => return val,
