@@ -7,7 +7,7 @@
 use std::fs;
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use ts_rs::TS;
 
@@ -15,7 +15,7 @@ use crate::use_log;
 
 use_log!("Profiles");
 
-/// Information about a single player profile, derived from the TOML filename.
+/// Information about a single player profile, derived from the TOML filename and contents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, TS)]
 #[ts(export)]
 pub struct ProfileInfo {
@@ -25,6 +25,22 @@ pub struct ProfileInfo {
     pub server: i32,
     /// Profile stem used for launching (e.g. "106_Nabor").
     pub stem: String,
+    /// Whether this is the primary profile (imported from Unity).
+    pub primary: bool,
+}
+
+/// Minimal TOML structure for reading the profile type.
+#[derive(Deserialize)]
+struct TomlProfil {
+    #[serde(default)]
+    profil: TomlProfilSection,
+}
+
+/// The `[profil]` section, only the fields we need for scanning.
+#[derive(Default, Deserialize)]
+struct TomlProfilSection {
+    #[serde(default, rename = "type")]
+    profile_type: Option<String>,
 }
 
 /// State of all known profiles.
@@ -91,12 +107,23 @@ pub fn scan_profiles() -> Vec<ProfileInfo> {
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        if let Some(info) = parse_profile_filename(stem) {
+        if let Some(mut info) = parse_profile_filename(stem) {
+            // Read the profile type from the TOML contents
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(parsed) = toml::from_str::<TomlProfil>(&content) {
+                    info.primary = parsed.profil.profile_type.as_deref() == Some("primary");
+                }
+            }
             profiles.push(info);
         }
     }
 
-    profiles.sort_by(|a, b| a.server.cmp(&b.server).then(a.name.cmp(&b.name)));
+    // Primary first, then by server and name
+    profiles.sort_by(|a, b| {
+        b.primary.cmp(&a.primary)
+            .then(a.server.cmp(&b.server))
+            .then(a.name.cmp(&b.name))
+    });
     profiles
 }
 
@@ -118,6 +145,7 @@ fn parse_profile_filename(stem: &str) -> Option<ProfileInfo> {
         name: name.to_string(),
         server,
         stem: stem.to_string(),
+        primary: false,
     })
 }
 

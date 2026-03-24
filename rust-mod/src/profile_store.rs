@@ -34,11 +34,15 @@ struct ProfileData {
     #[serde(default, skip_serializing_if = "AuthSection::is_empty")]
     auth: AuthSection,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    factions: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     player: BTreeMap<String, toml::Value>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    factions: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    chat: BTreeMap<String, toml::Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     misc: BTreeMap<String, toml::Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    cache: BTreeMap<String, toml::Value>,
 }
 
 /// The `[profil]` section: account identity and display info.
@@ -48,6 +52,8 @@ struct ProfileData {
 /// the Registry to capture the real value.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ProfilSection {
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    profile_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     user_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +92,16 @@ struct AuthSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     s_scopely_id_password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    login_username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    login_password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    s_login_username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    s_login_password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    login_allow_association: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     scopely_id_allow_association: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     current_version: Option<i32>,
@@ -106,6 +122,11 @@ impl AuthSection {
             && self.s_adhoc_password.is_none()
             && self.s_scopely_id_username.is_none()
             && self.s_scopely_id_password.is_none()
+            && self.login_username.is_none()
+            && self.login_password.is_none()
+            && self.s_login_username.is_none()
+            && self.s_login_password.is_none()
+            && self.login_allow_association.is_none()
             && self.scopely_id_allow_association.is_none()
             && self.current_version.is_none()
     }
@@ -122,8 +143,12 @@ enum KeyRoute<'a> {
     Profil(&'a str),
     /// `[auth]` section, with the field name.
     Auth(&'a str),
+    /// `[chat]` section, stored under the original key.
+    Chat,
     /// `[misc]` section, stored under the original key.
     Misc,
+    /// `[cache]` section, stored under the original key. Serialised last.
+    Cache,
 }
 
 /// Route a PlayerPrefs key to its TOML section.
@@ -150,6 +175,15 @@ fn route_key(key: &str) -> KeyRoute<'_> {
         "saccounts/3/adhoc_password" => KeyRoute::Auth("s_adhoc_password"),
         "saccounts/3/scopely_id/username" => KeyRoute::Auth("s_scopely_id_username"),
         "saccounts/3/scopely_id/password" => KeyRoute::Auth("s_scopely_id_password"),
+        "accounts/3/login/username" => KeyRoute::Auth("login_username"),
+        "accounts/3/login/password" => KeyRoute::Auth("login_password"),
+        "accounts/3/login/allow_association" => KeyRoute::Auth("login_allow_association"),
+        "saccounts/3/login/username" => KeyRoute::Auth("s_login_username"),
+        "saccounts/3/login/password" => KeyRoute::Auth("s_login_password"),
+        // [chat]
+        "chat_tabpreference" | "recent_emojis" => KeyRoute::Chat,
+        // [cache]
+        "DownloadCacheHistoryV2" => KeyRoute::Cache,
         // [misc] (everything else)
         _ => KeyRoute::Misc,
     }
@@ -185,6 +219,29 @@ struct StoreState {
 }
 
 impl StoreState {
+    /// Whether a key can be correctly routed right now.
+    ///
+    /// Phase 1 (no `user_id`): only keys with an explicit match in
+    /// `route_key()` are routable. Keys that fall through to the `Misc`
+    /// catch-all might be uid-prefixed and we cannot tell yet.
+    /// Phase 2 (`user_id` known): everything is routable.
+    fn can_route(&self, key: &str) -> bool {
+        if self.data.profil.user_id.is_some() {
+            return true;
+        }
+        !matches!(route_key(key), KeyRoute::Misc)
+    }
+
+    /// Check if a key is a user-ID-prefixed chat key (e.g. `{uid}chatHist`).
+    ///
+    /// These keys use the user ID directly concatenated with the suffix (no colon
+    /// separator), unlike the other user-prefixed keys.
+    fn is_chat_key(&self, key: &str) -> bool {
+        let Some(uid) = self.data.profil.user_id.as_deref() else { return false };
+        if uid.is_empty() { return false; }
+        key.strip_prefix(uid).is_some_and(|suffix| suffix == "chatHist")
+    }
+
     /// Strip the user-ID prefix from a PlayerPrefs key, if present.
     ///
     /// Keys like `i9170ba...:factions_federation_pips_hide_time` have the user ID
@@ -253,6 +310,10 @@ impl StoreState {
             "s_adhoc_password" => Some(&mut self.data.auth.s_adhoc_password),
             "s_scopely_id_username" => Some(&mut self.data.auth.s_scopely_id_username),
             "s_scopely_id_password" => Some(&mut self.data.auth.s_scopely_id_password),
+            "login_username" => Some(&mut self.data.auth.login_username),
+            "login_password" => Some(&mut self.data.auth.login_password),
+            "s_login_username" => Some(&mut self.data.auth.s_login_username),
+            "s_login_password" => Some(&mut self.data.auth.s_login_password),
             _ => None,
         }
     }
@@ -272,6 +333,10 @@ impl StoreState {
             "s_adhoc_password" => Some(&self.data.auth.s_adhoc_password),
             "s_scopely_id_username" => Some(&self.data.auth.s_scopely_id_username),
             "s_scopely_id_password" => Some(&self.data.auth.s_scopely_id_password),
+            "login_username" => Some(&self.data.auth.login_username),
+            "login_password" => Some(&self.data.auth.login_password),
+            "s_login_username" => Some(&self.data.auth.s_login_username),
+            "s_login_password" => Some(&self.data.auth.s_login_password),
             _ => None,
         }
     }
@@ -298,6 +363,9 @@ impl StoreState {
 
     /// Store a string value. Returns `true` if changed.
     fn put(&mut self, key: &str, value: &str) -> bool {
+        if self.is_chat_key(key) {
+            return self.put_chat(key, toml::Value::String(value.to_string()));
+        }
         if let Some(suffix) = self.strip_user_prefix(key) {
             return self.put_player_string(suffix, value);
         }
@@ -328,7 +396,9 @@ impl StoreState {
                 self.dirty = true;
                 true
             }
+            KeyRoute::Chat => self.put_chat(key, toml::Value::String(value.to_string())),
             KeyRoute::Misc => self.put_misc(key, toml::Value::String(value.to_string())),
+            KeyRoute::Cache => self.put_cache(key, toml::Value::String(value.to_string())),
         }
     }
 
@@ -362,6 +432,14 @@ impl StoreState {
                 self.dirty = true;
                 true
             }
+            KeyRoute::Auth("login_allow_association") => {
+                if self.data.auth.login_allow_association == Some(value) { return false; }
+                self.data.auth.login_allow_association = Some(value);
+                self.dirty = true;
+                true
+            }
+            KeyRoute::Chat => self.put_chat(key, toml::Value::Integer(value as i64)),
+            KeyRoute::Cache => self.put_cache(key, toml::Value::Integer(value as i64)),
             KeyRoute::Profil(_) | KeyRoute::Auth(_) | KeyRoute::Misc => {
                 self.put_misc(key, toml::Value::Integer(value as i64))
             }
@@ -379,7 +457,11 @@ impl StoreState {
             self.dirty = true;
             return true;
         }
-        self.put_misc(key, toml::Value::Float(value as f64))
+        match route_key(key) {
+            KeyRoute::Chat => self.put_chat(key, toml::Value::Float(value as f64)),
+            KeyRoute::Cache => self.put_cache(key, toml::Value::Float(value as f64)),
+            _ => self.put_misc(key, toml::Value::Float(value as f64)),
+        }
     }
 
     /// Insert a value into `[misc]`, returning `true` if it changed.
@@ -392,10 +474,33 @@ impl StoreState {
         true
     }
 
+    /// Insert a value into `[chat]`, returning `true` if it changed.
+    fn put_chat(&mut self, key: &str, value: toml::Value) -> bool {
+        if self.data.chat.get(key).is_some_and(|v| *v == value) {
+            return false;
+        }
+        self.data.chat.insert(key.to_string(), value);
+        self.dirty = true;
+        true
+    }
+
+    /// Insert a value into `[cache]`, returning `true` if it changed.
+    fn put_cache(&mut self, key: &str, value: toml::Value) -> bool {
+        if self.data.cache.get(key).is_some_and(|v| *v == value) {
+            return false;
+        }
+        self.data.cache.insert(key.to_string(), value);
+        self.dirty = true;
+        true
+    }
+
     // ---- get methods ------------------------------------------------------
 
     /// Check whether a key has a stored value (any type).
     fn contains(&self, key: &str) -> bool {
+        if self.is_chat_key(key) {
+            return self.data.chat.contains_key(key);
+        }
         if let Some(suffix) = self.strip_user_prefix(key) {
             return self.get_player_value(suffix).is_some();
         }
@@ -409,14 +514,20 @@ impl StoreState {
             KeyRoute::Auth(field) => match field {
                 "current_version" => self.data.auth.current_version.is_some(),
                 "scopely_id_allow_association" => self.data.auth.scopely_id_allow_association.is_some(),
+                "login_allow_association" => self.data.auth.login_allow_association.is_some(),
                 _ => self.auth_field(field).is_some_and(|v| v.is_some()),
             },
+            KeyRoute::Chat => self.data.chat.contains_key(key),
             KeyRoute::Misc => self.data.misc.contains_key(key),
+            KeyRoute::Cache => self.data.cache.contains_key(key),
         }
     }
 
     /// Look up a stored string value. Returns `None` if never set.
     fn get(&self, key: &str) -> Option<&str> {
+        if self.is_chat_key(key) {
+            return self.data.chat.get(key).and_then(|v| v.as_str());
+        }
         if let Some(suffix) = self.strip_user_prefix(key) {
             return match self.get_player_value(suffix)? {
                 PlayerValue::Str(s) => Some(s),
@@ -437,9 +548,9 @@ impl StoreState {
                 // The Int value is the real one; the Registry returns "" for the String read.
                 None
             }
-            KeyRoute::Misc => {
-                self.data.misc.get(key).and_then(|v| v.as_str())
-            }
+            KeyRoute::Chat => self.data.chat.get(key).and_then(|v| v.as_str()),
+            KeyRoute::Misc => self.data.misc.get(key).and_then(|v| v.as_str()),
+            KeyRoute::Cache => self.data.cache.get(key).and_then(|v| v.as_str()),
         }
     }
 
@@ -453,7 +564,10 @@ impl StoreState {
             KeyRoute::Profil("server_instance_id") => self.data.profil.server_instance_id,
             KeyRoute::Auth("current_version") => self.data.auth.current_version,
             KeyRoute::Auth("scopely_id_allow_association") => self.data.auth.scopely_id_allow_association,
+            KeyRoute::Auth("login_allow_association") => self.data.auth.login_allow_association,
+            KeyRoute::Chat => self.data.chat.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
             KeyRoute::Misc => self.data.misc.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
+            KeyRoute::Cache => self.data.cache.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
             _ => None,
         }
     }
@@ -464,7 +578,9 @@ impl StoreState {
             return self.data.player.get(suffix).and_then(|v| v.as_float()).map(|v| v as f32);
         }
         match route_key(key) {
+            KeyRoute::Chat => self.data.chat.get(key).and_then(|v| v.as_float()).map(|v| v as f32),
             KeyRoute::Misc => self.data.misc.get(key).and_then(|v| v.as_float()).map(|v| v as f32),
+            KeyRoute::Cache => self.data.cache.get(key).and_then(|v| v.as_float()).map(|v| v as f32),
             _ => None,
         }
     }
@@ -480,7 +596,13 @@ impl StoreState {
             return self.data.player.remove(suffix).is_some();
         }
 
+        if self.data.chat.remove(key).is_some() {
+            return true;
+        }
         if self.data.misc.remove(key).is_some() {
+            return true;
+        }
+        if self.data.cache.remove(key).is_some() {
             return true;
         }
 
@@ -495,7 +617,7 @@ impl StoreState {
                     _ => false,
                 }
             }
-            KeyRoute::Auth(_) | KeyRoute::Misc => false,
+            KeyRoute::Auth(_) | KeyRoute::Chat | KeyRoute::Misc | KeyRoute::Cache => false,
         }
     }
 
@@ -623,6 +745,7 @@ where
     let state = guard.get_or_insert_with(|| {
         let mode = match std::env::var(crate::logging::PROFILE_ENV) {
             Ok(val) if val == "new_account" => ProfileMode::NewAccount,
+            Ok(val) if val == "initial" => ProfileMode::Import,
             Ok(val) if !val.is_empty() => ProfileMode::Known(val),
             _ => ProfileMode::Import,
         };
@@ -637,7 +760,7 @@ where
                         toml::from_str::<ProfileData>(&content).ok()
                     })
                 }).unwrap_or_default();
-                let key_count = data.misc.len() + data.factions.len() + data.player.len();
+                let key_count = data.misc.len() + data.chat.len() + data.cache.len() + data.factions.len() + data.player.len();
                 let current_stem = Some(stem.clone());
                 info!(target: "ProfileStore", "Loaded profile '{stem}' ({key_count} keys)");
                 StoreState {
@@ -660,20 +783,23 @@ where
             }
             ProfileMode::Import => {
                 // Try to load an existing profile, otherwise start fresh
-                if let Some((path, data)) = find_existing_profile() {
-                    let key_count = data.misc.len() + data.factions.len() + data.player.len();
+                if let Some((path, mut data)) = find_existing_profile() {
+                    let key_count = data.misc.len() + data.chat.len() + data.cache.len() + data.factions.len() + data.player.len();
+                    data.profil.profile_type = Some("primary".to_string());
                     info!(target: "ProfileStore", "Loaded profile from {} ({key_count} keys)", path.display());
                     StoreState {
                         data,
-                        dirty: false,
+                        dirty: true,
                         last_flush: Instant::now(),
                         mode,
                         current_stem: None,
                     }
                 } else {
                     debug!(target: "ProfileStore", "No profile found, importing from Registry");
+                    let mut data = ProfileData::default();
+                    data.profil.profile_type = Some("primary".to_string());
                     StoreState {
-                        data: ProfileData::default(),
+                        data,
                         dirty: false,
                         last_flush: Instant::now(),
                         mode,
@@ -723,6 +849,9 @@ where
 /// Returns `true` if the key was already known (suppress log).
 pub fn record(key: &str, value: &str) -> bool {
     store_and_flush(|state| {
+        if !state.can_route(key) {
+            return (true, None);
+        }
         let was_known = state.contains(key);
         state.put(key, value);
         (was_known, None)
@@ -741,6 +870,9 @@ pub fn get(key: &str) -> Option<String> {
 /// Record a PlayerPrefs integer value (from GET_INT or SET_INT).
 pub fn record_int(key: &str, value: i32) -> bool {
     store_and_flush(|state| {
+        if !state.can_route(key) {
+            return (true, None);
+        }
         let was_known = state.contains(key);
         state.put_int(key, value);
         (was_known, None)
@@ -757,6 +889,9 @@ pub fn get_int(key: &str) -> Option<i32> {
 /// Record a PlayerPrefs float value (from GET_FLOAT or SET_FLOAT).
 pub fn record_float(key: &str, value: f32) -> bool {
     store_and_flush(|state| {
+        if !state.can_route(key) {
+            return (true, None);
+        }
         let was_known = state.contains(key);
         state.put_float(key, value);
         (was_known, None)
@@ -781,17 +916,27 @@ pub fn delete(key: &str) {
     });
 }
 
-/// All keys are routed to the store.
-pub fn is_routed(_key: &str) -> bool {
-    true
+/// Whether a key is routed through the profile store.
+///
+/// In Phase 1 (no `user_id`), only keys with explicit routing rules are
+/// intercepted. Keys that would fall through to `[misc]` pass transparently
+/// to the original PlayerPrefs methods until `user_id` is known.
+pub fn is_routed(key: &str) -> bool {
+    with_store(|state| state.can_route(key)).unwrap_or(false)
 }
 
 /// Whether the store should block Registry fallthrough for unknown values.
 ///
 /// In `NewAccount` and `Known` modes, unknown values must NOT fall through to
-/// the Registry. Only in `Import` mode (first start) do we allow it.
+/// the Registry. Only in `Import` mode or for `primary` profiles do we allow it.
 pub fn should_block_registry() -> bool {
-    with_store(|state| state.mode != ProfileMode::Import)
+    with_store(|state| {
+        if state.mode == ProfileMode::Import {
+            return false;
+        }
+        let is_primary = state.data.profil.profile_type.as_deref() == Some("primary");
+        !is_primary
+    })
     .unwrap_or(false)
 }
 
@@ -888,8 +1033,8 @@ mod tests {
     #[test]
     fn put_misc_string() {
         let mut state = empty_state();
-        assert!(state.put("DownloadCacheHistoryV2", "data..."));
-        assert_eq!(state.data.misc["DownloadCacheHistoryV2"], toml::Value::String("data...".into()));
+        assert!(state.put("some_misc_key", "data..."));
+        assert_eq!(state.data.misc["some_misc_key"], toml::Value::String("data...".into()));
         assert!(state.dirty);
     }
 
@@ -1022,8 +1167,38 @@ mod tests {
 
         assert_eq!(parsed.profil.user_id, Some("id123".to_string()));
         assert_eq!(parsed.profil.social_username, Some("TestUser".to_string()));
-        assert_eq!(parsed.misc["DownloadCacheHistoryV2"], toml::Value::String("cache data".into()));
+        assert_eq!(parsed.cache["DownloadCacheHistoryV2"], toml::Value::String("cache data".into()));
         assert_eq!(parsed.factions["federation_pips_hide_time"], "42");
         assert_eq!(parsed.factions["klingon_pips_hide_time"], "7");
+    }
+
+    // -- Two-phase routing (can_route) --
+
+    #[test]
+    fn phase1_misc_not_routable() {
+        let state = empty_state();
+        assert!(!state.can_route("some_unknown_key"));
+        assert!(!state.can_route("i9170ba:factions_test"));
+        assert!(!state.can_route("i9170bachatHist"));
+    }
+
+    #[test]
+    fn phase1_explicit_keys_routable() {
+        let state = empty_state();
+        assert!(state.can_route("ScopelyProfile.UserId"));
+        assert!(state.can_route("selected_authentication"));
+        assert!(state.can_route("accounts/3/adhoc_username"));
+        assert!(state.can_route("chat_tabpreference"));
+        assert!(state.can_route("recent_emojis"));
+        assert!(state.can_route("DownloadCacheHistoryV2"));
+        assert!(state.can_route("accounts/3/server_instance_id"));
+    }
+
+    #[test]
+    fn phase2_everything_routable() {
+        let state = state_with_uid("abc123");
+        assert!(state.can_route("some_unknown_key"));
+        assert!(state.can_route("abc123:factions_test"));
+        assert!(state.can_route("abc123chatHist"));
     }
 }

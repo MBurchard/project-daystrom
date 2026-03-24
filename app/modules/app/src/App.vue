@@ -100,7 +100,7 @@ onUnmounted(() => {
       <button v-if="status.installed && !hasProfiles"
           :disabled="!status.can_launch || actionPending || externalGameRunning"
           class="launch-btn"
-          @click="launchGame()">
+          @click="launchGame('initial')">
         Launch Game
       </button>
 
