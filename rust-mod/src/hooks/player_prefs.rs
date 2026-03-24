@@ -108,6 +108,7 @@ fn registry_blocked() -> bool {
     profile_store::should_block_registry()
 }
 
+
 // ---- Hook callbacks -------------------------------------------------------
 
 /// Hook for `PlayerPrefs.SetString(string key, string value)`.
@@ -122,6 +123,17 @@ extern "C" fn hook_set_string(
 ) {
     let original: SetStringFn =
         unsafe { std::mem::transmute(ORIGINAL_SET_STRING.load(Relaxed)) };
+
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        unsafe { original(key, value, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            let v = display_string(value);
+            info!(target: "Trace", "SET_STRING \"{k}\" = \"{v}\"");
+        }
+        return;
+    }
 
     if !HOOK_SET.is_active() {
         unsafe { original(key, value, method_info) };
@@ -169,6 +181,19 @@ extern "C" fn hook_get_string_2(
     default_value: *mut Il2CppString,
     method_info: *const MethodInfo,
 ) -> *mut Il2CppString {
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        let original: GetString2Fn =
+            unsafe { std::mem::transmute(ORIGINAL_GET_STRING_2.load(Relaxed)) };
+        let result = unsafe { original(key, default_value, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            let v = display_string(result);
+            info!(target: "Trace", "GET_STRING/2 \"{k}\" -> \"{v}\"");
+        }
+        return result;
+    }
+
     if HOOK_GET2.is_active() {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
@@ -213,6 +238,19 @@ extern "C" fn hook_get_string_1(
     key: *mut Il2CppString,
     method_info: *const MethodInfo,
 ) -> *mut Il2CppString {
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        let original: GetString1Fn =
+            unsafe { std::mem::transmute(ORIGINAL_GET_STRING_1.load(Relaxed)) };
+        let result = unsafe { original(key, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            let v = display_string(result);
+            info!(target: "Trace", "GET_STRING/1 \"{k}\" -> \"{v}\"");
+        }
+        return result;
+    }
+
     if HOOK_GET1.is_active() {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
@@ -253,6 +291,16 @@ extern "C" fn hook_get_string_1(
 extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *const MethodInfo) {
     let original: SetIntFn = unsafe { std::mem::transmute(ORIGINAL_SET_INT.load(Relaxed)) };
 
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        unsafe { original(key, value, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            info!(target: "Trace", "SET_INT \"{k}\" = {value}");
+        }
+        return;
+    }
+
     if !HOOK_SET_INT.is_active() {
         unsafe { original(key, value, method_info) };
         return;
@@ -288,6 +336,17 @@ extern "C" fn hook_get_int(
     default_value: i32,
     method_info: *const MethodInfo,
 ) -> i32 {
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        let original: GetIntFn = unsafe { std::mem::transmute(ORIGINAL_GET_INT.load(Relaxed)) };
+        let result = unsafe { original(key, default_value, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            info!(target: "Trace", "GET_INT \"{k}\" -> {result}");
+        }
+        return result;
+    }
+
     if HOOK_GET_INT.is_active() {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
@@ -305,7 +364,7 @@ extern "C" fn hook_get_int(
 
             let known = profile_store::record_int(&k, result);
             if !known {
-                info!(target: "PlayerPrefs", "NEW GET_INT \"{k}\" -> {result}");
+                info!(target: "PlayerPrefs", "NEW GET_INT \"{k}\"");
             }
             result
         }));
@@ -322,6 +381,16 @@ extern "C" fn hook_get_int(
 /// Hook for `PlayerPrefs.SetFloat(string key, float value)`.
 extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *const MethodInfo) {
     let original: SetFloatFn = unsafe { std::mem::transmute(ORIGINAL_SET_FLOAT.load(Relaxed)) };
+
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        unsafe { original(key, value, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            info!(target: "Trace", "SET_FLOAT \"{k}\" = {value}");
+        }
+        return;
+    }
 
     if !HOOK_SET_FLOAT.is_active() {
         unsafe { original(key, value, method_info) };
@@ -358,6 +427,18 @@ extern "C" fn hook_get_float(
     default_value: f32,
     method_info: *const MethodInfo,
 ) -> f32 {
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        let original: GetFloatFn =
+            unsafe { std::mem::transmute(ORIGINAL_GET_FLOAT.load(Relaxed)) };
+        let result = unsafe { original(key, default_value, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            info!(target: "Trace", "GET_FLOAT \"{k}\" -> {result}");
+        }
+        return result;
+    }
+
     if HOOK_GET_FLOAT.is_active() {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
@@ -376,7 +457,7 @@ extern "C" fn hook_get_float(
 
             let known = profile_store::record_float(&k, result);
             if !known {
-                info!(target: "PlayerPrefs", "NEW GET_FLOAT \"{k}\" -> {result}");
+                info!(target: "PlayerPrefs", "NEW GET_FLOAT \"{k}\"");
             }
             result
         }));
@@ -395,6 +476,17 @@ extern "C" fn hook_get_float(
 /// If the key is routed and exists in the store, it returns `true` without
 /// touching the Registry. Otherwise, falls through to the original.
 extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInfo) -> i32 {
+    // Trace-only: pass through everything, log matched keys
+    if super::is_trace_only() {
+        let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
+        let result = unsafe { original(key, method_info) };
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            info!(target: "Trace", "HAS_KEY \"{k}\" -> {result}");
+        }
+        return result;
+    }
+
     if HOOK_HAS_KEY.is_active() {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let k = display_string(key);
@@ -446,6 +538,15 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
 extern "C" fn hook_delete_key(key: *mut Il2CppString, method_info: *const MethodInfo) {
     let original: DeleteKeyFn = unsafe { std::mem::transmute(ORIGINAL_DELETE_KEY.load(Relaxed)) };
     unsafe { original(key, method_info) };
+
+    // Trace-only: log matched keys, no store interaction
+    if super::is_trace_only() {
+        let k = display_string(key);
+        if super::is_trace_match(&k) {
+            info!(target: "Trace", "DELETE \"{k}\"");
+        }
+        return;
+    }
 
     if HOOK_DELETE_KEY.is_active() {
         let caught = std::panic::catch_unwind(AssertUnwindSafe(|| {
