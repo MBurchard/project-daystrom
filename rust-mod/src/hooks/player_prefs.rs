@@ -38,6 +38,71 @@ static HOOK_GET_FLOAT: HookInfo = HookInfo::new("PlayerPrefs.GetFloat");
 static HOOK_HAS_KEY: HookInfo = HookInfo::new("PlayerPrefs.HasKey");
 static HOOK_DELETE_KEY: HookInfo = HookInfo::new("PlayerPrefs.DeleteKey");
 
+// ---- HasKey suppress list --------------------------------------------------
+//
+// Keys that the game polls repeatedly but never exist. Suppressing the debug
+// log for these avoids noise without changing behaviour.
+
+/// Exact keys to suppress.
+const HASKEY_SUPPRESS: &[&str] = &[
+    "HailingFrequencies/HailingFrequenciesOngoingTutorialFlag",
+    "IsFirstTimeInNewbiesChat",
+    "NX01/NX01OngoingTutorialFlag",
+    "StarbaseDamageSeen",
+    "account_local_data",
+    "chat_forcelandscape",
+    "hailing_frequencies_no_items_message_next_show_time",
+    "hailing_frequencies_send_receive_enabled",
+    "hailing_frequencies_show_popup_on_tap_and_hold",
+    "initial_experience_completed",
+    "loading_screen_tips_key",
+    "locale_debug_mode",
+    "mission/away_team_unlock",
+    "mission/daily_goals_unlock",
+    "mission/holodeck",
+    "options/action_queue_enabled",
+    "options/allow_mission_dialogue_login",
+    "options/hard_currency_spend_confirmation",
+    "options/improve_system_view_ship_texture_setting",
+    "options/mute_music_setting",
+    "options/mute_sfx_setting",
+    "options/notification_setting",
+    "options/skip_animations",
+    "options/skip_toasts",
+    "reported_players",
+    "rtc_proxy",
+    "shop/artifact_unlock",
+    "shop/away_team_unlock",
+    "shop/consumable_unlock",
+    "shop/territory_unlock",
+];
+
+/// Key prefixes to suppress (without uid).
+const HASKEY_SUPPRESS_PREFIX: &[&str] = &[
+    "Fleet/",
+    "FleetCommander/",
+    "Playgami.",
+    "PlcPopupBundleKeyPrefix_",
+    "SP.",
+    "ToastInventoryObserver_",
+    "factions_",
+    "hud_unlock/",
+];
+
+/// Returns `true` if the HASKEY MISS log should be suppressed for this key.
+///
+/// Checks both the raw key and, for uid-prefixed keys (`{uid}:suffix`),
+/// the suffix after the colon.
+fn haskey_suppressed(key: &str) -> bool {
+    is_suppressed(key)
+        || key.split_once(':').is_some_and(|(_, suffix)| is_suppressed(suffix))
+}
+
+fn is_suppressed(key: &str) -> bool {
+    HASKEY_SUPPRESS.iter().any(|&k| k == key)
+        || HASKEY_SUPPRESS_PREFIX.iter().any(|&p| key.starts_with(p))
+}
+
 // ---- IL2CPP function signatures -------------------------------------------
 //
 // Static C# methods have no `this` pointer. IL2CPP appends a `MethodInfo*` as
@@ -504,19 +569,21 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
                     let original: HasKeyFn =
                         unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
                     let found = unsafe { original(key, method_info) };
-                    if found == 0 {
+                    if found == 0 && !haskey_suppressed(&k) {
                         debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\"");
                     }
                     return found;
                 }
-                debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\" (blocked)");
+                if !haskey_suppressed(&k) {
+                    debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\" (blocked)");
+                }
                 return 0;
             }
 
             // Unrouted (Phase 1): fall through to plist/Registry
             let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
             let found = unsafe { original(key, method_info) };
-            if found == 0 {
+            if found == 0 && !haskey_suppressed(&k) {
                 debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\"");
             }
             found
