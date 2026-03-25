@@ -275,6 +275,83 @@ fn flush_icache(addr: usize, size: usize) {
     }
 }
 
+/// Allocate writable memory within ±1GB of `target` using Mach VM region queries.
+///
+/// Scans the virtual address space for unmapped gaps between mapped regions via
+/// `mach_vm_region`, then allocates in the first suitable gap. This is the macOS
+/// equivalent of the Windows `VirtualQuery` approach: deterministic, no brute-force.
+#[cfg(target_os = "macos")]
+#[allow(dead_code)] // only used by x86_64 installation, aarch64 uses alloc_executable
+unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> {
+    const MAX_RANGE: usize = 0x4000_0000; // ±1GB
+    const GRANULARITY: usize = 0x10000; // 64KB
+    const VM_REGION_BASIC_INFO_64: i32 = 9;
+    const VM_REGION_BASIC_INFO_COUNT_64: u32 = 9;
+
+    let min_addr = target.saturating_sub(MAX_RANGE).max(GRANULARITY);
+    let max_addr = target.saturating_add(MAX_RANGE);
+    let mut scan = min_addr as u64;
+
+    while (scan as usize) < max_addr {
+        let mut region_addr = scan;
+        let mut region_size: u64 = 0;
+        let mut info = [0i32; VM_REGION_BASIC_INFO_COUNT_64 as usize];
+        let mut info_count = VM_REGION_BASIC_INFO_COUNT_64;
+        let mut object_name: u32 = 0;
+
+        let kr = unsafe {
+            mach_vm_region(
+                mach_task_self(),
+                &mut region_addr,
+                &mut region_size,
+                VM_REGION_BASIC_INFO_64,
+                info.as_mut_ptr(),
+                &mut info_count,
+                &mut object_name,
+            )
+        };
+
+        // Gap: from scan position to the next mapped region (or max_addr if none)
+        let gap_start = scan as usize;
+        let gap_end = if kr != 0 {
+            max_addr // no more mapped regions, rest is free
+        } else {
+            (region_addr as usize).min(max_addr)
+        };
+
+        // Try to allocate in this gap (aligned to granularity)
+        if gap_end > gap_start {
+            let alloc_at = (gap_start + GRANULARITY - 1) & !(GRANULARITY - 1);
+            if alloc_at + size <= gap_end {
+                let ptr = unsafe {
+                    libc::mmap(
+                        alloc_at as *mut c_void,
+                        size,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+                        -1,
+                        0,
+                    )
+                };
+                if ptr != libc::MAP_FAILED {
+                    return Ok(ptr);
+                }
+            }
+        }
+
+        if kr != 0 {
+            break; // no more regions to scan
+        }
+
+        // Advance past the current mapped region
+        scan = region_addr + region_size;
+    }
+
+    Err(format!(
+        "could not allocate {size} bytes within ±1GB of {target:#x}"
+    ))
+}
+
 /// Get the system page size.
 #[cfg(unix)]
 fn page_size() -> usize {
@@ -286,7 +363,13 @@ fn page_size() -> usize {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn mach_task_self() -> u32;
-    fn mach_vm_protect(task: u32, address: u64, size: u64, set_maximum: i32, protection: i32) -> i32;
+    fn mach_vm_protect(
+        task: u32, address: u64, size: u64, set_maximum: i32, protection: i32,
+    ) -> i32;
+    fn mach_vm_region(
+        task: u32, address: *mut u64, size: *mut u64, flavor: i32, info: *mut i32,
+        info_count: *mut u32, object_name: *mut u32,
+    ) -> i32;
     fn sys_icache_invalidate(start: *mut c_void, size: usize);
 }
 
