@@ -58,7 +58,7 @@ pub struct GameStatus {
     pub can_remove_mod: bool,
     /// Whether the updater button should be enabled.
     pub can_launch_updater: bool,
-    /// Whether quitting the app should be blocked (Daystrom-started process still running).
+    /// Whether quitting the app should be blocked (the Daystrom-started process still running).
     pub should_block_quit: bool,
     /// CSS class for the version-check checklist item: `"warn"`, `"ok"`, or `"neutral"`.
     pub version_check_class: String,

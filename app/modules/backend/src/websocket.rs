@@ -22,6 +22,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use tauri::Emitter;
 
+use crate::settings;
 use crate::use_log;
 
 use_log!("WebSocket");
@@ -83,6 +84,7 @@ pub fn start(app: tauri::AppHandle) {
     let _ = BROADCAST.set(tx.clone());
 
     tauri::async_runtime::spawn(run_server(app, tx));
+    tauri::async_runtime::spawn(forward_settings_events());
 }
 
 /// Remove the port discovery file.
@@ -94,6 +96,25 @@ pub fn cleanup() {
             let _ = fs::remove_file(path);
             log_debug!("Removed port file {}", path.display());
         }
+    }
+}
+
+// ---- Settings bridge -------------------------------------------------------
+
+/// Forward settings change events to all connected mod instances.
+///
+/// Subscribes to [`settings::subscribe`] and translates each [`SettingsEvent`] into a WebSocket
+/// `settings.update` message using the event's self-describing key/value pair.
+/// Runs indefinitely as a background task. Does not need to be modified when new settings are added.
+async fn forward_settings_events() {
+    let mut rx = settings::subscribe();
+    while let Ok(event) = rx.recv().await {
+        let mut payload = serde_json::Map::new();
+        payload.insert(event.key().to_string(), event.value());
+        send(&WsMessage {
+            msg_type: "settings.update".to_string(),
+            payload: serde_json::Value::Object(payload),
+        });
     }
 }
 
