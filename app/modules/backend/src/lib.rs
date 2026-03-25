@@ -16,6 +16,8 @@ mod settings;
 mod websocket;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
+use profile_state::get_cached_profile_state;
+use settings::{get_game_settings, set_game_settings};
 
 use_log!("Startup");
 
@@ -225,7 +227,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_cached_game_status,
-            profile_state::get_cached_profile_state,
+            get_game_settings,
+            set_game_settings,
+            get_cached_profile_state,
             launch_updater,
             prepare_mod,
             remove_mod,
