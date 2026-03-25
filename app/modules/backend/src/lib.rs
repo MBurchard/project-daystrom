@@ -13,6 +13,7 @@ mod monitor;
 mod process_origin;
 mod profile_state;
 mod settings;
+mod websocket;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
 
@@ -39,10 +40,10 @@ fn quit_blocked_message(launcher_running: bool, game_running: bool) -> Option<&'
     }
 }
 
-/// Show a warning dialog and ensure the window stays in the tray afterwards.
+/// Show a warning dialogue and ensure the window stays in the tray afterwards.
 ///
 /// Called from all quit paths (Close button, Tray menu, Cmd+Q, Dock) when
-/// [`process_origin::should_block_quit`] returns `true`. Skips the dialog when the window is
+/// [`process_origin::should_block_quit`] returns `true`. Skips the dialogue when the window is
 /// already hidden (the user already knows the app is in the tray).
 pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
     if !window.is_visible().unwrap_or(false) {
@@ -69,7 +70,7 @@ pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
 /// Derived from the number of times the user has already seen a hint.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum HintLevel {
-    /// First time: show a blocking native dialog before hiding.
+    /// First time: show a blocking native dialogue before hiding.
     Dialog,
     /// 2nd to 5th time: show a system notification after hiding.
     Notification,
@@ -90,8 +91,8 @@ fn hint_level(minimize_hint_count: u32) -> HintLevel {
 
 /// Hide a window to the system tray with progressively less intrusive hints.
 ///
-/// Uses [`hint_level`] to decide whether to show a dialog, notification, or nothing. The hint
-/// counter is incremented after each call so subsequent minimizes become less intrusive.
+/// Uses [`hint_level`] to decide whether to show a dialogue, notification, or nothing. The hint
+/// counter is incremented after each call, so subsequent minimizes become less intrusive.
 pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
     let count = settings::minimize_hint_count();
 
@@ -153,6 +154,7 @@ pub fn run() {
             }
 
             monitor::start(app.handle().clone());
+            websocket::start(app.handle().clone());
 
             // ---- System Tray --------------------------------------------------------
 
@@ -242,7 +244,7 @@ pub fn run() {
                         window.app_handle().exit(0);
                     }
                 }
-                // Windows fallback: no native hook available, detect minimize via Resized event.
+                // Windows fallback: no native hook available, detect minimizing via Resized event.
                 // On macOS the ObjC minimize guard handles this before the event fires.
                 #[cfg(not(target_os = "macos"))]
                 tauri::WindowEvent::Resized { .. } => {
@@ -272,6 +274,7 @@ pub fn run() {
                 }
                 tauri::RunEvent::Exit => {
                     log_debug!("[EVENT] Exit (app is shutting down)");
+                    websocket::cleanup();
                 }
                 _ => {}
             }
