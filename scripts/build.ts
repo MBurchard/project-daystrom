@@ -88,7 +88,10 @@ const COMMANDS: Record<string, () => void> = {
   'test:mod:coverage': testModCoverage,
   build: buildApp,
   'build:mod': buildMod,
+  'build:mod:mac-universal': buildModMacUniversal,
   'build:app': buildApp,
+  'build:app:mac-universal': buildAppMacUniversal,
+  'build:app:windows': buildAppWindows,
   icons,
   dev,
 };
@@ -321,12 +324,78 @@ function buildMod(): void {
 }
 
 /**
+ * Build a universal (ARM64 + x86_64) macOS mod library.
+ *
+ * Compiles the Rust mod for both architectures via cargo cross-compilation,
+ * then merges them with lipo. Only works on macOS (CI and local).
+ */
+function buildModMacUniversal(): void {
+  if (process.platform !== 'darwin') {
+    log.error('build:mod:mac-universal is only supported on macOS');
+    process.exit(1);
+  }
+
+  cleanModDirs();
+  mkdirSync(MOD_OUTPUT_DIR, {recursive: true});
+
+  const targets = ['aarch64-apple-darwin', 'x86_64-apple-darwin'];
+
+  for (const target of targets) {
+    log.info(`Building Rust mod for ${target}...`);
+    execSync(`cargo build --release --target ${target}`, {
+      cwd: RUST_MOD_DIR,
+      stdio: 'inherit',
+    });
+  }
+
+  const arm64Lib = join(RUST_MOD_DIR, 'target', 'aarch64-apple-darwin', 'release', 'libstfc_mod.dylib');
+  const x86Lib = join(RUST_MOD_DIR, 'target', 'x86_64-apple-darwin', 'release', 'libstfc_mod.dylib');
+  const outputLib = `lib${MOD_LIBRARY_NAME}.dylib`;
+
+  for (const dir of [MOD_OUTPUT_DIR, ...TAURI_MOD_DIRS]) {
+    mkdirSync(dir, {recursive: true});
+    const dest = join(dir, outputLib);
+    log.info(`Creating universal binary ${dest}...`);
+    execSync(`lipo -create "${arm64Lib}" "${x86Lib}" -output "${dest}"`, {
+      stdio: 'inherit',
+    });
+  }
+}
+
+/**
  * Build the Tauri app bundle (always rebuilds the mod library first).
  */
 function buildApp(): void {
   buildMod();
   log.info('Building Project Daystrom app...');
   tauri('build');
+}
+
+/**
+ * Build a universal macOS app bundle (ARM64 + x86_64).
+ *
+ * Combines the universal mod build with a Tauri universal binary build.
+ * Only works on macOS (CI and local).
+ */
+function buildAppMacUniversal(): void {
+  buildModMacUniversal();
+  log.info('Building Project Daystrom app (universal macOS)...');
+  tauri('build --target universal-apple-darwin');
+}
+
+/**
+ * Build the Windows app bundle (NSIS installer).
+ *
+ * Builds the Rust mod, then creates an NSIS installer via Tauri.
+ */
+function buildAppWindows(): void {
+  if (process.platform !== 'win32') {
+    log.error('build:app:windows is only supported on Windows');
+    process.exit(1);
+  }
+  buildMod();
+  log.info('Building Project Daystrom app (Windows NSIS)...');
+  tauri('build --bundles nsis');
 }
 
 /**
