@@ -43,6 +43,9 @@ jobs:
             app/modules/backend -> target
             rust-mod -> target
 
+      - name: Build universal mod library
+        run: pnpm build:mod:mac-universal
+
       - name: Generate Tauri icons
         run: pnpm icons
 
@@ -50,7 +53,7 @@ jobs:
         run: pnpm test:app:backend
 
       - name: Build universal macOS app
-        run: pnpm build:app:mac-universal
+        run: pnpm build:tauri:mac-universal
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v7

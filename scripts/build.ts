@@ -90,8 +90,8 @@ const COMMANDS: Record<string, () => void> = {
   'build:mod': buildMod,
   'build:mod:mac-universal': buildModMacUniversal,
   'build:app': buildApp,
-  'build:app:mac-universal': buildAppMacUniversal,
-  'build:app:windows': buildAppWindows,
+  'build:tauri:mac-universal': buildTauriMacUniversal,
+  'build:tauri:windows': buildTauriWindows,
   icons,
   dev,
 };
@@ -372,28 +372,29 @@ function buildApp(): void {
 }
 
 /**
- * Build a universal macOS app bundle (ARM64 + x86_64).
+ * Build only the Tauri universal macOS bundle (no mod build).
  *
- * Combines the universal mod build with a Tauri universal binary build.
- * Only works on macOS (CI and local).
+ * Used in CI where the mod has already been built in a prior step.
  */
-function buildAppMacUniversal(): void {
-  buildModMacUniversal();
+function buildTauriMacUniversal(): void {
+  if (process.platform !== 'darwin') {
+    log.error('build:tauri:mac-universal is only supported on macOS');
+    process.exit(1);
+  }
   log.info('Building Project Daystrom app (universal macOS)...');
   tauri('build --target universal-apple-darwin');
 }
 
 /**
- * Build the Windows app bundle (NSIS installer).
+ * Build only the Tauri Windows NSIS bundle (no mod build).
  *
- * Builds the Rust mod, then creates an NSIS installer via Tauri.
+ * Used in CI where the mod has already been built in a prior step.
  */
-function buildAppWindows(): void {
+function buildTauriWindows(): void {
   if (process.platform !== 'win32') {
-    log.error('build:app:windows is only supported on Windows');
+    log.error('build:tauri:windows is only supported on Windows');
     process.exit(1);
   }
-  buildMod();
   log.info('Building Project Daystrom app (Windows NSIS)...');
   tauri('build --bundles nsis');
 }

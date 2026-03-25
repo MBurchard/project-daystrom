@@ -60,6 +60,9 @@ jobs:
             app/modules/backend -> target
             rust-mod -> target
 
+      - name: Build mod library
+        run: pnpm build:mod
+
       - name: Generate Tauri icons
         run: pnpm icons
 
@@ -67,7 +70,7 @@ jobs:
         run: pnpm test:app:backend
 
       - name: Build Windows app
-        run: pnpm build:app:windows
+        run: pnpm build:tauri:windows
 
       # Code signing (optional, requires WINDOWS_PFX_BASE64 and WINDOWS_PFX_PASSWORD secrets)
       - name: Import code signing certificate
