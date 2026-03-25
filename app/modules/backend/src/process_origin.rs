@@ -8,6 +8,7 @@
 //! independently show whether its game instance is running.
 
 use std::collections::HashMap;
+use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -17,8 +18,12 @@ static GAME_STARTED_BY_US: AtomicBool = AtomicBool::new(false);
 /// Whether the Scopely launcher was opened via Daystrom's "Update" button.
 static LAUNCHER_STARTED_BY_US: AtomicBool = AtomicBool::new(false);
 
-/// Map of PID → profile stem for game instances launched by Daystrom.
-static LAUNCHED_PROFILES: Mutex<Option<HashMap<u32, String>>> = Mutex::new(None);
+/// Map of PID → (child handle, profile stem) for game instances launched by Daystrom.
+///
+/// Storing the [`Child`] handle allows us to call [`Child::try_wait`] to reap exited processes,
+/// preventing zombies on Unix/macOS. Without reaping, `pgrep` would still find zombie processes
+/// and report them as running.
+static LAUNCHED_PROFILES: Mutex<Option<HashMap<u32, (Child, String)>>> = Mutex::new(None);
 
 /// Mark the game as having been started by Daystrom.
 ///
@@ -53,56 +58,37 @@ pub fn is_game_started() -> bool {
     GAME_STARTED_BY_US.load(Ordering::SeqCst)
 }
 
-/// Register a launched game instance with its profile.
+/// Register a launched game instance with its child handle and profile.
 ///
 /// Called from [`crate::commands::launch_game`] after spawning the process.
-pub fn register_launch(pid: u32, profile_stem: String) {
+pub fn register_launch(child: Child, profile_stem: String) {
+    let pid = child.id();
     let mut guard = LAUNCHED_PROFILES.lock().unwrap();
     let map = guard.get_or_insert_with(HashMap::new);
-    map.insert(pid, profile_stem);
+    map.insert(pid, (child, profile_stem));
+}
+
+/// Reap zombie child processes spawned by Daystrom.
+///
+/// Calls [`Child::try_wait`] on each tracked process. Exited processes are removed from the
+/// map, which also reaps them from the kernel's process table (preventing zombies on macOS).
+/// Must be called before `pgrep`-based detection to avoid false positives.
+pub fn reap_children() {
+    let mut guard = LAUNCHED_PROFILES.lock().unwrap();
+    let Some(map) = guard.as_mut() else { return };
+    map.retain(|_, (child, _)| matches!(child.try_wait(), Ok(None)));
 }
 
 /// Return the profile stems of all game instances that are still running.
 ///
-/// Checks each tracked PID and removes dead ones. Called by the monitor
-/// every 2 seconds.
+/// Reads from the tracked process map without modifying it. Call [`reap_children`] first to
+/// ensure exited processes have been removed.
 pub fn running_profiles() -> Vec<String> {
-    let mut guard = LAUNCHED_PROFILES.lock().unwrap();
-    let Some(map) = guard.as_mut() else {
+    let guard = LAUNCHED_PROFILES.lock().unwrap();
+    let Some(map) = guard.as_ref() else {
         return Vec::new();
     };
-    map.retain(|&pid, _| is_pid_alive(pid));
-    map.values().cloned().collect()
-}
-
-/// Check whether a process with the given PID is still alive.
-#[cfg(target_os = "windows")]
-fn is_pid_alive(pid: u32) -> bool {
-    use std::process::Command;
-    Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-        .output()
-        .map(|out| {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout.contains(&pid.to_string())
-        })
-        .unwrap_or(false)
-}
-
-/// Check whether a process with the given PID is still alive.
-#[cfg(target_os = "macos")]
-fn is_pid_alive(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
-/// Check whether a process with the given PID is still alive.
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn is_pid_alive(_pid: u32) -> bool {
-    false
+    map.values().map(|(_, stem)| stem.clone()).collect()
 }
 
 // ---- Tests ----------------------------------------------------------------------
@@ -161,13 +147,18 @@ mod tests {
     }
 
     #[test]
-    fn register_and_query_profiles() {
+    fn reap_removes_exited_process() {
         let _lock = TEST_LOCK.lock().unwrap();
         reset_flags();
 
-        register_launch(99999, "106_Nabor".to_string());
-        // PID 99999 is almost certainly not alive
-        let running = running_profiles();
-        assert!(running.is_empty());
+        // Spawn a process that exits immediately
+        let child = std::process::Command::new("true").spawn().unwrap();
+        register_launch(child, "106_Nabor".to_string());
+
+        // Give it a moment to exit
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        reap_children();
+        assert!(running_profiles().is_empty());
     }
 }

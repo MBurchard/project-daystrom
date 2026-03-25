@@ -94,7 +94,7 @@ fn haskey_suppressed(key: &str) -> bool {
 }
 
 fn is_suppressed(key: &str) -> bool {
-    HASKEY_SUPPRESS.iter().any(|&k| k == key)
+    HASKEY_SUPPRESS.contains(&key)
         || HASKEY_SUPPRESS_PREFIX.iter().any(|&p| key.starts_with(p))
 }
 

@@ -104,10 +104,10 @@ fn log_player_info(profile: *mut Il2CppObject) {
     // Keep the profile store in sync with the live player name.
     // This catches in-game renames that don't go through PlayerPrefs.
     // Skip in trace-only mode (no store active).
-    if !super::is_trace_only() {
-        if let Some(ref name) = name {
-            crate::profile_store::record("social_username", name);
-        }
+    if !super::is_trace_only()
+        && let Some(ref name) = name
+    {
+        crate::profile_store::record("social_username", name);
     }
 
     log::info!(
