@@ -207,6 +207,8 @@ pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     let library = resource_dir.join(format!("mod/lib{MOD_LIBRARY_NAME}.dylib"));
     #[cfg(target_os = "windows")]
     let library = resource_dir.join(format!("mod/{MOD_LIBRARY_NAME}.dll"));
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    return None;
 
     if library.exists() {
         Some(library)

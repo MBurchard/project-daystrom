@@ -1,5 +1,7 @@
 use std::path::Path;
-use std::process::{Child, Command};
+use std::process::Child;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::process::Command;
 
 use super::GameInfo;
 use crate::use_log;
@@ -114,9 +116,8 @@ pub fn open_updater() -> Result<(), String> {
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        return Err("Opening the launcher is not supported on this platform".to_string());
-    }
+    return Err("Opening the launcher is not supported on this platform".to_string());
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     Ok(())
 }
