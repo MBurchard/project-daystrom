@@ -5,40 +5,39 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?logo=gnu&logoColor=white)](https://www.gnu.org/licenses/gpl-3.0)
 [![CI](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml/badge.svg)](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml)
 
-An assistant app and extended mod for [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command),
-built on top of the [STFC Community Mod](https://github.com/netniV/stfc-mod) by netniV and contributors.
-
-## Acknowledgements
-
-This project would not exist without the work of [netniV](https://github.com/netniV),
-[tashcan](https://github.com/tashcan), and the entire STFC Community Mod team. The mod code in `stfc-mod/`
-is imported from [netniV/stfc-mod](https://github.com/netniV/stfc-mod) and kept as close to upstream
-as practical, so that improvements can be shared with the community.
+A companion app and custom game mod for
+[Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command) on macOS and Windows.
 
 ## What is this?
 
-Project Daystrom picks up where the Community Mod leaves off. The mod already provides essential quality-of-life
-improvements — hotkeys, UI tweaks, zoom presets, data sync, and more. Project Daystrom builds on that foundation
-and adds:
+Project Daystrom is a native desktop app with an integrated game mod for STFC. The mod is built entirely in Rust
+with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP runtime directly.
 
-- **A native app** (Tauri 2 + Vue 3) that runs alongside the game on macOS and Windows
-- **A cross-platform launcher** replacing the platform-specific launchers (Swift on macOS,
-  proxy DLL on Windows) with a single unified solution that handles entitlement patching,
-  mod injection, and game launch
-- **Game update detection** via the Scopely update API, with in-app update prompts
-- **Process monitoring** that automatically detects game and launcher activity
+**Key features:**
+
+- **Multi-account support** on Windows and macOS. Each account gets its own TOML-based profile; switching is a
+  single click in the launcher. Profiles are portable across platforms.
+- **Native cross-platform app** (Tauri 2 + Vue 3) running alongside the game
+- **Unified launcher** replacing platform-specific solutions with a single approach: entitlement patching on macOS,
+  DLL proxy injection on Windows, game lifecycle management on both
+- **Game update detection** via the Scopely update API with in-app prompts
+- **Process monitoring** with automatic detection of game and launcher activity
 - **System tray integration** with minimize-to-tray and quit protection
-- **Dashboard, alerts, and advisor plugins** (planned) for live fleet overview, event
-  notifications, and upgrade recommendations
+- **Dashboard, alerts, and advisor plugins** (planned)
 
-The mod code lives in `stfc-mod/` and is kept in sync with the upstream Community Mod. Improvements and bug
-fixes flow both ways — anything useful to the broader community gets contributed back.
+## Acknowledgements
+
+This project was originally inspired by the [STFC Community Mod](https://github.com/netniV/stfc-mod) by
+[netniV](https://github.com/netniV), [tashcan](https://github.com/tashcan), and contributors. The legacy C++ mod
+code is kept in `stfc-mod/` as reference. Daystrom has since moved to its own Rust-based mod with a custom hook
+engine and profile system.
 
 ## Built with
 
-- [Tauri 2](https://tauri.app/) (Rust backend)
+- [Tauri 2](https://tauri.app/) (Rust backend + native shell)
 - [Vue 3](https://vuejs.org/) + [Vite](https://vite.dev/) (frontend)
 - [@mburchard/bit-log](https://www.npmjs.com/package/@mburchard/bit-log) (structured logging)
+- Custom IL2CPP hook engine in Rust (ARM64 + x86_64)
 
 ## Project Structure
 
@@ -51,12 +50,12 @@ project-daystrom/
 ├── scripts/                # Build and tooling scripts
 │   ├── build.ts            #   Mod + app build orchestration
 │   └── package.json        #   Script dependencies
-├── stfc-mod/               # STFC Community Mod (from netniV/stfc-mod)
-│   ├── mods/               #   Mod patches (C++23, IL2CPP hooks)
-│   ├── macos-launcher/     #   Original Swift launcher (being replaced)
-│   ├── macos-dylib/        #   macOS injection helper
-│   ├── win-proxy-dll/      #   Windows proxy DLL loader
-│   └── xmake.lua           #   Build configuration
+├── rust-mod/               # Daystrom game mod (Rust, cdylib)
+│   ├── src/hook/           #   Hook engine (inline hooks, ARM64 + x86_64)
+│   ├── src/hooks/          #   IL2CPP hook implementations
+│   ├── src/il2cpp/         #   IL2CPP runtime bindings
+│   └── Cargo.toml          #   Crate config
+├── stfc-mod/               # STFC Community Mod (legacy, kept as reference)
 ├── app/                    # Project Daystrom app (Tauri 2 + Vue 3)
 │   ├── modules/
 │   │   ├── app/            #   Vue 3 frontend
@@ -72,8 +71,6 @@ project-daystrom/
 - [Node.js](https://nodejs.org/) >= 24
 - [pnpm](https://pnpm.io/) >= 10
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
-- [XMake](https://xmake.io/) (for building the mod)
-- [CMake](https://cmake.org/) (required by xmake to build C++ dependencies like spud)
 
 ### macOS
 
@@ -84,8 +81,12 @@ project-daystrom/
 
 - **Visual Studio Build Tools 2022** (or VS Community) — workload "Desktop development with C++"
   including a **Windows SDK** (not installed by default!)
-- xmake: `irm https://xmake.io/psget.text | iex` in PowerShell
 - Rust: standard installation via [rustup-init.exe](https://rustup.rs/) (option 1 selects MSVC toolchain)
+
+### Legacy C++ mod (optional)
+
+Building the original Community Mod in `stfc-mod/` additionally requires
+[XMake](https://xmake.io/) and [CMake](https://cmake.org/).
 
 ## Setup
 
@@ -98,16 +99,13 @@ All commands run from the **workspace root** unless noted otherwise.
 
 ## Building the mod
 
-The mod code lives in `stfc-mod/` and produces a shared library that gets injected into the game
-(`libstfc-community-patch.dylib` on macOS, `stfc-community-patch.dll` on Windows).
+The Rust mod in `rust-mod/` produces a shared library that gets injected into the game at launch.
 
 ```sh
 pnpm build:mod
 ```
 
-This configures xmake for the current platform, builds only the mod target (`stfc-community-patch`),
-and copies the result to `app/resources/mod/`. The full `xmake build` would also try to build the
-original Swift launcher, which we don't need — Project Daystrom replaces it.
+This compiles the mod for the current platform and copies the result to `app/resources/mod/`.
 
 ## Scripts
 
