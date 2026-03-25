@@ -173,6 +173,10 @@ fn run_loop(app: tauri::AppHandle) {
             crate::profile_state::update(&app, |s| s.profiles = profiles);
             last_profile_scan = Instant::now();
         }
+        // Reap zombie child processes before checking process status.
+        // Without this, pgrep would find zombies and report them as running.
+        crate::process_origin::reap_children();
+
         let game = game::is_game_running();
         let launcher = game::is_launcher_running();
 

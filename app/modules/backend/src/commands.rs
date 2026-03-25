@@ -389,9 +389,9 @@ pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(),
         }
     }
 
-    let pid = game::launcher::launch(&info, &mod_library, profile.as_deref())?;
+    let child = game::launcher::launch(&info, &mod_library, profile.as_deref())?;
     let profile_stem = profile.unwrap_or_default();
-    crate::process_origin::register_launch(pid, profile_stem);
+    crate::process_origin::register_launch(child, profile_stem);
     crate::process_origin::mark_game_started();
     crate::game_state::update(&app, |s| {
         s.game_started_by_us = true;

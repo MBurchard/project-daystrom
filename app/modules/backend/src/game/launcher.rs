@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command};
 
 use super::GameInfo;
 use crate::use_log;
@@ -15,7 +15,7 @@ const LAUNCHER_APP: &str = "/Applications/Star Trek Fleet Command.app";
 /// The child process is spawned but not awaited — the game runs independently of Project Daystrom.
 /// Returns an error if the game is already running or the process fails to spawn.
 #[cfg(target_os = "macos")]
-pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<u32, String> {
+pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<Child, String> {
     let lib_dir = mod_library
         .parent()
         .ok_or_else(|| "Could not determine mod library directory".to_string())?;
@@ -35,9 +35,8 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
         "Failed to launch game (see log for details)".to_string()
     })?;
 
-    let pid = child.id();
-    log_info!("Game process spawned (PID {pid})");
-    Ok(pid)
+    log_info!("Game process spawned (PID {})", child.id());
+    Ok(child)
 }
 
 /// Launch the game on Windows with automatic mod DLL deployment.
@@ -51,7 +50,7 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
 /// - `Some("106_Nabor")`: known profile
 /// - `Some("new_account")`: new account mode
 #[cfg(target_os = "windows")]
-pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<u32, String> {
+pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Result<Child, String> {
     // Auto-deploy: copy the bundled DLL if missing or outdated
     match super::check_mod_deployment(&game.install_dir, mod_library) {
         super::ModDeploymentState::UpToDate => {}
@@ -74,14 +73,13 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
         "Failed to launch game (see log for details)".to_string()
     })?;
 
-    let pid = child.id();
-    log_info!("Game process spawned (PID {pid})");
-    Ok(pid)
+    log_info!("Game process spawned (PID {})", child.id());
+    Ok(child)
 }
 
 /// Stub — game launching is not yet supported on this platform.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn launch(_game: &GameInfo, _mod_library: &Path, _profile: Option<&str>) -> Result<u32, String> {
+pub fn launch(_game: &GameInfo, _mod_library: &Path, _profile: Option<&str>) -> Result<Child, String> {
     Err("Game launching is not yet supported on this platform".to_string())
 }
 
