@@ -25,6 +25,9 @@
     "build": "node scripts/build.ts build",
     "build:app": "node scripts/build.ts build:app",
     "build:mod": "node scripts/build.ts build:mod",
+    "build:mod:mac-universal": "node scripts/build.ts build:mod:mac-universal",
+    "build:app:mac-universal": "node scripts/build.ts build:app:mac-universal",
+    "build:app:windows": "node scripts/build.ts build:app:windows",
     "icons": "node scripts/build.ts icons",
     "dev": "node scripts/build.ts dev"
   },

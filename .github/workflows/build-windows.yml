@@ -56,24 +56,9 @@ jobs:
       - name: Cache Cargo artefacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app/modules/backend -> target
-
-      - name: Set up xmake
-        uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: latest
-
-      - name: Build mod DLL (x64)
-        working-directory: stfc-mod
-        run: |
-          xmake f -p windows -a x64 -m release -y
-          xmake build -y stfc-community-patch
-
-      - name: Copy mod DLL to resources
-        run: |
-          New-Item -ItemType Directory -Force -Path app/resources/mod
-          Copy-Item stfc-mod/build/windows/x64/release/stfc-community-patch.dll app/resources/mod/
-        shell: pwsh
+          workspaces: |
+            app/modules/backend -> target
+            rust-mod -> target
 
       - name: Generate Tauri icons
         run: pnpm icons
@@ -81,11 +66,8 @@ jobs:
       - name: Generate TypeScript bindings (ts-rs)
         run: pnpm test:app:backend
 
-      - name: Build Tauri app (NSIS only)
-        run: pnpm exec tauri build --bundles nsis
-        working-directory: app
-        env:
-          TAURI_APP_PATH: ${{ github.workspace }}/app/modules/backend
+      - name: Build Windows app
+        run: pnpm build:app:windows
 
       # Code signing (optional, requires WINDOWS_PFX_BASE64 and WINDOWS_PFX_PASSWORD secrets)
       - name: Import code signing certificate
