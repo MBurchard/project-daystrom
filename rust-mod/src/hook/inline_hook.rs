@@ -25,7 +25,7 @@ const HOOK_SIZE: usize = 14;
 /// - This function is not thread-safe: the target function must not be executing on another
 ///   thread while the hook is being installed.
 ///
-/// ARM64 instructions are decoded and PC-relative references (ADRP, ADR, B, LDR literal, etc.)
+/// ARM64 instructions are decoded, and PC-relative references (ADRP, ADR, B, LDR literal, etc.)
 /// are relocated so the trampoline computes the same absolute addresses as the original code.
 /// On x86_64, instructions are decoded and RIP-relative references are relocated.
 #[cfg(target_arch = "aarch64")]
@@ -60,7 +60,7 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
         unsafe { dst.write(relocated) };
     }
 
-    // Write branch back to the instruction after our hook patch
+    // Write the branch back to the instruction after our hook patch
     unsafe { write_branch(trampoline_addr + HOOK_SIZE, target_addr + HOOK_SIZE) };
 
     // Make trampoline executable
@@ -206,13 +206,14 @@ unsafe fn write_branch(addr: usize, target: usize) {
 }
 
 
-// ---- Platform: macOS (ARM64 + x86_64) -------------------------------------
+// ---- Platform: Unix (macOS + Linux) ----------------------------------------
 
 /// Allocate writable memory via `mmap` for code that will be made executable later.
 ///
-/// Apple Silicon enforces W^X at the hardware level: a page cannot be both writable and executable
-/// in the same thread. We allocate as RW first, write the trampoline code, then switch to RX.
-#[cfg(target_os = "macos")]
+/// Pages are allocated as RW first, then switched to RX after writing trampoline code.
+/// On Apple Silicon, this also satisfies the hardware W^X requirement.
+#[cfg(unix)]
+#[allow(dead_code)] // only used by aarch64 installation, x86_64 uses alloc_near
 unsafe fn alloc_executable(size: usize) -> Result<*mut c_void, String> {
     let ptr = unsafe {
         libc::mmap(
@@ -275,18 +276,129 @@ fn flush_icache(addr: usize, size: usize) {
 }
 
 /// Get the system page size.
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-// ---- macOS FFI declarations -----------------------------------------------
+// ---- Platform: macOS-specific FFI -----------------------------------------
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn mach_task_self() -> u32;
     fn mach_vm_protect(task: u32, address: u64, size: u64, set_maximum: i32, protection: i32) -> i32;
     fn sys_icache_invalidate(start: *mut c_void, size: usize);
+}
+
+// ---- Platform: Linux ------------------------------------------------------
+
+/// Allocate executable memory within ±1GB of `target` using mmap address hints.
+///
+/// Scans outward from the target in 64KB steps. Linux usually honours the hint, but if the
+/// returned address falls outside the required range, we unmap and try the next slot.
+#[cfg(target_os = "linux")]
+unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> {
+    const MAX_RANGE: usize = 0x4000_0000; // ±1GB
+    const GRANULARITY: usize = 0x10000; // 64KB
+
+    let min_addr = target.saturating_sub(MAX_RANGE).max(GRANULARITY);
+    let max_addr = target.saturating_add(MAX_RANGE);
+
+    let mut hint = target.saturating_sub(MAX_RANGE / 2) & !(GRANULARITY - 1);
+    while hint < max_addr {
+        if hint < min_addr {
+            hint = min_addr;
+        }
+        let ptr = unsafe {
+            libc::mmap(
+                hint as *mut c_void,
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if ptr != libc::MAP_FAILED {
+            let addr = ptr as usize;
+            if addr >= min_addr && addr + size <= max_addr {
+                return Ok(ptr);
+            }
+            unsafe { libc::munmap(ptr, size) };
+        }
+        hint += GRANULARITY;
+    }
+
+    Err(format!(
+        "could not allocate {size} bytes within ±1GB of {target:#x}"
+    ))
+}
+
+/// Make a memory region writable using `mprotect`.
+#[cfg(target_os = "linux")]
+unsafe fn make_writable(addr: usize, size: usize) -> Result<(), String> {
+    let page_size = page_size();
+    let page_start = addr & !(page_size - 1);
+    let page_end = (addr + size + page_size - 1) & !(page_size - 1);
+    let region_size = page_end - page_start;
+
+    let ret = unsafe {
+        libc::mprotect(
+            page_start as *mut c_void,
+            region_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+        )
+    };
+    if ret != 0 {
+        return Err(format!(
+            "mprotect (writable) failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// Restore a memory region to read-execute using `mprotect`.
+#[cfg(target_os = "linux")]
+unsafe fn make_executable(addr: usize, size: usize) -> Result<(), String> {
+    let page_size = page_size();
+    let page_start = addr & !(page_size - 1);
+    let page_end = (addr + size + page_size - 1) & !(page_size - 1);
+    let region_size = page_end - page_start;
+
+    let ret = unsafe {
+        libc::mprotect(
+            page_start as *mut c_void,
+            region_size,
+            libc::PROT_READ | libc::PROT_EXEC,
+        )
+    };
+    if ret != 0 {
+        return Err(format!(
+            "mprotect (executable) failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// Flush the instruction cache.
+///
+/// No-op on x86_64 (coherent I-cache). On aarch64, uses the GCC/LLVM built-in `__clear_cache`.
+#[cfg(target_os = "linux")]
+fn flush_icache(_addr: usize, _size: usize) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe extern "C" {
+            fn __clear_cache(start: *mut c_void, end: *mut c_void);
+        }
+        unsafe {
+            __clear_cache(
+                _addr as *mut c_void,
+                (_addr + _size) as *mut c_void,
+            );
+        }
+    }
 }
 
 // ---- Platform: Windows (x86_64) -------------------------------------------
@@ -336,7 +448,7 @@ unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> 
     const GRANULARITY: usize = 0x10000; // 64KB Windows allocation granularity
     // 1GB range leaves ~1GB headroom for RIP-relative offsets within the target module
     const MAX_RANGE: usize = 0x4000_0000;
-    let mbi_size = std::mem::size_of::<MemBasicInfo>();
+    let mbi_size = size_of::<MemBasicInfo>();
 
     let min_addr = target.saturating_sub(MAX_RANGE).max(GRANULARITY);
     let max_addr = target.saturating_add(MAX_RANGE);
