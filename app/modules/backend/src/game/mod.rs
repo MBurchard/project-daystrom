@@ -210,6 +210,7 @@ pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     return None;
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     if library.exists() {
         Some(library)
     } else {
