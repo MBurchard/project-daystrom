@@ -152,7 +152,10 @@ mod tests {
         reset_flags();
 
         // Spawn a process that exits immediately
+        #[cfg(unix)]
         let child = std::process::Command::new("true").spawn().unwrap();
+        #[cfg(windows)]
+        let child = std::process::Command::new("cmd").args(["/C", "exit", "0"]).spawn().unwrap();
         register_launch(child, "106_Nabor".to_string());
 
         // Give it a moment to exit
