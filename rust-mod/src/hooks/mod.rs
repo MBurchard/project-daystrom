@@ -1,5 +1,6 @@
 use log::debug;
 
+mod hotkeys;
 pub mod il2cpp_init;
 mod player_prefs;
 pub(crate) mod ui_scale;
@@ -36,6 +37,7 @@ pub fn install_all_hooks() {
     user_profile::install(api);
     player_prefs::install(api);
     ui_scale::install(api);
+    hotkeys::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }
