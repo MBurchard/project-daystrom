@@ -276,18 +276,18 @@ pub fn get_game_settings() -> GameSettings {
 /// The disk write is debounced so rapid slider movements do not flood the filesystem.
 /// Only changed fields trigger [`SettingsEvent`] emissions.
 #[tauri::command]
-pub fn set_game_settings(new: GameSettings) {
+pub fn set_game_settings(settings: GameSettings) {
     let events = {
         let mut s = SETTINGS.lock().unwrap();
-        if s.game == new {
+        if s.game == settings {
             return;
         }
         let old = s.game.clone();
-        s.game = new.clone();
+        s.game = settings.clone();
 
         let mut events = Vec::new();
-        if new.ui.scale != old.ui.scale {
-            events.push(SettingsEvent::GameUiScale(new.ui.scale));
+        if settings.ui.scale != old.ui.scale {
+            events.push(SettingsEvent::GameUiScale(settings.ui.scale));
         }
         events
     };

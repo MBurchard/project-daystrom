@@ -1,6 +1,7 @@
 import type {GameSettings} from '@generated/GameSettings';
+
+import {getGameSettings, setGameSettings} from '@app/commands/settings';
 import {getLogger} from '@app/log';
-import {invoke} from '@tauri-apps/api/core';
 import {ref} from 'vue';
 
 const log = getLogger('Settings');
@@ -15,7 +16,7 @@ const settings = ref<GameSettings>({ui: {scale: 100}});
  * Composable for game settings that are sent to the mod.
  *
  * Reads all settings from the backend on init and sends the full settings object on every change.
- * The backend diffs against the current state, persists changes and broadcasts them to connected
+ * The backend diffs against the current state, persists changes, and broadcasts them to connected
  * mods via WebSocket.
  */
 export function useSettings() {
@@ -25,7 +26,7 @@ export function useSettings() {
    * Called once during app startup to synchronize the UI with persisted values.
    */
   function init() {
-    invoke<GameSettings>('get_game_settings')
+    getGameSettings()
       .then((value) => {
         settings.value = value;
         log.debug(`Loaded game settings: ${JSON.stringify(value)}`);
@@ -42,7 +43,7 @@ export function useSettings() {
    * fields that actually changed.
    */
   function save() {
-    invoke('set_game_settings', {settings: settings.value})
+    setGameSettings(settings.value)
       .catch((err: unknown) => {
         log.error(`Failed to save game settings: ${err}`);
       });
