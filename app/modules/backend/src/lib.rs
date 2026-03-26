@@ -52,6 +52,11 @@ pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
         log_debug!("Quit blocked silently (window already hidden)");
         return;
     }
+    if hint_level(settings::minimize_hint_count()) == HintLevel::Silent {
+        log_debug!("Quit blocked silently (hint level: silent)");
+        let _ = window.hide();
+        return;
+    }
     let status = game_state::get();
     let Some(message) = quit_blocked_message(
         status.launcher_started_by_us,
