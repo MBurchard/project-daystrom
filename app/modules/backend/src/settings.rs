@@ -727,7 +727,8 @@ mod tests {
         let ws = get_window_settings().expect("should have window settings");
         assert_eq!((ws.x, ws.y, ws.width, ws.height, ws.maximized), (100, 200, 800, 600, false));
 
-        // Clean up
+        // Wait for debounced save thread to complete before cleanup.
+        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
@@ -746,7 +747,8 @@ mod tests {
         assert_eq!(ws.maximized, true);
         assert_eq!((ws.x, ws.y, ws.width, ws.height), (100, 200, 800, 600));
 
-        // Clean up
+        // Wait for debounced save thread to complete before cleanup.
+        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
@@ -763,7 +765,8 @@ mod tests {
         let ws = get_window_settings().unwrap();
         assert_eq!((ws.width, ws.height), (800, 600));
 
-        // Clean up
+        // Wait for debounced save thread to complete before cleanup.
+        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
@@ -783,7 +786,8 @@ mod tests {
         });
         assert!(!changed);
 
-        // Clean up
+        // Wait for debounced save thread to complete before cleanup.
+        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
