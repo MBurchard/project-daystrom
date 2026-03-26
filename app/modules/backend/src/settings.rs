@@ -74,12 +74,35 @@ pub struct HintSettings {
     pub minimize_to_tray: u32,
 }
 
+/// Saved window position and size (logical pixels, display-independent).
+///
+/// Stored under `[ui.window]` in the settings file. Physical pixel values from Tauri events are divided by the
+/// scale factor before storage. When the window is maximized, the normal (pre-maximized) bounds are preserved so
+/// the window can be restored to its previous position.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WindowSettings {
+    /// Horizontal position of the window's top-left corner.
+    pub x: i32,
+    /// Vertical position of the window's top-left corner.
+    pub y: i32,
+    /// Window width.
+    pub width: u32,
+    /// Window height.
+    pub height: u32,
+    /// Whether the window was maximized when last seen.
+    #[serde(default)]
+    pub maximized: bool,
+}
+
 /// UI-related settings for the Daystrom app itself.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UiSettings {
     /// Progressive hint counters.
     #[serde(default)]
     pub hints: HintSettings,
+    /// Saved window geometry (absent on first launch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowSettings>,
 }
 
 /// UI settings that are sent to the game mod via WebSocket.
@@ -126,6 +149,7 @@ pub struct AppSettings {
 static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
     ui: UiSettings {
         hints: HintSettings { minimize_to_tray: 0 },
+        window: None,
     },
     game: GameSettings {
         ui: GameUiSettings { scale: 100 },
@@ -262,6 +286,41 @@ pub fn increment_minimize_hint() {
     });
 }
 
+// ---- Window settings API --------------------------------------------------------
+
+/// Return the saved window geometry, if any.
+///
+/// Returns `None` on the first launch (no `[ui.window]` section in the settings file).
+pub fn get_window_settings() -> Option<WindowSettings> {
+    SETTINGS.lock().unwrap().ui.window.clone()
+}
+
+/// Save the current window geometry (debounced).
+///
+/// When `maximized` is true, the previous normal bounds are preserved so the window can be restored
+/// to its pre-maximized position. Calls with zero width or height (minimized) are ignored.
+pub fn save_window_state(x: i32, y: i32, width: u32, height: u32, maximized: bool) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    update(|s| {
+        let new = if maximized {
+            // Preserve the last known normal bounds, only flip the flag.
+            let prev = s.ui.window.clone().unwrap_or(WindowSettings {
+                x, y, width, height, maximized: false,
+            });
+            WindowSettings { maximized: true, ..prev }
+        } else {
+            WindowSettings { x, y, width, height, maximized: false }
+        };
+        let changed = s.ui.window.as_ref() != Some(&new);
+        if changed {
+            s.ui.window = Some(new);
+        }
+        changed
+    });
+}
+
 // ---- Game settings API ----------------------------------------------------------
 
 /// Return the current game settings.
@@ -346,7 +405,10 @@ mod tests {
 
     #[test]
     fn serde_round_trip() {
-        let settings = AppSettings { ui: UiSettings { hints: HintSettings { minimize_to_tray: 42 } }, ..Default::default() };
+        let settings = AppSettings {
+            ui: UiSettings { hints: HintSettings { minimize_to_tray: 42 }, window: None },
+            ..Default::default()
+        };
         let toml_str = toml::to_string_pretty(&settings).unwrap();
         let parsed: AppSettings = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.ui.hints.minimize_to_tray, 42);
@@ -457,7 +519,7 @@ mod tests {
         let path = use_temp_path("save_load_rt");
 
         let original = AppSettings {
-            ui: UiSettings { hints: HintSettings { minimize_to_tray: 99 } },
+            ui: UiSettings { hints: HintSettings { minimize_to_tray: 99 }, window: None },
             ..Default::default()
         };
         *SETTINGS.lock().unwrap() = original.clone();
@@ -626,6 +688,125 @@ mod tests {
         assert!(!_path.exists(), "no write expected when nothing changed");
 
         // Clean up
+        reset_path_override();
+    }
+
+    // -- Window settings --
+
+    #[test]
+    fn window_settings_none_by_default() {
+        let settings = AppSettings::default();
+        assert!(settings.ui.window.is_none());
+    }
+
+    #[test]
+    fn window_settings_serde_round_trip() {
+        let toml_str = "[ui.window]\nx = 100\ny = 200\nwidth = 1024\nheight = 768\nmaximized = false\n";
+        let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        let ws = parsed.ui.window.as_ref().unwrap();
+        assert_eq!((ws.x, ws.y, ws.width, ws.height, ws.maximized), (100, 200, 1024, 768, false));
+
+        let serialized = toml::to_string_pretty(&parsed).unwrap();
+        assert!(serialized.contains("[ui.window]"));
+        assert!(serialized.contains("x = 100"));
+    }
+
+    #[test]
+    fn window_settings_omitted_when_none() {
+        let settings = AppSettings::default();
+        let serialized = toml::to_string_pretty(&settings).unwrap();
+        assert!(!serialized.contains("[ui.window]"));
+    }
+
+    #[test]
+    fn save_window_state_stores_bounds() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let _path = use_temp_path("window_bounds");
+
+        save_window_state(100, 200, 800, 600, false);
+        let ws = get_window_settings().expect("should have window settings");
+        assert_eq!((ws.x, ws.y, ws.width, ws.height, ws.maximized), (100, 200, 800, 600, false));
+
+        // Clean up
+        SETTINGS.lock().unwrap().ui.window = None;
+        reset_path_override();
+    }
+
+    #[test]
+    fn save_window_state_maximized_preserves_bounds() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let _path = use_temp_path("window_maximized");
+
+        // Set normal bounds first
+        save_window_state(100, 200, 800, 600, false);
+        // Maximize: bounds should be preserved from previous state
+        save_window_state(0, 0, 1920, 1080, true);
+
+        let ws = get_window_settings().unwrap();
+        assert_eq!(ws.maximized, true);
+        assert_eq!((ws.x, ws.y, ws.width, ws.height), (100, 200, 800, 600));
+
+        // Clean up
+        SETTINGS.lock().unwrap().ui.window = None;
+        reset_path_override();
+    }
+
+    #[test]
+    fn save_window_state_ignores_zero_size() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let _path = use_temp_path("window_zero");
+
+        save_window_state(100, 200, 800, 600, false);
+        // Minimized window (size 0) should not overwrite
+        save_window_state(0, 0, 0, 0, false);
+
+        let ws = get_window_settings().unwrap();
+        assert_eq!((ws.width, ws.height), (800, 600));
+
+        // Clean up
+        SETTINGS.lock().unwrap().ui.window = None;
+        reset_path_override();
+    }
+
+    #[test]
+    fn save_window_state_unchanged_skips_save() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let _path = use_temp_path("window_noop");
+
+        save_window_state(100, 200, 800, 600, false);
+        // Same values again: should not trigger a disk write
+        let changed = update(|s| {
+            let new = WindowSettings { x: 100, y: 200, width: 800, height: 600, maximized: false };
+            let changed = s.ui.window.as_ref() != Some(&new);
+            if changed { s.ui.window = Some(new); }
+            changed
+        });
+        assert!(!changed);
+
+        // Clean up
+        SETTINGS.lock().unwrap().ui.window = None;
+        reset_path_override();
+    }
+
+    #[test]
+    fn window_settings_disk_round_trip() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let path = use_temp_path("window_disk_rt");
+
+        save_window_state(476, 412, 1329, 915, false);
+        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[ui.window]"));
+        assert!(content.contains("x = 476"));
+        assert!(content.contains("width = 1329"));
+
+        let loaded = load_from(&path);
+        let ws = loaded.ui.window.expect("should have window section");
+        assert_eq!((ws.x, ws.y, ws.width, ws.height), (476, 412, 1329, 915));
+
+        // Clean up
+        SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
 
