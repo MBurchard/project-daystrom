@@ -58,7 +58,10 @@ pub fn get_scale() -> u32 {
 /// Replace all settings with a full snapshot from Daystrom (`settings.sync`).
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
-    *state().lock().unwrap() = settings;
+    // Scoped block: release the Mutex before apply_current_scale(),
+    // which calls get_scale() and would deadlock on the same lock.
+    { *state().lock().unwrap() = settings; }
+    crate::hooks::ui_scale::apply_current_scale();
 }
 
 /// Patch individual settings from an incremental update (`settings.update`).
@@ -71,6 +74,10 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             if let Some(scale) = value.as_u64().map(|v| v as u32) {
                 debug!(target: "Settings", "Update: game.ui.scale = {scale}");
                 s.ui.scale = scale;
+                // Release the Mutex before apply_current_scale(),
+                // which calls get_scale() and would deadlock on the same lock.
+                drop(s);
+                crate::hooks::ui_scale::apply_current_scale();
             }
         }
         other => {
