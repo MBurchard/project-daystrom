@@ -152,6 +152,21 @@ pub fn run() {
 
             settings::load();
 
+            // Restore saved window position and size (stored as logical pixels).
+            if let Some(ws) = settings::get_window_settings() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_position(
+                        tauri::LogicalPosition::new(ws.x as f64, ws.y as f64),
+                    );
+                    let _ = window.set_size(
+                        tauri::LogicalSize::new(ws.width as f64, ws.height as f64),
+                    );
+                    if ws.maximized {
+                        let _ = window.maximize();
+                    }
+                }
+            }
+
             #[cfg(target_os = "macos")]
             {
                 macos_hooks::set_app_handle(app.handle().clone());
@@ -254,13 +269,28 @@ pub fn run() {
                         window.app_handle().exit(0);
                     }
                 }
-                // Windows fallback: no native hook available, detect minimizing via Resized event.
-                // On macOS the ObjC minimize guard handles this before the event fires.
-                #[cfg(not(target_os = "macos"))]
-                tauri::WindowEvent::Resized { .. } => {
+                tauri::WindowEvent::Moved(..) | tauri::WindowEvent::Resized(..) => {
+                    // Windows fallback: detect minimizing via Resized (macOS uses native hook).
+                    #[cfg(not(target_os = "macos"))]
                     if window.is_minimized().unwrap_or(false) {
                         if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
                             minimize_to_tray(&wv);
+                        }
+                        return;
+                    }
+                    // Persist window geometry as logical pixels (debounced via settings::save).
+                    if !window.is_minimized().unwrap_or(false) {
+                        if let (Ok(pos), Ok(size)) =
+                            (window.outer_position(), window.inner_size())
+                        {
+                            let scale = window.scale_factor().unwrap_or(1.0);
+                            settings::save_window_state(
+                                (pos.x as f64 / scale).round() as i32,
+                                (pos.y as f64 / scale).round() as i32,
+                                (size.width as f64 / scale).round() as u32,
+                                (size.height as f64 / scale).round() as u32,
+                                window.is_maximized().unwrap_or(false),
+                            );
                         }
                     }
                 }
