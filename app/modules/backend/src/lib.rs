@@ -70,6 +70,7 @@ pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
         .kind(MessageDialogKind::Info)
         .show(|_| {});
     let _ = window.hide();
+    settings::increment_minimize_hint();
 }
 
 /// How intrusively the minimize-to-tray action should notify the user.
