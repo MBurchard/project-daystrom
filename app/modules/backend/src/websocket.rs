@@ -233,7 +233,8 @@ async fn handle_client(
 
 /// Process an incoming JSON message from the mod.
 ///
-/// Parses the envelope and emits a Tauri event so other backend modules can react.
+/// Some message types (e.g. `settings.request`) are handled directly; all others are emitted as
+/// Tauri events, so other backend modules and the frontend can react.
 fn handle_incoming(app: &tauri::AppHandle, text: &str) {
     let msg: WsMessage = match serde_json::from_str(text) {
         Ok(m) => m,
@@ -245,7 +246,19 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) {
 
     log_debug!("Received: type={} payload={}", msg.msg_type, msg.payload);
 
-    // Emit as Tauri event so other backend modules and the frontend can listen
+    // Settings request: respond with current game settings as a full sync
+    if msg.msg_type == "settings.request" {
+        match serde_json::to_value(settings::get_game_settings()) {
+            Ok(payload) => send(&WsMessage {
+                msg_type: "settings.sync".to_string(),
+                payload,
+            }),
+            Err(e) => log_error!("Failed to serialise settings: {e}"),
+        }
+        return;
+    }
+
+    // Everything else: emit as Tauri event
     let event_name = format!("ws:{}", msg.msg_type);
     let _ = app.emit(&event_name, msg.payload);
 }

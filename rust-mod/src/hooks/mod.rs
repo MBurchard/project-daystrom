@@ -2,6 +2,7 @@ use log::debug;
 
 pub mod il2cpp_init;
 mod player_prefs;
+mod ui_scale;
 mod user_profile;
 
 // ---- Trace mode (dev tool) ------------------------------------------------
@@ -34,6 +35,7 @@ pub fn install_all_hooks() {
 
     user_profile::install(api);
     player_prefs::install(api);
+    ui_scale::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }

@@ -14,6 +14,8 @@ mod il2cpp;
 #[cfg_attr(test, allow(dead_code))]
 mod logging;
 mod profile_store;
+#[cfg_attr(test, allow(dead_code))]
+mod settings;
 // Windows DLL proxy: forwards version.dll API calls to the real system DLL.
 // Must be compiled in so the linker sees the exported symbols from version.def.
 #[cfg(target_os = "windows")]

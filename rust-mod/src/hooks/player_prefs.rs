@@ -78,6 +78,7 @@ const HASKEY_SUPPRESS_PREFIX: &[&str] = &[
     "PlcPopupBundleKeyPrefix_",
     "QualityManager/",
     "options/",
+    "research/",
     "SP.",
     "ToastInventoryObserver_",
     "factions_",
