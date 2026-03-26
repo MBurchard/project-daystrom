@@ -1,10 +1,10 @@
 //! In-memory tracking of whether the game or launcher was started by Daystrom.
 //!
 //! Provides atomic flags that survive across monitor ticks. The flags are synced into the
-//! [`GameStatus`](crate::commands::GameStatus) store by the commands and monitor, where the
+//! [`GameStatus`](crate::commands::GameStatus) stored by the commands and monitor, where the
 //! `should_block_quit` derived field replaces the former predicate function.
 //!
-//! Additionally tracks launched game profiles by PID so that each profile button can
+//! Additionally, tracks launched game profiles by PID so that each profile button can
 //! independently show whether its game instance is running.
 
 use std::collections::HashMap;
@@ -77,6 +77,21 @@ pub fn reap_children() {
     let mut guard = LAUNCHED_PROFILES.lock().unwrap();
     let Some(map) = guard.as_mut() else { return };
     map.retain(|_, (child, _)| matches!(child.try_wait(), Ok(None)));
+}
+
+/// Update the stored stem for a running profile after an in-game rename.
+///
+/// Called by the monitor when a running stem no longer matches any profile file, but a profile with the same
+/// server ID exists under a new name.
+pub fn update_stem(old_stem: &str, new_stem: &str) {
+    let mut guard = LAUNCHED_PROFILES.lock().unwrap();
+    let Some(map) = guard.as_mut() else { return };
+    for (_, stem) in map.values_mut() {
+        if *stem == old_stem {
+            *stem = new_stem.to_string();
+            break;
+        }
+    }
 }
 
 /// Return the profile stems of all game instances that are still running.
@@ -163,5 +178,41 @@ mod tests {
 
         reap_children();
         assert!(running_profiles().is_empty());
+    }
+
+    #[test]
+    fn update_stem_renames_matching_profile() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_flags();
+
+        #[cfg(unix)]
+        let child = std::process::Command::new("true").spawn().unwrap();
+        #[cfg(windows)]
+        let child = std::process::Command::new("cmd")
+            .args(["/C", "exit", "0"]).spawn().unwrap();
+        register_launch(child, "106_OldName".to_string());
+
+        update_stem("106_OldName", "106_NewName");
+
+        let running = running_profiles();
+        assert_eq!(running, vec!["106_NewName"]);
+    }
+
+    #[test]
+    fn update_stem_noop_when_not_found() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_flags();
+
+        #[cfg(unix)]
+        let child = std::process::Command::new("true").spawn().unwrap();
+        #[cfg(windows)]
+        let child = std::process::Command::new("cmd")
+            .args(["/C", "exit", "0"]).spawn().unwrap();
+        register_launch(child, "106_Nabor".to_string());
+
+        update_stem("411_Unknown", "411_NewName");
+
+        let running = running_profiles();
+        assert_eq!(running, vec!["106_Nabor"]);
     }
 }

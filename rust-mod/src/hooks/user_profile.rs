@@ -80,10 +80,10 @@ fn resolve_profile_class(api: &Il2CppApi) -> Option<*mut Il2CppClass> {
     }).as_ref().map(|c| c.0)
 }
 
-/// Read and log player information from a UserProfile object.
+/// Read player information from a UserProfile object and push changes to the game state.
 ///
 /// Uses IL2CPP runtime_invoke to call the property getters on the returned object. Throttled to
-/// once every 5 minutes to avoid log spam.
+/// once every 10 seconds to avoid unnecessary reflection calls.
 fn log_player_info(profile: *mut Il2CppObject) {
     // Check throttle first to avoid unnecessary reflection calls
     if !crate::throttle::should_log("user_profile", Duration::from_secs(10)) {
@@ -101,22 +101,20 @@ fn log_player_info(profile: *mut Il2CppObject) {
     let level = read_int_property(api, class, profile, "get_Level");
     let might = read_ulong_property(api, class, profile, "get_MilitaryMight");
 
-    // Keep the profile store in sync with the live player name.
-    // This catches in-game renames that don't go through PlayerPrefs.
+    // Keep the profile store in sync with live player data.
+    // This catches values that change server-side without going through PlayerPrefs.
     // Skip in trace-only mode (no store active).
-    if !super::is_trace_only()
-        && let Some(ref name) = name
-    {
-        crate::profile_store::record("social_username", name);
+    if !super::is_trace_only() {
+        if let Some(ref name) = name {
+            crate::profile_store::record("social_username", name);
+        }
+        if let Some(level) = level {
+            crate::profile_store::record_int("player_level", level);
+        }
     }
 
-    log::info!(
-        target: "PlayerData",
-        "Player: {} | Level: {} | Might: {}",
-        name.as_deref().unwrap_or("?"),
-        level.map_or("?".to_string(), |v| v.to_string()),
-        might.map_or("?".to_string(), |v| v.to_string())
-    );
+    // Update game state (handles change detection, debug logging, and WS notification)
+    crate::game_state::update_player(name, level, might);
 }
 
 /// Call a parameterless method that returns an `Il2CppString` and convert the result to a Rust `String`.
@@ -187,7 +185,7 @@ fn read_ulong_property(
 
 /// Install the GetLocalUserProfile hook via IL2CPP reflection.
 ///
-/// Called from `install_all_hooks()` after IL2CPP is initialised. If the class or method cannot
+/// Called from `install_all_hooks()` after IL2CPP is initialized. If the class or method cannot
 /// be resolved (e.g. after a game update), logs a warning and returns without crashing.
 pub fn install(api: &Il2CppApi) {
     let Some(class) = resolver::resolve_class(

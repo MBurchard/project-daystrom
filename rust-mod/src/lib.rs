@@ -3,6 +3,8 @@ use ctor::ctor;
 #[cfg(not(test))]
 use log::{debug, error};
 
+#[cfg_attr(test, allow(dead_code))]
+mod game_state;
 #[cfg_attr(test, allow(dead_code, unused_imports))]
 mod hook;
 #[cfg_attr(test, allow(dead_code, unused_imports))]
@@ -17,6 +19,8 @@ mod profile_store;
 #[cfg(target_os = "windows")]
 mod proxy;
 mod throttle;
+#[cfg_attr(test, allow(dead_code))]
+mod ws_client;
 
 /// Tauri bundle identifier, read from `tauri.conf.json` at compile time.
 #[cfg_attr(test, allow(dead_code))]
@@ -46,6 +50,7 @@ fn init() {
     }
 
     logging::init();
+    ws_client::init();
     debug!(target: "Mod", "Project Daystrom Mod starting...");
 
     match hooks::il2cpp_init::install() {

@@ -201,7 +201,7 @@ fn run_loop(app: tauri::AppHandle) {
                 MonitorAction::RefreshGameStatus => {
                     let fresh = commands::get_game_status(app.clone());
                     crate::game_state::update(&app, |s| {
-                        // Preserve fields not covered by get_game_status
+                        // Preserve fields aren't covered by get_game_status
                         let remote_version = s.remote_version;
                         let update_check_failed = s.update_check_failed;
                         let game_started_by_us = s.game_started_by_us;
@@ -226,7 +226,22 @@ fn run_loop(app: tauri::AppHandle) {
             s.launcher_running = launcher;
         });
 
-        // Track which of our launched profiles are still running
+        // Track which of our launched profiles are still running.
+        // Reconcile stale stems after in-game renames: if a running stem no longer matches any profile file, find the
+        // profile with the same server ID and update the mapping so the frontend keeps the correct running state.
+        let running = crate::process_origin::running_profiles();
+        let profiles = crate::profile_state::get().profiles;
+        for stem in &running {
+            if !profiles.iter().any(|p| p.stem == *stem) {
+                if let Some(server_str) = stem.split('_').next() {
+                    if let Ok(server_id) = server_str.parse::<i32>() {
+                        if let Some(p) = profiles.iter().find(|p| p.server == server_id) {
+                            crate::process_origin::update_stem(stem, &p.stem);
+                        }
+                    }
+                }
+            }
+        }
         let running = crate::process_origin::running_profiles();
         let external = game && running.is_empty()
             && !crate::process_origin::is_game_started();
