@@ -243,7 +243,7 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) {
         }
     };
 
-    log_debug!("Received: type={}", msg.msg_type);
+    log_debug!("Received: type={} payload={}", msg.msg_type, msg.payload);
 
     // Emit as Tauri event so other backend modules and the frontend can listen
     let event_name = format!("ws:{}", msg.msg_type);

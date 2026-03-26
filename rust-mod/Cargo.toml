@@ -15,8 +15,18 @@ max_level_trace = [ "log/max_level_trace" ]
 chrono = "0.4"
 ctor = "0.6"
 dirs = "6"
+futures-util = { version = "0.3", default-features = false, features = [ "sink" ] }
 libc = "0.2"
 libloading = "0.9"
 log = "0.4"
 serde = { version = "1", features = [ "derive" ] }
+serde_json = "1"
+tokio = { version = "1", features = [
+  "rt",
+  "sync",
+  "time",
+  "net",
+  "io-util",
+] }
+tokio-tungstenite = "0.29.0"
 toml = "1.0"
