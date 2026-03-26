@@ -45,7 +45,6 @@ static HOOK_DELETE_KEY: HookInfo = HookInfo::new("PlayerPrefs.DeleteKey");
 
 /// Exact keys to suppress.
 const HASKEY_SUPPRESS: &[&str] = &[
-    "HailingFrequencies/HailingFrequenciesOngoingTutorialFlag",
     "IsFirstTimeInNewbiesChat",
     "NX01/NX01OngoingTutorialFlag",
     "StarbaseDamageSeen",
@@ -81,6 +80,8 @@ const HASKEY_SUPPRESS: &[&str] = &[
 const HASKEY_SUPPRESS_PREFIX: &[&str] = &[
     "Fleet/",
     "FleetCommander/",
+    "HailingFrequencies/",
+    "Minigames/",
     "Playgami.",
     "PlcPopupBundleKeyPrefix_",
     "QualityManager/",
@@ -88,6 +89,7 @@ const HASKEY_SUPPRESS_PREFIX: &[&str] = &[
     "research/",
     "SP.",
     "ToastInventoryObserver_",
+    "retry_",
     "factions_",
     "hud_unlock/",
 ];
@@ -104,6 +106,28 @@ fn haskey_suppressed(key: &str) -> bool {
 fn is_suppressed(key: &str) -> bool {
     HASKEY_SUPPRESS.contains(&key)
         || HASKEY_SUPPRESS_PREFIX.iter().any(|&p| key.starts_with(p))
+}
+
+// ---- Set-hook dispatch helper ---------------------------------------------
+
+/// Dispatch the result of a `catch_unwind` in a PlayerPrefs set hook.
+///
+/// If the key was routed (`Ok(true)`), the value is already stored and the original is not called.
+/// If unrouted (`Ok(false)`), the original is called to persist via plist/Registry.
+/// On panic (`Err`), the error is recorded and the original is called as fallback to prevent data loss.
+fn dispatch_set(
+    result: std::thread::Result<bool>,
+    hook: &HookInfo,
+    call_original: impl FnOnce(),
+) {
+    match result {
+        Ok(true) => {}
+        Ok(false) => call_original(),
+        Err(_) => {
+            hook.record_error();
+            call_original();
+        }
+    }
 }
 
 // ---- IL2CPP function signatures -------------------------------------------
@@ -225,18 +249,7 @@ extern "C" fn hook_set_string(
         false // not handled, the caller should call original
     }));
 
-    match handled {
-        Ok(true) => {} // routed key, stored successfully
-        Ok(false) => {
-            // Unrouted key: pass through to plist/Registry
-            unsafe { original(key, value, method_info) };
-        }
-        Err(_) => {
-            // Panic: fall back to the original to prevent data loss
-            HOOK_SET.record_error();
-            unsafe { original(key, value, method_info) };
-        }
-    }
+    dispatch_set(handled, &HOOK_SET, || unsafe { original(key, value, method_info) });
 }
 
 /// Hook for `PlayerPrefs.GetString(string key, string defaultValue)`.
@@ -386,16 +399,7 @@ extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *con
         false
     }));
 
-    match handled {
-        Ok(true) => {}
-        Ok(false) => {
-            unsafe { original(key, value, method_info) };
-        }
-        Err(_) => {
-            HOOK_SET_INT.record_error();
-            unsafe { original(key, value, method_info) };
-        }
-    }
+    dispatch_set(handled, &HOOK_SET_INT, || unsafe { original(key, value, method_info) });
 }
 
 /// Hook for `PlayerPrefs.GetInt(string key, int defaultValue)`.
@@ -477,16 +481,7 @@ extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *c
         false
     }));
 
-    match handled {
-        Ok(true) => {}
-        Ok(false) => {
-            unsafe { original(key, value, method_info) };
-        }
-        Err(_) => {
-            HOOK_SET_FLOAT.record_error();
-            unsafe { original(key, value, method_info) };
-        }
-    }
+    dispatch_set(handled, &HOOK_SET_FLOAT, || unsafe { original(key, value, method_info) });
 }
 
 /// Hook for `PlayerPrefs.GetFloat(string key, float defaultValue)`.

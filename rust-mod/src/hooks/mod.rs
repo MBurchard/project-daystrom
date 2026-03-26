@@ -1,8 +1,11 @@
 use log::debug;
 
+pub(crate) mod tracker;
+
 mod hotkeys;
 pub mod il2cpp_init;
 mod player_prefs;
+mod spacebar;
 pub(crate) mod ui_scale;
 mod user_profile;
 
