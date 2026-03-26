@@ -109,8 +109,8 @@ onUnmounted(() => {
             </button>
           </li>
 
-          <li v-if="status.installed" :class="status.game_running ? 'ok' : 'fail'">
-            Game running
+          <li v-if="status.installed" class="game-status">
+            {{ status.game_running ? '🚀 Game is running' : '💤 Game is not running' }}
           </li>
         </ul>
 
