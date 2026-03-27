@@ -37,9 +37,10 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     let mut saved = [0u8; HOOK_SIZE];
     unsafe { std::ptr::copy_nonoverlapping(target as *const u8, saved.as_mut_ptr(), HOOK_SIZE) };
 
-    // Allocate trampoline: relocated instructions + branch back
+    // Allocate trampoline near the target so PC-relative instructions (B, BL, ADR, etc.)
+    // can be relocated without exceeding their range limits.
     let trampoline_size = HOOK_SIZE + HOOK_SIZE; // saved + branch sequence
-    let trampoline_mem = unsafe { alloc_executable(trampoline_size)? };
+    let trampoline_mem = unsafe { alloc_near(target_addr, trampoline_size)? };
     let trampoline_addr = trampoline_mem as usize;
 
     // Decode, relocate, and write each instruction to the trampoline
@@ -213,7 +214,7 @@ unsafe fn write_branch(addr: usize, target: usize) {
 /// Pages are allocated as RW first, then switched to RX after writing trampoline code.
 /// On Apple Silicon, this also satisfies the hardware W^X requirement.
 #[cfg(unix)]
-#[allow(dead_code)] // only used by aarch64 installation, x86_64 uses alloc_near
+#[allow(dead_code)]
 unsafe fn alloc_executable(size: usize) -> Result<*mut c_void, String> {
     let ptr = unsafe {
         libc::mmap(
@@ -281,7 +282,6 @@ fn flush_icache(addr: usize, size: usize) {
 /// `mach_vm_region`, then allocates in the first suitable gap. This is the macOS
 /// equivalent of the Windows `VirtualQuery` approach: deterministic, no brute-force.
 #[cfg(target_os = "macos")]
-#[allow(dead_code)] // only used by x86_64 installation, aarch64 uses alloc_executable
 unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> {
     const MAX_RANGE: usize = 0x4000_0000; // ±1GB
     const GRANULARITY: usize = 0x10000; // 64KB
