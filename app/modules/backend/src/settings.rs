@@ -24,13 +24,16 @@ use_log!("Settings");
 
 /// Event emitted when a setting changes.
 ///
-/// Subscribers (e.g. the WebSocket bridge) receive these via [`subscribe`] and can react without
-/// direct coupling to the settings module. Each variant carries the new value and can describe
-/// itself via [`key`](Self::key) and [`value`](Self::value) for generic forwarding.
+/// Subscribers (e.g. the WebSocket bridge) receive these via [`subscribe`] and can react without direct coupling to
+/// the settings module.
+/// Each variant carries the new value and can describe itself via [`key`](Self::key) and [`value`](Self::value) for
+/// generic forwarding.
 #[derive(Clone, Debug)]
 pub enum SettingsEvent {
     /// The in-game UI scale percentage changed.
     GameUiScale(u32),
+    /// The "auto-open sidebar" toggle changed.
+    AutoOpenSidebar(bool),
 }
 
 impl SettingsEvent {
@@ -38,6 +41,7 @@ impl SettingsEvent {
     pub fn key(&self) -> &'static str {
         match self {
             Self::GameUiScale(_) => "game.ui.scale",
+            Self::AutoOpenSidebar(_) => "game.ui.auto_open_sidebar",
         }
     }
 
@@ -45,6 +49,7 @@ impl SettingsEvent {
     pub fn value(&self) -> serde_json::Value {
         match self {
             Self::GameUiScale(scale) => serde_json::json!(scale),
+            Self::AutoOpenSidebar(v) => serde_json::json!(v),
         }
     }
 }
@@ -129,6 +134,9 @@ pub struct GameUiSettings {
     /// UI scale percentage (50-200). Applied as a multiplier on the original scale factor.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub scale: Option<u32>,
+    /// Whether to auto-open the chat sidebar when the game starts.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub auto_open_sidebar: Option<bool>,
 }
 
 /// Game-related settings that are sent to the mod.
@@ -158,7 +166,10 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
         window: None,
     },
     game: GameSettings {
-        ui: GameUiSettings { scale: None },
+        ui: GameUiSettings {
+            scale: None,
+            auto_open_sidebar: None,
+        },
     },
 });
 
@@ -202,8 +213,8 @@ fn load_from(path: &Path) -> AppSettings {
 
 /// Load settings from the disk into the global state.
 ///
-/// Falls back to default when the file is missing, empty, or contains invalid TOML. Safe to call
-/// multiple times; later calls overwrite the in-memory state.
+/// Falls back to default when the file is missing, empty, or contains invalid TOML.
+/// Safe to call multiple times, later calls overwrite the in-memory state.
 pub fn load() {
     let settings = settings_path()
         .map(|p| load_from(&p))
@@ -348,16 +359,22 @@ pub fn get_game_settings() -> GameSettings {
 pub fn set_game_settings(settings: GameSettings) {
     let events = {
         let mut s = SETTINGS.lock().unwrap();
-        if s.game == settings {
-            return;
-        }
         let old = s.game.clone();
         s.game = settings.clone();
+
+        if s.game == old {
+            return;
+        }
 
         let mut events = Vec::new();
         if let Some(scale) = s.game.ui.scale {
             if s.game.ui.scale != old.ui.scale {
                 events.push(SettingsEvent::GameUiScale(scale));
+            }
+        }
+        if let Some(v) = s.game.ui.auto_open_sidebar {
+            if s.game.ui.auto_open_sidebar != old.ui.auto_open_sidebar {
+                events.push(SettingsEvent::AutoOpenSidebar(v));
             }
         }
         events
@@ -371,6 +388,7 @@ pub fn set_game_settings(settings: GameSettings) {
         for event in &events {
             match event {
                 SettingsEvent::GameUiScale(scale) => log_debug!("UI scale set to {scale}%"),
+                SettingsEvent::AutoOpenSidebar(v) => log_debug!("Auto-open sidebar set to {v}"),
             }
         }
     }
@@ -644,7 +662,7 @@ mod tests {
     // -- Game UI settings --
 
     #[test]
-    fn default_ui_scale_is_100() {
+    fn default_scale_is_none() {
         assert_eq!(GameUiSettings::default().scale, None);
     }
 
@@ -848,7 +866,9 @@ mod tests {
 
         // Rapid slider movement: many values in quick succession
         for scale in [60, 70, 80, 90] {
-            set_game_settings(GameSettings { ui: GameUiSettings { scale: Some(scale) } });
+            set_game_settings(GameSettings {
+                ui: GameUiSettings { scale: Some(scale), ..Default::default() },
+            });
         }
 
         // Wait for debounce to flush
@@ -859,5 +879,17 @@ mod tests {
         // Clean up
         SETTINGS.lock().unwrap().game = GameSettings::default();
         reset_path_override();
+    }
+
+    #[test]
+    fn auto_open_sidebar_defaults_to_none() {
+        assert_eq!(GameUiSettings::default().auto_open_sidebar, None);
+    }
+
+    #[test]
+    fn auto_open_sidebar_serde_round_trip() {
+        let toml_str = "[game.ui]\nscale = 100\nauto_open_sidebar = true\n";
+        let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.game.ui.auto_open_sidebar, Some(true));
     }
 }

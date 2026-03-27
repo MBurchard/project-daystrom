@@ -1,9 +1,9 @@
 //! Local WebSocket server for bidirectional communication with the game mod.
 //!
-//! Daystrom binds a WebSocket server on `127.0.0.1:0` (OS-assigned port) and writes the
-//! chosen port to a discovery file (`ws.port`) in the app data directory. The mod reads
-//! this file on startup and connects as a client. Multiple mod instances (different
-//! profiles) can connect simultaneously.
+//! Daystrom binds a WebSocket server on `127.0.0.1:0` (OS-assigned port) and writes the chosen port to a discovery
+//! file (`ws.port`) in the app data directory.
+//! The mod reads this file on startup and connects as a client.
+//! Multiple mod instances (different profiles) can connect simultaneously.
 //!
 //! Messages use a JSON envelope: `{"type": "...", "payload": {...}}`.
 
@@ -72,8 +72,8 @@ pub fn send(msg: &WsMessage) {
 
 /// Start the WebSocket server in the Tauri async runtime.
 ///
-/// Writes the port to `ws.port` in the app data directory, then accepts connections
-/// indefinitely. Safe to call multiple times; further calls are no-ops.
+/// Writes the port to `ws.port` in the app data directory, then accepts connections indefinitely.
+/// Safe to call multiple times, further calls are no-ops.
 pub fn start(app: tauri::AppHandle) {
     if BROADCAST.get().is_some() {
         log_debug!("WebSocket server already running");
@@ -233,8 +233,8 @@ async fn handle_client(
 
 /// Process an incoming JSON message from the mod.
 ///
-/// Some message types (e.g. `settings.request`) are handled directly; all others are emitted as
-/// Tauri events, so other backend modules and the frontend can react.
+/// Some message types (e.g. `settings.request`) are handled directly, all others are emitted as Tauri events,
+/// so other backend modules and the frontend can react.
 fn handle_incoming(app: &tauri::AppHandle, text: &str) {
     let msg: WsMessage = match serde_json::from_str(text) {
         Ok(m) => m,
@@ -246,7 +246,7 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) {
 
     log_debug!("Received: type={} payload={}", msg.msg_type, msg.payload);
 
-    // Settings request: respond with current game settings as a full sync
+    // Settings request: respond with current game settings as a full sync.
     if msg.msg_type == "settings.request" {
         match serde_json::to_value(settings::get_game_settings()) {
             Ok(payload) => send(&WsMessage {
@@ -258,7 +258,7 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) {
         return;
     }
 
-    // Everything else: emit as Tauri event
+    // Everything else: emit as Tauri event.
     let event_name = format!("ws:{}", msg.msg_type);
     let _ = app.emit(&event_name, msg.payload);
 }
