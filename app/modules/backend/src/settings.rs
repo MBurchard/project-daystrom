@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokio::sync::broadcast;
 use ts_rs::TS;
 
@@ -64,6 +64,19 @@ pub fn subscribe() -> broadcast::Receiver<SettingsEvent> {
     event_tx().subscribe()
 }
 
+// ---- Lenient deserialisation ----------------------------------------------------
+
+/// Deserialize an `Option<T>` that returns `None` for type mismatches instead of failing.
+///
+/// Standard serde fails the entire document when a field has the wrong type (e.g. `scale = "hello"` when `u32`
+/// is expected). This deserializer catches the error and returns `None`, so one corrupt field does not destroy the
+/// rest of the settings.
+fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    Ok(T::deserialize(deserializer).ok())
+}
+
 // ---- Data model -----------------------------------------------------------------
 
 /// UI-related hint counters for progressive notifications.
@@ -76,22 +89,26 @@ pub struct HintSettings {
 
 /// Saved window position and size (logical pixels, display-independent).
 ///
-/// Stored under `[ui.window]` in the settings file. Physical pixel values from Tauri events are divided by the
-/// scale factor before storage. When the window is maximized, the normal (pre-maximized) bounds are preserved so
-/// the window can be restored to its previous position.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Stored under `[ui.window]` in the settings file. The scale factor divides physical pixel values from Tauri events
+/// before storage. When the window is maximized, the normal (pre-maximized) bounds are preserved so the window can be
+/// restored to its previous position.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WindowSettings {
     /// Horizontal position of the window's top-left corner.
-    pub x: i32,
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub x: Option<i32>,
     /// Vertical position of the window's top-left corner.
-    pub y: i32,
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub y: Option<i32>,
     /// Window width.
-    pub width: u32,
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
     /// Window height.
-    pub height: u32,
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
     /// Whether the window was maximized when last seen.
-    #[serde(default)]
-    pub maximized: bool,
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub maximized: Option<bool>,
 }
 
 /// UI-related settings for the Daystrom app itself.
@@ -106,23 +123,12 @@ pub struct UiSettings {
 }
 
 /// UI settings that are sent to the game mod via WebSocket.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct GameUiSettings {
-    /// UI scale percentage (50–200). Applied as a multiplier on the original scale factor.
-    #[serde(default = "default_scale")]
-    pub scale: u32,
-}
-
-/// Default UI scale: 100% (no change).
-const fn default_scale() -> u32 {
-    100
-}
-
-impl Default for GameUiSettings {
-    fn default() -> Self {
-        Self { scale: default_scale() }
-    }
+    /// UI scale percentage (50-200). Applied as a multiplier on the original scale factor.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub scale: Option<u32>,
 }
 
 /// Game-related settings that are sent to the mod.
@@ -152,7 +158,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
         window: None,
     },
     game: GameSettings {
-        ui: GameUiSettings { scale: 100 },
+        ui: GameUiSettings { scale: None },
     },
 });
 
@@ -307,11 +313,15 @@ pub fn save_window_state(x: i32, y: i32, width: u32, height: u32, maximized: boo
         let new = if maximized {
             // Preserve the last known normal bounds, only flip the flag.
             let prev = s.ui.window.clone().unwrap_or(WindowSettings {
-                x, y, width, height, maximized: false,
+                x: Some(x), y: Some(y), width: Some(width), height: Some(height),
+                maximized: Some(false),
             });
-            WindowSettings { maximized: true, ..prev }
+            WindowSettings { maximized: Some(true), ..prev }
         } else {
-            WindowSettings { x, y, width, height, maximized: false }
+            WindowSettings {
+                x: Some(x), y: Some(y), width: Some(width), height: Some(height),
+                maximized: Some(false),
+            }
         };
         let changed = s.ui.window.as_ref() != Some(&new);
         if changed {
@@ -345,8 +355,10 @@ pub fn set_game_settings(settings: GameSettings) {
         s.game = settings.clone();
 
         let mut events = Vec::new();
-        if settings.ui.scale != old.ui.scale {
-            events.push(SettingsEvent::GameUiScale(settings.ui.scale));
+        if let Some(scale) = s.game.ui.scale {
+            if s.game.ui.scale != old.ui.scale {
+                events.push(SettingsEvent::GameUiScale(scale));
+            }
         }
         events
     };
@@ -633,14 +645,14 @@ mod tests {
 
     #[test]
     fn default_ui_scale_is_100() {
-        assert_eq!(GameUiSettings::default().scale, 100);
+        assert_eq!(GameUiSettings::default().scale, None);
     }
 
     #[test]
     fn game_settings_serde_round_trip() {
         let toml_str = "[game.ui]\nscale = 150\n";
         let parsed: AppSettings = toml::from_str(toml_str).unwrap();
-        assert_eq!(parsed.game.ui.scale, 150);
+        assert_eq!(parsed.game.ui.scale, Some(150));
 
         let serialized = toml::to_string_pretty(&parsed).unwrap();
         assert!(serialized.contains("scale = 150"));
@@ -649,7 +661,7 @@ mod tests {
     #[test]
     fn game_settings_missing_uses_defaults() {
         let parsed: AppSettings = toml::from_str("[ui.hints]\nminimize_to_tray = 2\n").unwrap();
-        assert_eq!(parsed.game.ui.scale, 100);
+        assert_eq!(parsed.game.ui.scale, None);
     }
 
     #[test]
@@ -658,7 +670,7 @@ mod tests {
         let path = use_temp_path("game_set_persist");
 
         let mut new_settings = get_game_settings();
-        new_settings.ui.scale = 75;
+        new_settings.ui.scale = Some(75);
         set_game_settings(new_settings);
 
         // Not yet on disk (debounced)
@@ -668,7 +680,7 @@ mod tests {
         std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("scale = 75"));
-        assert_eq!(get_game_settings().ui.scale, 75);
+        assert_eq!(get_game_settings().ui.scale, Some(75));
 
         // Clean up
         SETTINGS.lock().unwrap().game = GameSettings::default();
@@ -704,7 +716,10 @@ mod tests {
         let toml_str = "[ui.window]\nx = 100\ny = 200\nwidth = 1024\nheight = 768\nmaximized = false\n";
         let parsed: AppSettings = toml::from_str(toml_str).unwrap();
         let ws = parsed.ui.window.as_ref().unwrap();
-        assert_eq!((ws.x, ws.y, ws.width, ws.height, ws.maximized), (100, 200, 1024, 768, false));
+        assert_eq!(
+            (ws.x, ws.y, ws.width, ws.height, ws.maximized),
+            (Some(100), Some(200), Some(1024), Some(768), Some(false)),
+        );
 
         let serialized = toml::to_string_pretty(&parsed).unwrap();
         assert!(serialized.contains("[ui.window]"));
@@ -725,7 +740,10 @@ mod tests {
 
         save_window_state(100, 200, 800, 600, false);
         let ws = get_window_settings().expect("should have window settings");
-        assert_eq!((ws.x, ws.y, ws.width, ws.height, ws.maximized), (100, 200, 800, 600, false));
+        assert_eq!(
+            (ws.x, ws.y, ws.width, ws.height, ws.maximized),
+            (Some(100), Some(200), Some(800), Some(600), Some(false)),
+        );
 
         // Wait for debounced save thread to complete before cleanup.
         std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
@@ -744,8 +762,11 @@ mod tests {
         save_window_state(0, 0, 1920, 1080, true);
 
         let ws = get_window_settings().unwrap();
-        assert_eq!(ws.maximized, true);
-        assert_eq!((ws.x, ws.y, ws.width, ws.height), (100, 200, 800, 600));
+        assert_eq!(ws.maximized, Some(true));
+        assert_eq!(
+            (ws.x, ws.y, ws.width, ws.height),
+            (Some(100), Some(200), Some(800), Some(600)),
+        );
 
         // Wait for debounced save thread to complete before cleanup.
         std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
@@ -763,7 +784,7 @@ mod tests {
         save_window_state(0, 0, 0, 0, false);
 
         let ws = get_window_settings().unwrap();
-        assert_eq!((ws.width, ws.height), (800, 600));
+        assert_eq!((ws.width, ws.height), (Some(800), Some(600)));
 
         // Wait for debounced save thread to complete before cleanup.
         std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
@@ -779,7 +800,10 @@ mod tests {
         save_window_state(100, 200, 800, 600, false);
         // Same values again: should not trigger a disk write
         let changed = update(|s| {
-            let new = WindowSettings { x: 100, y: 200, width: 800, height: 600, maximized: false };
+            let new = WindowSettings {
+                x: Some(100), y: Some(200), width: Some(800), height: Some(600),
+                maximized: Some(false),
+            };
             let changed = s.ui.window.as_ref() != Some(&new);
             if changed { s.ui.window = Some(new); }
             changed
@@ -807,7 +831,10 @@ mod tests {
 
         let loaded = load_from(&path);
         let ws = loaded.ui.window.expect("should have window section");
-        assert_eq!((ws.x, ws.y, ws.width, ws.height), (476, 412, 1329, 915));
+        assert_eq!(
+            (ws.x, ws.y, ws.width, ws.height),
+            (Some(476), Some(412), Some(1329), Some(915)),
+        );
 
         // Clean up
         SETTINGS.lock().unwrap().ui.window = None;
@@ -821,7 +848,7 @@ mod tests {
 
         // Rapid slider movement: many values in quick succession
         for scale in [60, 70, 80, 90] {
-            set_game_settings(GameSettings { ui: GameUiSettings { scale } });
+            set_game_settings(GameSettings { ui: GameUiSettings { scale: Some(scale) } });
         }
 
         // Wait for debounce to flush

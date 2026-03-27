@@ -155,13 +155,17 @@ pub fn run() {
             // Restore saved window position and size (stored as logical pixels).
             if let Some(ws) = settings::get_window_settings() {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_position(
-                        tauri::LogicalPosition::new(ws.x as f64, ws.y as f64),
-                    );
-                    let _ = window.set_size(
-                        tauri::LogicalSize::new(ws.width as f64, ws.height as f64),
-                    );
-                    if ws.maximized {
+                    if let (Some(x), Some(y)) = (ws.x, ws.y) {
+                        let _ = window.set_position(
+                            tauri::LogicalPosition::new(x as f64, y as f64),
+                        );
+                    }
+                    if let (Some(w), Some(h)) = (ws.width, ws.height) {
+                        let _ = window.set_size(
+                            tauri::LogicalSize::new(w as f64, h as f64),
+                        );
+                    }
+                    if ws.maximized.unwrap_or(false) {
                         let _ = window.maximize();
                     }
                 }
