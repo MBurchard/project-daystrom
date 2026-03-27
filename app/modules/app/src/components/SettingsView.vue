@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {useSettings} from '@app/composables/useSettings';
+import {computed} from 'vue';
 
 const emit = defineEmits<{
   close: [];
@@ -17,6 +18,20 @@ function onSliderInput(event: Event) {
   settings.value.ui.scale = Number(target.value);
   save();
 }
+
+/**
+ * Toggle the "Auto-open Chat Sidebar" checkbox and send to backend.
+ *
+ * @param event - Native change event from the checkbox.
+ */
+function onAutoOpenSidebarChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.ui.auto_open_sidebar = target.checked;
+  save();
+}
+
+/** Effective UI scale, defaulting to 100% when not set. */
+const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
 </script>
 
 <template>
@@ -38,9 +53,17 @@ function onSliderInput(event: Event) {
             min="50"
             max="200"
             step="5"
-            :value="settings.ui.scale"
+            :value="effectiveScale"
             @input="onSliderInput">
-        <span class="scale-value">{{ settings.ui.scale }}%</span>
+        <span class="scale-value">{{ effectiveScale }}%</span>
+      </div>
+
+      <div class="setting-row">
+        <label for="auto-open-sidebar">Auto-open Chat Sidebar</label>
+        <input id="auto-open-sidebar"
+            type="checkbox"
+            :checked="settings.ui.auto_open_sidebar ?? false"
+            @change="onAutoOpenSidebarChange">
       </div>
     </section>
   </div>
@@ -98,6 +121,10 @@ function onSliderInput(event: Event) {
 
 .setting-row input[type="range"] {
   flex: 1;
+  cursor: pointer;
+}
+
+.setting-row input[type="checkbox"] {
   cursor: pointer;
 }
 

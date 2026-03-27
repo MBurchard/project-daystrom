@@ -2,6 +2,7 @@ use log::debug;
 
 pub(crate) mod tracker;
 
+pub(crate) mod chat_frame;
 mod hotkeys;
 pub mod il2cpp_init;
 mod player_prefs;
@@ -41,6 +42,7 @@ pub fn install_all_hooks() {
     player_prefs::install(api);
     ui_scale::install(api);
     hotkeys::install(api);
+    chat_frame::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }

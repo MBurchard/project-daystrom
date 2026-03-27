@@ -8,7 +8,7 @@ const log = getLogger('Settings');
 
 // ---- State -----------------------------------------------------------------
 
-const settings = ref<GameSettings>({ui: {scale: 100}});
+const settings = ref<GameSettings>({ui: {}});
 
 // ---- Public API ------------------------------------------------------------
 
@@ -16,8 +16,7 @@ const settings = ref<GameSettings>({ui: {scale: 100}});
  * Composable for game settings that are sent to the mod.
  *
  * Reads all settings from the backend on init and sends the full settings object on every change.
- * The backend diffs against the current state, persists changes, and broadcasts them to connected
- * mods via WebSocket.
+ * The backend diffs against the current state, persists changes, and broadcasts them to connected mods via WebSocket.
  */
 export function useSettings() {
   /**
@@ -39,8 +38,8 @@ export function useSettings() {
   /**
    * Send the current settings to the backend for persistence and broadcast.
    *
-   * The backend diffs the received settings against the current state and only emits events for
-   * fields that actually changed.
+   * The backend diffs the received settings against the current state and only emits events for fields that
+   * actually changed.
    */
   function save() {
     setGameSettings(settings.value)

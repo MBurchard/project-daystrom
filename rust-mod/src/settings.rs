@@ -12,10 +12,6 @@ use serde::{Deserialize, Deserializer};
 // ---- Lenient deserialisation -----------------------------------------------
 
 /// Deserialize an `Option<T>` that returns `None` for type mismatches instead of failing.
-///
-/// Standard serde fails the entire document when a field has the wrong type (e.g. `scale = "hello"` when `u32`
-/// is expected). This deserializer catches the error and returns `None`, so one corrupt field does not destroy the
-/// rest of the settings.
 fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<T>, D::Error> {
@@ -30,6 +26,9 @@ pub struct GameUiSettings {
     /// UI scale percentage (50-200). Applied as a multiplier on the original scale factor.
     #[serde(default, deserialize_with = "lenient_option")]
     pub scale: Option<u32>,
+    /// Whether to auto-open the chat sidebar on game start.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub auto_open_sidebar: Option<bool>,
 }
 
 /// Game settings received from Daystrom.
@@ -57,13 +56,19 @@ pub fn get_scale() -> u32 {
     state().lock().unwrap().ui.scale.unwrap_or(100)
 }
 
+/// Whether the chat sidebar should be auto-opened on game start.
+pub fn auto_open_sidebar() -> bool {
+    state().lock().unwrap().ui.auto_open_sidebar.unwrap_or(false)
+}
+
 /// Replace all settings with a full snapshot from Daystrom (`settings.sync`).
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
-    // Scoped block: release the Mutex before apply_current_scale(),
-    // which calls get_scale() and would deadlock on the same lock.
+    // Scoped block: release the Mutex before side-effect hooks,
+    // which call getters and would deadlock on the same lock.
     { *state().lock().unwrap() = settings; }
     crate::hooks::ui_scale::apply_current_scale();
+    crate::hooks::chat_frame::on_settings_synced();
 }
 
 /// Patch individual settings from an incremental update (`settings.update`).
@@ -80,6 +85,12 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
                 // which calls get_scale() and would deadlock on the same lock.
                 drop(s);
                 crate::hooks::ui_scale::apply_current_scale();
+            }
+        }
+        "game.ui.auto_open_sidebar" => {
+            if let Some(v) = value.as_bool() {
+                debug!(target: "Settings", "Update: game.ui.auto_open_sidebar = {v}");
+                s.ui.auto_open_sidebar = Some(v);
             }
         }
         other => {
@@ -113,7 +124,7 @@ mod tests {
         reset();
 
         let settings = GameSettings {
-            ui: GameUiSettings { scale: Some(150) },
+            ui: GameUiSettings { scale: Some(150), ..Default::default() },
         };
         apply_sync(settings.clone());
 
@@ -158,5 +169,34 @@ mod tests {
     fn deserialize_missing_fields_uses_defaults() {
         let settings: GameSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(settings.ui.scale, None);
+        assert_eq!(settings.ui.auto_open_sidebar, None);
+    }
+
+    #[test]
+    fn auto_open_sidebar_defaults_to_none() {
+        assert_eq!(GameUiSettings::default().auto_open_sidebar, None);
+    }
+
+    #[test]
+    fn auto_open_sidebar_getter() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        assert!(!auto_open_sidebar());
+        state().lock().unwrap().ui.auto_open_sidebar = Some(true);
+        assert!(auto_open_sidebar());
+
+        reset();
+    }
+
+    #[test]
+    fn apply_update_patches_auto_open_sidebar() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        apply_update("game.ui.auto_open_sidebar", &serde_json::json!(true));
+        assert_eq!(state().lock().unwrap().ui.auto_open_sidebar, Some(true));
+
+        reset();
     }
 }
