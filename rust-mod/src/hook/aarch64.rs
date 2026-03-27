@@ -70,6 +70,194 @@ pub fn relocate(insn: u32, reloc: &Reloc, old_pc: u64, new_pc: u64) -> Result<u3
     }
 }
 
+// ---- Relocate-or-expand ----------------------------------------------------
+
+/// Result of relocating a single instruction for the trampoline.
+pub enum RelocResult {
+    /// Relocated in-place as a single 4-byte instruction.
+    Single(u32),
+    /// Expanded to a multi-instruction absolute sequence (each element is one u32 word).
+    Expanded(Vec<u32>),
+}
+
+/// Relocate an instruction, falling back to an expanded absolute sequence on overflow.
+///
+/// Tries the compact in-place relocation first. If the displacement exceeds the instruction's
+/// immediate range, it generates a longer sequence that uses absolute addressing.
+pub fn relocate_or_expand(
+    insn: u32,
+    reloc: &Reloc,
+    old_pc: u64,
+    new_pc: u64,
+) -> Result<RelocResult, String> {
+    match relocate(insn, reloc, old_pc, new_pc) {
+        Ok(relocated) => Ok(RelocResult::Single(relocated)),
+        Err(_) => {
+            let words = expand(insn, reloc, old_pc, new_pc)?;
+            Ok(RelocResult::Expanded(words))
+        }
+    }
+}
+
+/// Generate an expanded absolute sequence for an instruction that cannot be relocated in-place.
+fn expand(insn: u32, reloc: &Reloc, old_pc: u64, new_pc: u64) -> Result<Vec<u32>, String> {
+    match reloc {
+        Reloc::Branch26 => expand_branch26(insn, old_pc),
+        Reloc::Adr => expand_adr(insn, old_pc),
+        Reloc::Adrp => expand_adrp(insn, old_pc),
+        Reloc::Imm19 => expand_imm19(insn, old_pc, new_pc),
+        Reloc::Imm14 => expand_imm14(insn, old_pc, new_pc),
+    }
+}
+
+/// Expand B/BL to an absolute branch via LDR X16 + BR/BLR X16.
+///
+/// **B (unconditional):** `LDR X16, #8; BR X16; <abs_target>` (4 words)
+/// **BL (with a link):** `ADR X30, #20; LDR X16, #12; BR X16; <abs_target>` (5 words).
+/// ADR sets LR to the instruction after the sequence so the callee returns correctly.
+fn expand_branch26(insn: u32, old_pc: u64) -> Result<Vec<u32>, String> {
+    let imm26 = (insn & 0x03FF_FFFF) as i32;
+    let imm26 = (imm26 << 6) >> 6;
+    let abs_target = old_pc.wrapping_add((imm26 as i64 as u64) << 2);
+    let is_bl = insn & 0x8000_0000 != 0;
+
+    if is_bl {
+        // ADR X30, #20  (X30 = PC + 20, points past the 8-byte literal)
+        // LDR X16, #12  (load abs_target from PC+12)
+        // BR  X16
+        // <abs_target: u64>
+        let adr_x30 = encode_imm21(0x1000_0000 | 30, 20); // ADR X30, #20
+        let [lo, hi] = split_u64(abs_target);
+        Ok(vec![adr_x30, 0x5800_0070, 0xD61F_0200, lo, hi])
+    } else {
+        // LDR X16, #8
+        // BR  X16
+        // <abs_target: u64>
+        let [lo, hi] = split_u64(abs_target);
+        Ok(vec![0x5800_0050, 0xD61F_0200, lo, hi])
+    }
+}
+
+/// Expand ADR to a MOVZ/MOVK sequence that loads the absolute address into the same register.
+fn expand_adr(insn: u32, old_pc: u64) -> Result<Vec<u32>, String> {
+    let imm21 = extract_imm21(insn);
+    let abs_target = old_pc.wrapping_add(imm21 as i64 as u64);
+    let rd = insn & 0x1F;
+    Ok(movz_movk_sequence(rd, abs_target))
+}
+
+/// Expand ADRP to a MOVZ/MOVK sequence that loads the absolute page address into the same register.
+fn expand_adrp(insn: u32, old_pc: u64) -> Result<Vec<u32>, String> {
+    let imm21 = extract_imm21(insn);
+    let old_page = old_pc & !0xFFF;
+    let abs_page = old_page.wrapping_add((imm21 as i64 as u64) << 12);
+    let rd = insn & 0x1F;
+    Ok(movz_movk_sequence(rd, abs_page))
+}
+
+/// Expand an Imm19 instruction (B.cond, CBZ, CBNZ, LDR literal).
+///
+/// For branches: invert the condition to skip over an absolute branch.
+/// For LDR literal: load the absolute address into X16, then LDR Rd, [X16].
+fn expand_imm19(insn: u32, old_pc: u64, new_pc: u64) -> Result<Vec<u32>, String> {
+    let imm19 = ((insn >> 5) & 0x7FFFF) as i32;
+    let imm19 = (imm19 << 13) >> 13;
+    let abs_target = old_pc.wrapping_add((imm19 as i64 as u64) << 2);
+
+    if insn & 0x3B00_0000 == 0x1800_0000 {
+        // LDR literal: load address into X16, then LDR Rd, [X16], then B past the literal.
+        let rd = insn & 0x1F;
+        let opc = (insn >> 30) & 0x3; // 00=32-bit, 01=64-bit, 10=SIMD
+        let v = (insn >> 26) & 0x1;   // 0=GPR, 1=SIMD/FP
+
+        // LDR X16, #12  (load the absolute data address)
+        let ldr_x16 = 0x5800_0070_u32; // LDR X16, [PC, #12]
+        // LDR Rd, [X16] with correct size
+        let ldr_rd = encode_ldr_unsigned(opc, v, rd, 16); // Rd = [X16]
+        // B #12  (skip the 8-byte literal)
+        let b_skip = 0x1400_0003_u32; // B #12
+        let [lo, hi] = split_u64(abs_target);
+        Ok(vec![ldr_x16, ldr_rd, b_skip, lo, hi])
+    } else {
+        // Conditional branch: invert condition, skip over absolute branch.
+        // <inverted_cond> #+20  (skip 5 words to land after the sequence)
+        // LDR X16, #8
+        // BR  X16
+        // <abs_target: u64>
+        let inverted = invert_imm19_branch(insn, new_pc)?;
+        let [lo, hi] = split_u64(abs_target);
+        Ok(vec![inverted, 0x5800_0050, 0xD61F_0200, lo, hi])
+    }
+}
+
+/// Expand a TBZ/TBNZ instruction by inverting and skipping over an absolute branch.
+fn expand_imm14(insn: u32, old_pc: u64, _new_pc: u64) -> Result<Vec<u32>, String> {
+    let imm14 = ((insn >> 5) & 0x3FFF) as i32;
+    let imm14 = (imm14 << 18) >> 18;
+    let abs_target = old_pc.wrapping_add((imm14 as i64 as u64) << 2);
+
+    // Invert TBZ↔TBNZ, target = skip 5 words (+20 bytes)
+    let inverted = insn ^ 0x0100_0000; // flip bit 24 (TBZ↔TBNZ)
+    let skip_imm14 = 5_u32; // +20 bytes = 5 words, >>2 = 5
+    let inverted = (inverted & 0xFFF8_001F) | ((skip_imm14 & 0x3FFF) << 5);
+
+    let [lo, hi] = split_u64(abs_target);
+    Ok(vec![inverted, 0x5800_0050, 0xD61F_0200, lo, hi])
+}
+
+// ---- Expansion helpers ----------------------------------------------------
+
+/// Generate a MOVZ + 3x MOVK sequence to load a 64-bit value into register `rd`.
+fn movz_movk_sequence(rd: u32, value: u64) -> Vec<u32> {
+    let hw0 = (value & 0xFFFF) as u32;
+    let hw1 = ((value >> 16) & 0xFFFF) as u32;
+    let hw2 = ((value >> 32) & 0xFFFF) as u32;
+    let hw3 = ((value >> 48) & 0xFFFF) as u32;
+    vec![
+        0xD280_0000 | (hw0 << 5) | rd,             // MOVZ Xd, #hw0
+        0xF2A0_0000 | (hw1 << 5) | rd,             // MOVK Xd, #hw1, LSL #16
+        0xF2C0_0000 | (hw2 << 5) | rd,             // MOVK Xd, #hw2, LSL #32
+        0xF2E0_0000 | (hw3 << 5) | rd,             // MOVK Xd, #hw3, LSL #48
+    ]
+}
+
+/// Encode `LDR Rd, [X16]` (unsigned offset 0) for the correct operand size.
+///
+/// `opc`: 00 = 32-bit, 01 = 64-bit, 10 = prefetch/SIMD-32
+/// `v`: 0 = GPR, 1 = SIMD/FP
+fn encode_ldr_unsigned(opc: u32, v: u32, rd: u32, rn: u32) -> u32 {
+    // LDR (unsigned immediate), offset = 0: size[31:30] | 111_0_01_00 | imm12[21:10] | Rn[9:5] | Rt[4:0]
+    // For zero offset, imm12 = 0.
+    let size = opc; // maps directly for GPR loads
+    (size << 30) | (0b111 << 27) | (v << 26) | (0b01 << 24) | (rn << 5) | rd
+}
+
+/// Invert an Imm19 conditional branch and set its target to skip 5 words (+20 bytes).
+fn invert_imm19_branch(insn: u32, _new_pc: u64) -> Result<u32, String> {
+    let skip_imm19 = 5_u32; // +20 bytes = 5 instructions
+
+    if insn & 0xFF00_0010 == 0x5400_0000 {
+        // B.cond: invert condition by flipping bit 0 of cond (bits 3:0)
+        let inverted = insn ^ 0x0000_0001;
+        Ok((inverted & 0xFF00_001F) | ((skip_imm19 & 0x7FFFF) << 5))
+    } else if insn & 0x7F00_0000 == 0x3400_0000 {
+        // CBZ → CBNZ (flip bit 24)
+        let inverted = insn | 0x0100_0000;
+        Ok((inverted & 0xFF00_001F) | ((skip_imm19 & 0x7FFFF) << 5))
+    } else if insn & 0x7F00_0000 == 0x3500_0000 {
+        // CBNZ → CBZ (clear bit 24)
+        let inverted = insn & !0x0100_0000;
+        Ok((inverted & 0xFF00_001F) | ((skip_imm19 & 0x7FFFF) << 5))
+    } else {
+        Err(format!("unsupported imm19 instruction for expansion: {insn:#010x}"))
+    }
+}
+
+/// Split a u64 into two u32 words (little-endian order for embedding in instruction stream).
+fn split_u64(value: u64) -> [u32; 2] {
+    [value as u32, (value >> 32) as u32]
+}
+
 // ---- ADRP (page-relative, 21-bit signed, <<12) -----------------------------
 
 /// Extract the 21-bit signed immediate from an ADRP/ADR instruction.
@@ -368,5 +556,111 @@ mod tests {
             let decoded = extract_imm21(encoded);
             assert_eq!(decoded, val, "round-trip failed for {val}");
         }
+    }
+
+    // -- expand: Branch26 ---------------------------------------------------
+
+    #[test]
+    fn expand_b_far_away() {
+        // B #0x100 at PC=0x1000, trampoline 1GB away (relocation overflows).
+        let insn = 0x1400_0000 | 64; // B #256
+        let result = relocate_or_expand(insn, &Reloc::Branch26, 0x1000, 0x4000_0000);
+        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        assert_eq!(words.len(), 4); // LDR X16 + BR X16 + 8-byte addr
+        assert_eq!(words[0], 0x5800_0050); // LDR X16, #8
+        assert_eq!(words[1], 0xD61F_0200); // BR X16
+        // Embedded absolute target: 0x1000 + 64*4 = 0x1100
+        let target = words[2] as u64 | ((words[3] as u64) << 32);
+        assert_eq!(target, 0x1100);
+    }
+
+    #[test]
+    fn expand_bl_far_away() {
+        // BL #0x100 at PC=0x2000, trampoline 1GB away.
+        let insn = 0x9400_0000 | 64; // BL #256
+        let result = relocate_or_expand(insn, &Reloc::Branch26, 0x2000, 0x4000_0000);
+        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        assert_eq!(words.len(), 5); // ADR X30 + LDR X16 + BR X16 + 8-byte addr
+        assert_eq!(words[1], 0x5800_0070); // LDR X16, #12
+        assert_eq!(words[2], 0xD61F_0200); // BR X16
+        // ADR X30, #20: Rd=30
+        assert_eq!(words[0] & 0x1F, 30);
+        // Absolute target = 0x2000 + 64*4 = 0x2100
+        let target = words[3] as u64 | ((words[4] as u64) << 32);
+        assert_eq!(target, 0x2100);
+    }
+
+    // -- expand: ADR/ADRP --------------------------------------------------
+
+    #[test]
+    fn expand_adr_far_away() {
+        // ADR X5, #100 at PC=0x1000, trampoline 2MB away (>1MB, overflows).
+        let insn = encode_imm21(0x1000_0000 | 5, 100);
+        let result = relocate_or_expand(insn, &Reloc::Adr, 0x1000, 0x20_0000);
+        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        assert_eq!(words.len(), 4); // MOVZ + 3x MOVK
+        // Target = 0x1000 + 100 = 0x1064
+        // MOVZ X5, #0x1064 → check Rd = 5
+        assert_eq!(words[0] & 0x1F, 5);
+        // Reconstruct value from MOVZ/MOVK
+        let hw0 = (words[0] >> 5) & 0xFFFF;
+        assert_eq!(hw0, 0x1064);
+    }
+
+    #[test]
+    fn expand_adrp_far_away() {
+        // ADRP X8, #1 (target page = 0x1000 + 1*4096 = 0x2000) at PC=0x1000.
+        // Trampoline 8GB away (overflows ±4GB).
+        let insn = encode_imm21(0x9000_0000 | 8, 1);
+        let result = relocate_or_expand(insn, &Reloc::Adrp, 0x1000, 0x2_0000_0000);
+        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        assert_eq!(words.len(), 4);
+        assert_eq!(words[0] & 0x1F, 8); // Rd = X8
+        // Reconstruct absolute page from MOVZ/MOVK
+        let hw0 = ((words[0] >> 5) & 0xFFFF) as u64;
+        let hw1 = ((words[1] >> 5) & 0xFFFF) as u64;
+        let value = hw0 | (hw1 << 16);
+        assert_eq!(value, 0x2000); // page(0x1000) + 1*4096
+    }
+
+    // -- expand: conditional branches (Imm19, Imm14) ------------------------
+
+    #[test]
+    fn expand_cbz_far_away() {
+        // CBZ X0, #0x40 at PC=0x1000, trampoline 2MB away.
+        let insn = 0xB400_0000 | (16 << 5); // CBZ X0, #64 (imm19=16)
+        let result = relocate_or_expand(insn, &Reloc::Imm19, 0x1000, 0x20_0000);
+        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        assert_eq!(words.len(), 5);
+        // First word should be CBNZ (inverted CBZ), targeting skip
+        assert_eq!(words[0] & 0x7F00_0000, 0x3500_0000, "should be CBNZ");
+        assert_eq!(words[1], 0x5800_0050); // LDR X16, #8
+        // Target = 0x1000 + 16*4 = 0x1040
+        let target = words[3] as u64 | ((words[4] as u64) << 32);
+        assert_eq!(target, 0x1040);
+    }
+
+    #[test]
+    fn expand_tbz_far_away() {
+        // TBZ X0, #0, #0x20 at PC=0x1000, trampoline 1MB away.
+        let insn = 0x3600_0000 | (8 << 5); // TBZ X0, #0, #32
+        let result = relocate_or_expand(insn, &Reloc::Imm14, 0x1000, 0x10_0000);
+        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        assert_eq!(words.len(), 5);
+        // First word should be TBNZ (inverted TBZ)
+        assert_eq!(words[0] & 0x7F00_0000, 0x3700_0000, "should be TBNZ");
+        // Target = 0x1000 + 8*4 = 0x1020
+        let target = words[3] as u64 | ((words[4] as u64) << 32);
+        assert_eq!(target, 0x1020);
+    }
+
+    // -- relocate_or_expand: near = Single ----------------------------------
+
+    #[test]
+    fn relocate_or_expand_near_stays_single() {
+        // B #0x100 at PC=0x1000, trampoline close by → should use Single.
+        let insn = 0x1400_0000 | 64;
+        let result = relocate_or_expand(insn, &Reloc::Branch26, 0x1000, 0x2000);
+        assert!(matches!(result.unwrap(), RelocResult::Single(_)));
     }
 }
