@@ -37,36 +37,53 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     let mut saved = [0u8; HOOK_SIZE];
     unsafe { std::ptr::copy_nonoverlapping(target as *const u8, saved.as_mut_ptr(), HOOK_SIZE) };
 
-    // Allocate trampoline near the target so PC-relative instructions (B, BL, ADR, etc.)
-    // can be relocated without exceeding their range limits.
-    let trampoline_size = HOOK_SIZE + HOOK_SIZE; // saved + branch sequence
-    let trampoline_mem = unsafe { alloc_near(target_addr, trampoline_size)? };
+    // Allocate trampoline near the target.
+    // Try ±128MB first (all relocations fit in-place), then ±4GB (covers ADRP), then anywhere (instructions that
+    // overflow use expanded sequences).
+    const MAX_TRAMPOLINE: usize = 96; // worst case: 4×20 (expanded) + 16 (branch-back)
+    const ARM64_NEAR: usize = 0x0800_0000;   // ±128MB
+    const ARM64_FAR: usize = 0x1_0000_0000;  // ±4GB
+    let trampoline_mem = unsafe {
+        alloc_near(target_addr, MAX_TRAMPOLINE, ARM64_NEAR)
+            .or_else(|_| alloc_near(target_addr, MAX_TRAMPOLINE, ARM64_FAR))
+            .or_else(|_| alloc_executable(MAX_TRAMPOLINE))?
+    };
     let trampoline_addr = trampoline_mem as usize;
 
-    // Decode, relocate, and write each instruction to the trampoline
+    // Decode, relocate (or expand), and collect trampoline words.
+    // The output is variable-length because expanded sequences use more than 4 bytes.
+    let mut words: Vec<u32> = Vec::with_capacity(24);
     for i in 0..num_insns {
         let offset = i * 4;
         let raw = u32::from_le_bytes(saved[offset..offset + 4].try_into().unwrap());
         let decoded = super::aarch64::decode(raw);
 
-        let relocated = if let Some(ref reloc) = decoded.reloc {
+        if let Some(ref reloc) = decoded.reloc {
             let old_pc = (target_addr + offset) as u64;
-            let new_pc = (trampoline_addr + offset) as u64;
-            super::aarch64::relocate(raw, reloc, old_pc, new_pc)?
+            let new_pc = (trampoline_addr + words.len() * 4) as u64;
+            match super::aarch64::relocate_or_expand(raw, reloc, old_pc, new_pc)? {
+                super::aarch64::RelocResult::Single(w) => words.push(w),
+                super::aarch64::RelocResult::Expanded(ws) => words.extend_from_slice(&ws),
+            }
         } else {
-            raw
-        };
+            words.push(raw);
+        }
+    }
 
+    // Write all trampoline words
+    for (i, &word) in words.iter().enumerate() {
         let dst = unsafe { (trampoline_mem as *mut u32).add(i) };
-        unsafe { dst.write(relocated) };
+        unsafe { dst.write(word) };
     }
 
     // Write the branch back to the instruction after our hook patch
-    unsafe { write_branch(trampoline_addr + HOOK_SIZE, target_addr + HOOK_SIZE) };
+    let branch_back_addr = trampoline_addr + words.len() * 4;
+    unsafe { write_branch(branch_back_addr, target_addr + HOOK_SIZE) };
 
-    // Make trampoline executable
-    unsafe { make_executable(trampoline_addr, trampoline_size)? };
-    flush_icache(trampoline_addr, trampoline_size);
+    // Make trampoline executable (total = relocated words + 16-byte branch-back)
+    let total_size = (words.len() * 4) + HOOK_SIZE;
+    unsafe { make_executable(trampoline_addr, total_size)? };
+    flush_icache(trampoline_addr, total_size);
 
     // Patch the target: overwrite with branch to replacement
     unsafe { make_writable(target_addr, HOOK_SIZE)? };
@@ -107,7 +124,8 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     // Allocate trampoline within ±2GB of target so relocated RIP-relative
     // displacements still fit in 32 bits.
     let trampoline_size = total_len + HOOK_SIZE;
-    let trampoline_mem = unsafe { alloc_near(target_addr, trampoline_size)? };
+    const X86_RIP_RANGE: usize = 0x4000_0000; // ±1GB (conservative for ±2GB RIP-relative)
+    let trampoline_mem = unsafe { alloc_near(target_addr, trampoline_size, X86_RIP_RANGE)? };
     let trampoline_addr = trampoline_mem as usize;
 
     // Copy instructions to trampoline, relocating RIP-relative references
@@ -214,7 +232,6 @@ unsafe fn write_branch(addr: usize, target: usize) {
 /// Pages are allocated as RW first, then switched to RX after writing trampoline code.
 /// On Apple Silicon, this also satisfies the hardware W^X requirement.
 #[cfg(unix)]
-#[allow(dead_code)]
 unsafe fn alloc_executable(size: usize) -> Result<*mut c_void, String> {
     let ptr = unsafe {
         libc::mmap(
@@ -276,20 +293,19 @@ fn flush_icache(addr: usize, size: usize) {
     }
 }
 
-/// Allocate writable memory within ±1GB of `target` using Mach VM region queries.
+/// Allocate writable memory within `max_range` bytes of `target` using Mach VM region queries.
 ///
-/// Scans the virtual address space for unmapped gaps between mapped regions via
-/// `mach_vm_region`, then allocates in the first suitable gap. This is the macOS
-/// equivalent of the Windows `VirtualQuery` approach: deterministic, no brute-force.
+/// Scans the virtual address space for unmapped gaps between mapped regions via `mach_vm_region`, then allocates in
+/// the first suitable gap.
+/// This is the macOS equivalent of the Windows `VirtualQuery` approach: deterministic, no brute-force.
 #[cfg(target_os = "macos")]
-unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> {
-    const MAX_RANGE: usize = 0x4000_0000; // ±1GB
+unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mut c_void, String> {
     const GRANULARITY: usize = 0x10000; // 64KB
     const VM_REGION_BASIC_INFO_64: i32 = 9;
     const VM_REGION_BASIC_INFO_COUNT_64: u32 = 9;
 
-    let min_addr = target.saturating_sub(MAX_RANGE).max(GRANULARITY);
-    let max_addr = target.saturating_add(MAX_RANGE);
+    let min_addr = target.saturating_sub(max_range).max(GRANULARITY);
+    let max_addr = target.saturating_add(max_range);
     let mut scan = min_addr as u64;
 
     while (scan as usize) < max_addr {
@@ -348,7 +364,7 @@ unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> 
     }
 
     Err(format!(
-        "could not allocate {size} bytes within ±1GB of {target:#x}"
+        "could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"
     ))
 }
 
@@ -375,19 +391,19 @@ unsafe extern "C" {
 
 // ---- Platform: Linux ------------------------------------------------------
 
-/// Allocate executable memory within ±1GB of `target` using mmap address hints.
+/// Allocate executable memory within `max_range` bytes of `target` using mmap address hints.
 ///
-/// Scans outward from the target in 64KB steps. Linux usually honours the hint, but if the
-/// returned address falls outside the required range, we unmap and try the next slot.
+/// Scans outward from the target in 64KB steps.
+/// Linux usually honours the hint, but if the returned address falls outside the required range, we unmap and try
+/// the next slot.
 #[cfg(target_os = "linux")]
-unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> {
-    const MAX_RANGE: usize = 0x4000_0000; // ±1GB
+unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mut c_void, String> {
     const GRANULARITY: usize = 0x10000; // 64KB
 
-    let min_addr = target.saturating_sub(MAX_RANGE).max(GRANULARITY);
-    let max_addr = target.saturating_add(MAX_RANGE);
+    let min_addr = target.saturating_sub(max_range).max(GRANULARITY);
+    let max_addr = target.saturating_add(max_range);
 
-    let mut hint = target.saturating_sub(MAX_RANGE / 2) & !(GRANULARITY - 1);
+    let mut hint = target.saturating_sub(max_range / 2) & !(GRANULARITY - 1);
     while hint < max_addr {
         if hint < min_addr {
             hint = min_addr;
@@ -413,7 +429,7 @@ unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> 
     }
 
     Err(format!(
-        "could not allocate {size} bytes within ±1GB of {target:#x}"
+        "could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"
     ))
 }
 
@@ -500,13 +516,13 @@ unsafe fn alloc_executable(size: usize) -> Result<*mut c_void, String> {
     Ok(ptr)
 }
 
-/// Allocate executable memory within ±1GB of `target` for RIP-relative relocation.
+/// Allocate executable memory within `max_range` bytes of `target` for RIP-relative relocation.
 ///
 /// Searches **outward from the target** (first below, then above) to find the closest
 /// free region. This ensures relocated RIP-relative displacements fit in a signed 32-bit
 /// value even when the original instruction references data up to ~1GB away.
 #[cfg(target_os = "windows")]
-unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> {
+unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mut c_void, String> {
     #[repr(C)]
     struct MemBasicInfo {
         base_address: *mut c_void,
@@ -529,12 +545,10 @@ unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> 
     const MEM_COMMIT_RESERVE: u32 = 0x3000;
     const PAGE_EXECUTE_READWRITE: u32 = 0x40;
     const GRANULARITY: usize = 0x10000; // 64KB Windows allocation granularity
-    // 1GB range leaves ~1GB headroom for RIP-relative offsets within the target module
-    const MAX_RANGE: usize = 0x4000_0000;
     let mbi_size = size_of::<MemBasicInfo>();
 
-    let min_addr = target.saturating_sub(MAX_RANGE).max(GRANULARITY);
-    let max_addr = target.saturating_add(MAX_RANGE);
+    let min_addr = target.saturating_sub(max_range).max(GRANULARITY);
+    let max_addr = target.saturating_add(max_range);
 
     // Helper: try to allocate within a free region
     let try_alloc = |region_base: usize, region_size: usize| -> *mut c_void {
@@ -590,7 +604,7 @@ unsafe fn alloc_near(target: usize, size: usize) -> Result<*mut c_void, String> 
     }
 
     Err(format!(
-        "could not allocate {size} bytes within ±1GB of {target:#x}"
+        "could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"
     ))
 }
 
