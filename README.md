@@ -5,6 +5,8 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?logo=gnu&logoColor=white)](https://www.gnu.org/licenses/gpl-3.0)
 [![CI](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml/badge.svg)](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml)
 
+🇬🇧 English | [🇩🇪 Deutsch](README.de.md)
+
 A companion app and custom game mod for
 [Star Trek Fleet Command](https://www.scopely.com/games/star-trek-fleet-command) on macOS and Windows.
 
@@ -15,15 +17,31 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
 
 **Key features:**
 
-- **Multi-account support** on Windows and macOS. Each account gets its own TOML-based profile; switching is a
-  single click in the launcher. Profiles are portable across platforms.
-- **Native cross-platform app** (Tauri 2 + Vue 3) running alongside the game
-- **Unified launcher** replacing platform-specific solutions with a single approach: entitlement patching on macOS,
-  DLL proxy injection on Windows, game lifecycle management on both
-- **Game update detection** via the Scopely update API with in-app prompts
-- **Process monitoring** with automatic detection of game and launcher activity
-- **System tray integration** with minimize-to-tray and quit protection
-- **Dashboard, alerts, and advisor plugins** (planned)
+- **Multi-account support** on Windows and macOS
+  - Each account gets its own TOML-based profile with isolated game settings
+  - Custom PlayerPrefs interceptor redirects game settings into per-profile storage
+  - Switching accounts is a single click in the launcher, profiles are portable across platforms
+- **Game enhancements** powered by the Rust mod
+  - Keyboard hotkeys: ESC to collect rewards, SPACE to engage, mine, or warp
+  - Adjustable UI scale (50-200%), applied live to the running game
+  - Auto-open chat sidebar on game start
+  - Automatic game update detection via the Scopely update API
+- **Native cross-platform app** (Tauri 2 + Vue 3)
+  - Unified launcher: entitlement patching on macOS, DLL proxy injection on Windows
+  - Process monitoring with automatic detection of game and launcher activity
+  - System tray integration with minimize-to-tray and quit protection
+  - Live WebSocket bridge that syncs settings to the running game in real time
+
+## Installation
+
+Download the latest release for your platform from the
+[Releases page](https://github.com/MBurchard/project-daystrom/releases/latest).
+
+- **macOS**: Download the `.dmg` file, open it, and drag the app to your Applications folder.
+- **Windows**: Download the `.exe` installer and run it. If Windows SmartScreen shows a warning, click
+  "More info" and then "Run anyway" (the app is self-signed, not yet verified by Microsoft).
+
+After installation, launch Project Daystrom and click the play button to start the game with the mod.
 
 ## Acknowledgements
 
