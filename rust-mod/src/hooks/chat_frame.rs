@@ -52,6 +52,9 @@ static PENDING_WIDTH: AtomicU32 = AtomicU32::new(0);
 /// Whether restore has been attempted (prevents double restore).
 static RESTORED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the OnEnable hook has been logged at least once.
+static CHAT_ENABLE_LOGGED: AtomicBool = AtomicBool::new(false);
+
 // ---- Type aliases ---------------------------------------------------------
 
 type VoidFn = unsafe extern "C" fn(*mut Il2CppObject);
@@ -87,7 +90,9 @@ extern "C" fn hook_show(this: *mut Il2CppObject) {
 /// The chat preview becoming active is a reliable signal that the game's HUD is loaded and interactive.
 extern "C" fn hook_chat_enable(this: *mut Il2CppObject) {
     CHAT_PREVIEW.store(this, Relaxed);
-    debug!(target: "ChatFrame", "ChatPreviewController active");
+    if !CHAT_ENABLE_LOGGED.swap(true, Relaxed) {
+        debug!(target: "ChatFrame", "ChatPreviewController active");
+    }
 
     let original: VoidFn =
         unsafe { std::mem::transmute(ORIG_CHAT_ENABLE.load(Relaxed)) };
