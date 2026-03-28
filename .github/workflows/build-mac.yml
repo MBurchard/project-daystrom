@@ -76,6 +76,13 @@ jobs:
       - name: Build universal mod library
         run: pnpm build:mod:mac-universal
 
+      - name: Sign mod library for notarization
+        if: env.APPLE_SIGNING_IDENTITY != ''
+        run: >-
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY"
+          --timestamp --options runtime
+          app/resources/mod/libstfc-mod.dylib
+
       - name: Generate Tauri icons
         run: pnpm icons
 
