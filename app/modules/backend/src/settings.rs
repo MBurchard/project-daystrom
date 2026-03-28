@@ -225,6 +225,9 @@ pub fn load() {
 /// Whether a debounced save is already scheduled.
 static SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 
+/// Handle of the most recent save thread. Tests join this to await completion.
+static SAVE_HANDLE: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+
 /// Delay before a debounced save writes to disk.
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
@@ -237,7 +240,7 @@ fn save() {
     if SAVE_PENDING.swap(true, Ordering::SeqCst) {
         return;
     }
-    std::thread::spawn(|| {
+    let handle = std::thread::spawn(|| {
         std::thread::sleep(SAVE_DEBOUNCE);
         SAVE_PENDING.store(false, Ordering::SeqCst);
         let settings = SETTINGS.lock().unwrap().clone();
@@ -260,6 +263,19 @@ fn save() {
             Err(e) => log_error!("Failed to serialise settings: {e}"),
         }
     });
+    *SAVE_HANDLE.lock().unwrap() = Some(handle);
+}
+
+/// Block until the current save thread has finished writing to disk.
+///
+/// Takes the stored [`JoinHandle`](std::thread::JoinHandle) and joins it.
+/// Returns immediately when no save is in flight.
+#[cfg(test)]
+fn flush_saves() {
+    let handle = SAVE_HANDLE.lock().unwrap().take();
+    if let Some(h) = handle {
+        h.join().expect("save thread panicked");
+    }
 }
 
 /// Mutate the in-memory settings and schedule a debounced save to disk.
@@ -398,12 +414,23 @@ pub fn set_game_settings(settings: GameSettings) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Mutex, MutexGuard};
 
     use super::*;
 
     /// Serialize tests that touch the global [`SETTINGS`] state.
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Acquire [`TEST_LOCK`], recovering from poisoning left by a panicked test.
+    ///
+    /// The lock only serializes tests; it does not protect shared data. Ignoring the poison lets
+    /// remaining tests run even when a previous test panicked. Any lingering save thread from a
+    /// crashed test is drained before the new test proceeds.
+    fn lock_tests() -> MutexGuard<'static, ()> {
+        let guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        flush_saves();
+        guard
+    }
 
     /// Create a fresh temporary directory for a test.
     fn test_dir(name: &str) -> PathBuf {
@@ -511,12 +538,12 @@ mod tests {
 
     #[test]
     fn save_creates_file() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let path = use_temp_path("save_create");
 
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 5;
         save();
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
 
         assert!(path.exists());
         let content = fs::read_to_string(&path).unwrap();
@@ -529,13 +556,13 @@ mod tests {
 
     #[test]
     fn save_creates_parent_directories() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let dir = test_dir("save_parents");
         let path = dir.join("nested").join("deep").join("settings.toml");
         *PATH_OVERRIDE.lock().unwrap() = Some(path.clone());
 
         save();
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
 
         assert!(path.exists());
 
@@ -545,7 +572,7 @@ mod tests {
 
     #[test]
     fn save_then_load_round_trip() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let path = use_temp_path("save_load_rt");
 
         let original = AppSettings {
@@ -554,7 +581,7 @@ mod tests {
         };
         *SETTINGS.lock().unwrap() = original.clone();
         save();
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
 
         let loaded = load_from(&path);
         assert_eq!(loaded, original);
@@ -574,7 +601,7 @@ mod tests {
 
     #[test]
     fn settings_path_ends_with_settings_toml() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         reset_path_override();
         let path = settings_path().expect("settings_path should return Some");
         assert_eq!(path.file_name().unwrap(), "settings.toml");
@@ -585,7 +612,7 @@ mod tests {
 
     #[test]
     fn load_populates_global_state() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let path = use_temp_path("load_global");
         fs::write(&path, "[ui.hints]\nminimize_to_tray = 7\n").unwrap();
 
@@ -601,7 +628,7 @@ mod tests {
 
     #[test]
     fn minimize_hint_count_reads_global() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 42;
 
         assert_eq!(minimize_hint_count(), 42);
@@ -612,13 +639,13 @@ mod tests {
 
     #[test]
     fn save_and_increment_round_trip() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let path = use_temp_path("save_increment_rt");
 
         // Set a known state, save (debounced), wait for flush
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 3;
         save();
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         assert!(path.exists());
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("minimize_to_tray = 3"));
@@ -626,7 +653,7 @@ mod tests {
         // Increment (also debounced), verify in-memory immediately, on-disk after flush
         increment_minimize_hint();
         assert_eq!(minimize_hint_count(), 4);
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("minimize_to_tray = 4"));
 
@@ -637,7 +664,7 @@ mod tests {
 
     #[test]
     fn increment_stops_at_max() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let _path = use_temp_path("increment_max");
 
         // Just below the cap: increment succeeds
@@ -653,6 +680,9 @@ mod tests {
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 100;
         increment_minimize_hint();
         assert_eq!(minimize_hint_count(), 100);
+
+        // Drain the save thread spawned by the first increment before resetting the path override.
+        flush_saves();
 
         // Clean up
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
@@ -684,7 +714,7 @@ mod tests {
 
     #[test]
     fn set_game_settings_updates_and_persists() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let path = use_temp_path("game_set_persist");
 
         let mut new_settings = get_game_settings();
@@ -695,7 +725,7 @@ mod tests {
         assert!(!path.exists(), "save should be debounced, not immediate");
 
         // Wait for debounce to flush
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("scale = 75"));
         assert_eq!(get_game_settings().ui.scale, Some(75));
@@ -707,14 +737,14 @@ mod tests {
 
     #[test]
     fn set_game_settings_unchanged_skips_save() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let _path = use_temp_path("game_set_noop");
 
         let current = get_game_settings();
         set_game_settings(current);
 
         // No save should be scheduled for identical settings
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         assert!(!_path.exists(), "no write expected when nothing changed");
 
         // Clean up
@@ -753,7 +783,7 @@ mod tests {
 
     #[test]
     fn save_window_state_stores_bounds() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let _path = use_temp_path("window_bounds");
 
         save_window_state(100, 200, 800, 600, false);
@@ -764,14 +794,14 @@ mod tests {
         );
 
         // Wait for debounced save thread to complete before cleanup.
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
 
     #[test]
     fn save_window_state_maximized_preserves_bounds() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let _path = use_temp_path("window_maximized");
 
         // Set normal bounds first
@@ -787,14 +817,14 @@ mod tests {
         );
 
         // Wait for debounced save thread to complete before cleanup.
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
 
     #[test]
     fn save_window_state_ignores_zero_size() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let _path = use_temp_path("window_zero");
 
         save_window_state(100, 200, 800, 600, false);
@@ -805,14 +835,14 @@ mod tests {
         assert_eq!((ws.width, ws.height), (Some(800), Some(600)));
 
         // Wait for debounced save thread to complete before cleanup.
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
 
     #[test]
     fn save_window_state_unchanged_skips_save() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let _path = use_temp_path("window_noop");
 
         save_window_state(100, 200, 800, 600, false);
@@ -829,18 +859,18 @@ mod tests {
         assert!(!changed);
 
         // Wait for debounced save thread to complete before cleanup.
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
 
     #[test]
     fn window_settings_disk_round_trip() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let path = use_temp_path("window_disk_rt");
 
         save_window_state(476, 412, 1329, 915, false);
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
 
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("[ui.window]"));
@@ -861,7 +891,7 @@ mod tests {
 
     #[test]
     fn set_game_settings_debounce_coalesces_rapid_changes() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = lock_tests();
         let path = use_temp_path("game_set_coalesce");
 
         // Rapid slider movement: many values in quick succession
@@ -872,7 +902,7 @@ mod tests {
         }
 
         // Wait for debounce to flush
-        std::thread::sleep(SAVE_DEBOUNCE + Duration::from_millis(100));
+        flush_saves();
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("scale = 90"));
 
