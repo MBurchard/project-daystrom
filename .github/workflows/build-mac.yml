@@ -14,6 +14,8 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
+    env:
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' }}
 
     steps:
       - name: Checkout repository
@@ -43,6 +45,34 @@ jobs:
             app/modules/backend -> target
             rust-mod -> target
 
+      # Code signing (optional, requires APPLE_CERTIFICATE_BASE64 and related secrets)
+      - name: Import Apple signing certificate
+        if: env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+
+          echo -n "$APPLE_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Signing identity: $IDENTITY"
+
+          rm "$CERT_PATH"
+
       - name: Build universal mod library
         run: pnpm build:mod:mac-universal
 
@@ -53,7 +83,15 @@ jobs:
         run: pnpm test:app:backend
 
       - name: Build universal macOS app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm build:tauri:mac-universal
+
+      - name: Clean up signing keychain
+        if: always() && env.HAS_APPLE_CERT == 'true'
+        run: security delete-keychain $RUNNER_TEMP/signing.keychain-db
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v7
