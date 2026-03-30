@@ -231,8 +231,9 @@ extern "C" fn hook_set_string(
     value: *mut Il2CppString,
     method_info: *const MethodInfo,
 ) {
-    let original: SetStringFn =
-        unsafe { std::mem::transmute(ORIGINAL_SET_STRING.load(Relaxed)) };
+    let orig_ptr = ORIGINAL_SET_STRING.load(Relaxed);
+    if orig_ptr.is_null() { return; }
+    let original: SetStringFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
@@ -280,10 +281,12 @@ extern "C" fn hook_get_string_2(
     default_value: *mut Il2CppString,
     method_info: *const MethodInfo,
 ) -> *mut Il2CppString {
+    let orig_ptr = ORIGINAL_GET_STRING_2.load(Relaxed);
+    if orig_ptr.is_null() { return default_value; }
+    let original: GetString2Fn = unsafe { std::mem::transmute(orig_ptr) };
+
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
-        let original: GetString2Fn =
-            unsafe { std::mem::transmute(ORIGINAL_GET_STRING_2.load(Relaxed)) };
         let result = unsafe { original(key, default_value, method_info) };
         let k = display_string(key);
         let v = display_string(result);
@@ -316,8 +319,6 @@ extern "C" fn hook_get_string_2(
             }
 
             // Import mode: fall through to Registry
-            let original: GetString2Fn =
-                unsafe { std::mem::transmute(ORIGINAL_GET_STRING_2.load(Relaxed)) };
             let result = unsafe { original(key, default_value, method_info) };
 
             let v = display_string(result);
@@ -333,8 +334,6 @@ extern "C" fn hook_get_string_2(
         }
     }
 
-    let original: GetString2Fn =
-        unsafe { std::mem::transmute(ORIGINAL_GET_STRING_2.load(Relaxed)) };
     unsafe { original(key, default_value, method_info) }
 }
 
@@ -345,10 +344,12 @@ extern "C" fn hook_get_string_1(
     key: *mut Il2CppString,
     method_info: *const MethodInfo,
 ) -> *mut Il2CppString {
+    let orig_ptr = ORIGINAL_GET_STRING_1.load(Relaxed);
+    if orig_ptr.is_null() { return std::ptr::null_mut(); }
+    let original: GetString1Fn = unsafe { std::mem::transmute(orig_ptr) };
+
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
-        let original: GetString1Fn =
-            unsafe { std::mem::transmute(ORIGINAL_GET_STRING_1.load(Relaxed)) };
         let result = unsafe { original(key, method_info) };
         let k = display_string(key);
         let v = display_string(result);
@@ -369,8 +370,6 @@ extern "C" fn hook_get_string_1(
                 return make_il2cpp_string("");
             }
 
-            let original: GetString1Fn =
-                unsafe { std::mem::transmute(ORIGINAL_GET_STRING_1.load(Relaxed)) };
             let result = unsafe { original(key, method_info) };
 
             let v = display_string(result);
@@ -386,8 +385,6 @@ extern "C" fn hook_get_string_1(
         }
     }
 
-    let original: GetString1Fn =
-        unsafe { std::mem::transmute(ORIGINAL_GET_STRING_1.load(Relaxed)) };
     unsafe { original(key, method_info) }
 }
 
@@ -395,7 +392,9 @@ extern "C" fn hook_get_string_1(
 
 /// Hook for `PlayerPrefs.SetInt(string key, int value)`.
 extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *const MethodInfo) {
-    let original: SetIntFn = unsafe { std::mem::transmute(ORIGINAL_SET_INT.load(Relaxed)) };
+    let orig_ptr = ORIGINAL_SET_INT.load(Relaxed);
+    if orig_ptr.is_null() { return; }
+    let original: SetIntFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
@@ -431,9 +430,12 @@ extern "C" fn hook_get_int(
     default_value: i32,
     method_info: *const MethodInfo,
 ) -> i32 {
+    let orig_ptr = ORIGINAL_GET_INT.load(Relaxed);
+    if orig_ptr.is_null() { return default_value; }
+    let original: GetIntFn = unsafe { std::mem::transmute(orig_ptr) };
+
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
-        let original: GetIntFn = unsafe { std::mem::transmute(ORIGINAL_GET_INT.load(Relaxed)) };
         let result = unsafe { original(key, default_value, method_info) };
         let k = display_string(key);
         super::trace_log("GET_INT", &k, &format!("-> {result}"));
@@ -458,7 +460,6 @@ extern "C" fn hook_get_int(
                 return default_value;
             }
 
-            let original: GetIntFn = unsafe { std::mem::transmute(ORIGINAL_GET_INT.load(Relaxed)) };
             let result = unsafe { original(key, default_value, method_info) };
 
             let known = profile_store::record_int(&k, result);
@@ -473,13 +474,14 @@ extern "C" fn hook_get_int(
         }
     }
 
-    let original: GetIntFn = unsafe { std::mem::transmute(ORIGINAL_GET_INT.load(Relaxed)) };
     unsafe { original(key, default_value, method_info) }
 }
 
 /// Hook for `PlayerPrefs.SetFloat(string key, float value)`.
 extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *const MethodInfo) {
-    let original: SetFloatFn = unsafe { std::mem::transmute(ORIGINAL_SET_FLOAT.load(Relaxed)) };
+    let orig_ptr = ORIGINAL_SET_FLOAT.load(Relaxed);
+    if orig_ptr.is_null() { return; }
+    let original: SetFloatFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
@@ -515,10 +517,12 @@ extern "C" fn hook_get_float(
     default_value: f32,
     method_info: *const MethodInfo,
 ) -> f32 {
+    let orig_ptr = ORIGINAL_GET_FLOAT.load(Relaxed);
+    if orig_ptr.is_null() { return default_value; }
+    let original: GetFloatFn = unsafe { std::mem::transmute(orig_ptr) };
+
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
-        let original: GetFloatFn =
-            unsafe { std::mem::transmute(ORIGINAL_GET_FLOAT.load(Relaxed)) };
         let result = unsafe { original(key, default_value, method_info) };
         let k = display_string(key);
         super::trace_log("GET_FLOAT", &k, &format!("-> {result}"));
@@ -537,8 +541,6 @@ extern "C" fn hook_get_float(
                 return default_value;
             }
 
-            let original: GetFloatFn =
-                unsafe { std::mem::transmute(ORIGINAL_GET_FLOAT.load(Relaxed)) };
             let result = unsafe { original(key, default_value, method_info) };
 
             let known = profile_store::record_float(&k, result);
@@ -553,7 +555,6 @@ extern "C" fn hook_get_float(
         }
     }
 
-    let original: GetFloatFn = unsafe { std::mem::transmute(ORIGINAL_GET_FLOAT.load(Relaxed)) };
     unsafe { original(key, default_value, method_info) }
 }
 
@@ -562,9 +563,12 @@ extern "C" fn hook_get_float(
 /// If the key is routed and exists in the store, it returns `true` without
 /// touching the Registry. Otherwise, falls through to the original.
 extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInfo) -> i32 {
+    let orig_ptr = ORIGINAL_HAS_KEY.load(Relaxed);
+    if orig_ptr.is_null() { return 0; }
+    let original: HasKeyFn = unsafe { std::mem::transmute(orig_ptr) };
+
     // Trace-only: pass through everything, log matched keys
     if super::is_trace_only() {
-        let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
         let result = unsafe { original(key, method_info) };
         let k = display_string(key);
         super::trace_log("HAS_KEY", &k, &format!("-> {result}"));
@@ -588,8 +592,6 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
                 // Key is routed but not in store. For primary profiles
                 // (Import/Known+primary), fall through to plist/Registry.
                 if !registry_blocked() {
-                    let original: HasKeyFn =
-                        unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
                     let found = unsafe { original(key, method_info) };
                     if found == 0 && !haskey_suppressed(&k) {
                         debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\"");
@@ -603,7 +605,6 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
             }
 
             // Unrouted (Phase 1): fall through to plist/Registry
-            let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
             let found = unsafe { original(key, method_info) };
             if found == 0 && !haskey_suppressed(&k) {
                 debug!(target: "PlayerPrefs", "HASKEY MISS \"{k}\"");
@@ -616,7 +617,6 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
         }
     }
 
-    let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
     unsafe { original(key, method_info) }
 }
 
@@ -625,8 +625,11 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
 /// Removes the key from the profile store. Also calls the original to keep
 /// the Registry in sync (harmless and prevents stale values if the mod is removed).
 extern "C" fn hook_delete_key(key: *mut Il2CppString, method_info: *const MethodInfo) {
-    let original: DeleteKeyFn = unsafe { std::mem::transmute(ORIGINAL_DELETE_KEY.load(Relaxed)) };
-    unsafe { original(key, method_info) };
+    let orig_ptr = ORIGINAL_DELETE_KEY.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let original: DeleteKeyFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(key, method_info) };
+    }
 
     // Trace-only: log matched keys, no store interaction
     if super::is_trace_only() {

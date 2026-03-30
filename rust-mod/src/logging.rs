@@ -272,13 +272,12 @@ struct LogLevelSettings {
     log_levels: LogLevelScopes,
 }
 
-/// Scoped log level overrides: `game` for the mod, `app` for the Daystrom backend.
+/// Scoped log level overrides.
+/// The mod only reads the `game` scope, `[log_levels.app]` is consumed by the backend and silently ignored here.
 #[derive(Default, Deserialize)]
 struct LogLevelScopes {
     #[serde(default)]
     game: HashMap<String, String>,
-    #[serde(default)]
-    app: HashMap<String, String>,
 }
 
 /// Parse a level string (case-insensitive) into a [`LevelFilter`].
@@ -717,6 +716,5 @@ scale = 100
 "#;
         let settings: LogLevelSettings = toml::from_str(toml_str).unwrap();
         assert!(settings.log_levels.game.is_empty());
-        assert!(settings.log_levels.app.is_empty());
     }
 }

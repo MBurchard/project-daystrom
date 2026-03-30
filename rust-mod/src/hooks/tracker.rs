@@ -154,9 +154,12 @@ macro_rules! instance_tracker {
                 this: *mut $crate::il2cpp::types::Il2CppObject,
             ) {
                 INSTANCE.store(this as *mut (), Relaxed);
-                let orig: LifecycleFn =
-                    unsafe { std::mem::transmute(ORIG_AWAKE.load(Relaxed)) };
-                unsafe { orig(this) };
+                let orig_ptr = ORIG_AWAKE.load(Relaxed);
+                if !orig_ptr.is_null() {
+                    let orig: LifecycleFn =
+                        unsafe { std::mem::transmute(orig_ptr) };
+                    unsafe { orig(this) };
+                }
             }
 
             /// OnDestroy hook: clears the tracked instance if it matches.
@@ -169,9 +172,12 @@ macro_rules! instance_tracker {
                     Relaxed,
                     Relaxed,
                 );
-                let orig: LifecycleFn =
-                    unsafe { std::mem::transmute(ORIG_DESTROY.load(Relaxed)) };
-                unsafe { orig(this) };
+                let orig_ptr = ORIG_DESTROY.load(Relaxed);
+                if !orig_ptr.is_null() {
+                    let orig: LifecycleFn =
+                        unsafe { std::mem::transmute(orig_ptr) };
+                    unsafe { orig(this) };
+                }
             }
 
             /// Clear the tracked instance if it matches the given pointer.

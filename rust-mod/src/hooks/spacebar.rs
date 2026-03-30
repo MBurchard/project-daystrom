@@ -68,9 +68,12 @@ extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
     prescan::clear_if_match(this as *mut ());
     mining::clear_if_match(this as *mut ());
     starnode::clear_if_match(this as *mut ());
-    let orig: LifecycleFn =
-        unsafe { std::mem::transmute(ORIG_VIEWER_DESTROY.load(Relaxed)) };
-    unsafe { orig(this) };
+
+    let orig_ptr = ORIG_VIEWER_DESTROY.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let orig: LifecycleFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { orig(this) };
+    }
 }
 
 // ---- Visibility check -----------------------------------------------------

@@ -6,6 +6,7 @@
 //! When `auto_open_sidebar` is enabled, simulates a click on the side panel button and resizes the sidebar to maximum
 //! width (the game clamps to its actual limit).
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering::Relaxed};
 
 use log::debug;
@@ -67,21 +68,25 @@ type ResizeFn = unsafe extern "C" fn(*mut Il2CppObject, f32);
 /// Delegates to the original, then applies any pending restore width.
 /// The pending width is set by [`try_restore`] before triggering the side panel click.
 extern "C" fn hook_show(this: *mut Il2CppObject) {
-    let original: VoidFn =
-        unsafe { std::mem::transmute(ORIG_SHOW.load(Relaxed)) };
-    unsafe { original(this) };
+    let orig_ptr = ORIG_SHOW.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let original: VoidFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this) };
+    }
 
     // Apply pending restore width (set by try_restore before the click).
-    let width_bits = PENDING_WIDTH.swap(0, Relaxed);
-    if width_bits != 0 {
-        let width = f32::from_bits(width_bits);
-        let resize_ptr = RESIZE_FN.load(Relaxed);
-        if !resize_ptr.is_null() {
-            let resize: ResizeFn = unsafe { std::mem::transmute(resize_ptr) };
-            unsafe { resize(this, width) };
-            debug!(target: "ChatFrame", "Applied sidebar width: {width:.0}");
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let width_bits = PENDING_WIDTH.swap(0, Relaxed);
+        if width_bits != 0 {
+            let width = f32::from_bits(width_bits);
+            let resize_ptr = RESIZE_FN.load(Relaxed);
+            if !resize_ptr.is_null() {
+                let resize: ResizeFn = unsafe { std::mem::transmute(resize_ptr) };
+                unsafe { resize(this, width) };
+                debug!(target: "ChatFrame", "Applied sidebar width: {width:.0}");
+            }
         }
-    }
+    }));
 }
 
 /// Hook for `ChatPreviewController.OnEnable()`.
@@ -89,16 +94,19 @@ extern "C" fn hook_show(this: *mut Il2CppObject) {
 /// Captures the ChatPreviewController instance and triggers a restore check.
 /// The chat preview becoming active is a reliable signal that the game's HUD is loaded and interactive.
 extern "C" fn hook_chat_enable(this: *mut Il2CppObject) {
-    CHAT_PREVIEW.store(this, Relaxed);
-    if !CHAT_ENABLE_LOGGED.swap(true, Relaxed) {
-        debug!(target: "ChatFrame", "ChatPreviewController active");
+    let orig_ptr = ORIG_CHAT_ENABLE.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let original: VoidFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this) };
     }
 
-    let original: VoidFn =
-        unsafe { std::mem::transmute(ORIG_CHAT_ENABLE.load(Relaxed)) };
-    unsafe { original(this) };
-
-    try_restore();
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        CHAT_PREVIEW.store(this, Relaxed);
+        if !CHAT_ENABLE_LOGGED.swap(true, Relaxed) {
+            debug!(target: "ChatFrame", "ChatPreviewController active");
+        }
+        try_restore();
+    }));
 }
 
 // ---- Restore --------------------------------------------------------------
