@@ -7,8 +7,8 @@ use super::types::*;
 
 /// Resolve an IL2CPP class by assembly name, namespace, and class name.
 ///
-/// Walks the chain: domain → assembly → image → class. Returns `None` and logs a warning if any
-/// step fails. This is expected when a game update renames or removes a class.
+/// Walks the chain: domain → assembly → image → class. Returns `None` and logs a warning if any step fails.
+/// This is expected when a game update renames or removes a class.
 pub fn resolve_class(
     api: &Il2CppApi,
     assembly: &str,

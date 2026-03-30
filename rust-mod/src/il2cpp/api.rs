@@ -90,7 +90,7 @@ unsafe fn resolve<T: Copy>(lib: &Library, name: &'static str) -> Result<T, Il2Cp
 /// Resolve all IL2CPP API functions from the already-loaded GameAssembly library.
 ///
 /// The library must have been loaded previously by `hooks::il2cpp_init::install()`.
-/// Called from inside the `il2cpp_init` hook callback after IL2CPP has initialised.
+/// Called from inside the `il2cpp_init` hook callback after IL2CPP has initialized.
 pub fn load() -> Result<Il2CppApi, Il2CppError> {
     let lib = crate::hooks::il2cpp_init::game_assembly()
         .ok_or(Il2CppError::LibraryNotLoaded)?;
