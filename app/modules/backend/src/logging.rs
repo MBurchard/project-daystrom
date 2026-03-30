@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::{fs, path::{Path, PathBuf}, sync::Mutex};
 
 use colored::Colorize;
 use log::{Level, LevelFilter};
+use serde::Deserialize;
 use tauri::plugin::TauriPlugin;
 use tauri_plugin_log::{Builder, Target, TargetKind, TimezoneStrategy, fern};
 
@@ -58,12 +60,18 @@ pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
     rotate_logs();
     init_runtime_rotation();
 
-    Builder::new()
+    let mut builder = Builder::new()
         .timezone_strategy(TimezoneStrategy::UseLocal)
         .max_file_size(1_000_000) // 1 MB, plugin-internal size rotation
-        .level(LevelFilter::Debug)
+        .level(LevelFilter::Info)
         .level_for("tao", LevelFilter::Warn)
-        .level_for("wry", LevelFilter::Warn)
+        .level_for("wry", LevelFilter::Warn);
+
+    for (target, level) in load_log_levels() {
+        builder = builder.level_for(target, level);
+    }
+
+    builder
         .format(format_log)
         .targets([
             Target::new(TargetKind::Stdout),
@@ -72,6 +80,60 @@ pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
             }),
         ])
         .build()
+}
+
+// ---- Per-target log levels from settings.toml -----------------------------------
+
+/// Minimal struct to extract only the `[log_levels.app]` section from settings.toml.
+///
+/// Read independently of the settings module because the logger is initialised before `settings::load()`.
+#[derive(Default, Deserialize)]
+struct LogLevelSettings {
+    #[serde(default)]
+    log_levels: LogLevelScopes,
+}
+
+/// Scoped log level overrides: `game` for the mod, `app` for the Daystrom backend.
+#[derive(Default, Deserialize)]
+struct LogLevelScopes {
+    #[serde(default)]
+    game: HashMap<String, String>,
+    #[serde(default)]
+    app: HashMap<String, String>,
+}
+
+/// Parse a level string (case-insensitive) into a [`LevelFilter`].
+fn parse_level_filter(s: &str) -> Option<LevelFilter> {
+    match s.to_lowercase().as_str() {
+        "off" => Some(LevelFilter::Off),
+        "error" => Some(LevelFilter::Error),
+        "warn" => Some(LevelFilter::Warn),
+        "info" => Some(LevelFilter::Info),
+        "debug" => Some(LevelFilter::Debug),
+        "trace" => Some(LevelFilter::Trace),
+        _ => None,
+    }
+}
+
+/// Load per-target log level overrides from `[log_levels.app]` in settings.toml.
+///
+/// Returns an empty Vec when the file is missing, unreadable, or contains no overrides.
+/// Invalid level strings are silently skipped.
+fn load_log_levels() -> Vec<(String, LevelFilter)> {
+    let Some(path) = settings_toml_path() else { return Vec::new() };
+    let Ok(content) = fs::read_to_string(&path) else { return Vec::new() };
+    let settings: LogLevelSettings = toml::from_str(&content).unwrap_or_default();
+
+    settings.log_levels.app.into_iter()
+        .filter_map(|(target, level_str)| {
+            Some((target, parse_level_filter(&level_str)?))
+        })
+        .collect()
+}
+
+/// Path to the settings.toml file, independent of the settings module.
+fn settings_toml_path() -> Option<PathBuf> {
+    Some(dirs::data_dir()?.join(env!("TAURI_IDENTIFIER")).join("settings.toml"))
 }
 
 // ---- Log rotation ---------------------------------------------------------------
@@ -991,5 +1053,70 @@ mod tests {
             "main log should be archived with last plugin time"
         );
         assert!(!log_file.exists(), "original log file should be gone");
+    }
+
+    // ---- parse_level_filter tests -------------------------------------------
+
+    #[test]
+    fn parse_level_filter_valid_levels() {
+        assert_eq!(parse_level_filter("off"), Some(LevelFilter::Off));
+        assert_eq!(parse_level_filter("error"), Some(LevelFilter::Error));
+        assert_eq!(parse_level_filter("warn"), Some(LevelFilter::Warn));
+        assert_eq!(parse_level_filter("info"), Some(LevelFilter::Info));
+        assert_eq!(parse_level_filter("debug"), Some(LevelFilter::Debug));
+        assert_eq!(parse_level_filter("trace"), Some(LevelFilter::Trace));
+    }
+
+    #[test]
+    fn parse_level_filter_case_insensitive() {
+        assert_eq!(parse_level_filter("DEBUG"), Some(LevelFilter::Debug));
+        assert_eq!(parse_level_filter("Info"), Some(LevelFilter::Info));
+        assert_eq!(parse_level_filter("TRACE"), Some(LevelFilter::Trace));
+    }
+
+    #[test]
+    fn parse_level_filter_invalid() {
+        assert_eq!(parse_level_filter(""), None);
+        assert_eq!(parse_level_filter("invalid"), None);
+        assert_eq!(parse_level_filter("Debu"), None);
+    }
+
+    // ---- LogLevelSettings deserialization tests -----------------------------
+
+    #[test]
+    fn deserialize_log_levels_app_section() {
+        let toml_str = r#"
+[log_levels.app]
+Settings = "Debug"
+WebSocket = "Trace"
+"#;
+        let settings: LogLevelSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(settings.log_levels.app.len(), 2);
+        assert_eq!(settings.log_levels.app["Settings"], "Debug");
+        assert_eq!(settings.log_levels.app["WebSocket"], "Trace");
+    }
+
+    #[test]
+    fn deserialize_log_levels_ignores_game_section() {
+        let toml_str = r#"
+[log_levels.game]
+PlayerPrefs = "Debug"
+
+[log_levels.app]
+Settings = "Info"
+"#;
+        let settings: LogLevelSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(settings.log_levels.app.len(), 1);
+    }
+
+    #[test]
+    fn deserialize_missing_log_levels_uses_defaults() {
+        let toml_str = r#"
+[ui]
+scale = 100
+"#;
+        let settings: LogLevelSettings = toml::from_str(toml_str).unwrap();
+        assert!(settings.log_levels.game.is_empty());
+        assert!(settings.log_levels.app.is_empty());
     }
 }
