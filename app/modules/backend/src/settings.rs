@@ -6,6 +6,7 @@
 //! When a setting changes, a [`SettingsEvent`] is broadcast to all subscribers via a [`broadcast`] channel.
 //! Other modules (e.g. WebSocket) can subscribe to react to changes without coupling.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -155,6 +156,28 @@ pub struct GameSettings {
     pub ui: GameUiSettings,
 }
 
+/// Per-target log level overrides, preserved across settings saves.
+///
+/// Configured in `[log_levels.game]` and `[log_levels.app]` sections of settings.toml.
+/// The settings module does not interpret these values; it only ensures they survive
+/// load/save round-trips. The actual parsing happens in each crate's logging module.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LogLevelScopes {
+    /// Game mod log level overrides (read by the mod's logger).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub game: BTreeMap<String, String>,
+    /// Daystrom app log level overrides (read by the backend's logger).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub app: BTreeMap<String, String>,
+}
+
+impl LogLevelScopes {
+    /// Returns `true` when no overrides are configured in either scope.
+    fn is_empty(&self) -> bool {
+        self.game.is_empty() && self.app.is_empty()
+    }
+}
+
 /// Application settings that are persisted to disk.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -164,6 +187,9 @@ pub struct AppSettings {
     /// Game mod settings (sent via WebSocket).
     #[serde(default)]
     pub game: GameSettings,
+    /// Per-target log level overrides for game mod and app backend.
+    #[serde(default, skip_serializing_if = "LogLevelScopes::is_empty")]
+    pub log_levels: LogLevelScopes,
 }
 
 /// Global in-memory copy, loaded once at startup.
@@ -178,6 +204,10 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
             auto_open_sidebar: None,
             auto_expand_job_queue: None,
         },
+    },
+    log_levels: LogLevelScopes {
+        game: BTreeMap::new(),
+        app: BTreeMap::new(),
     },
 });
 
@@ -497,6 +527,31 @@ mod tests {
         let toml_str = "[ui.hints]\nminimize_to_tray = 3\n\n[extra]\nunknown_field = true\n";
         let parsed: AppSettings = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.ui.hints.minimize_to_tray, 3);
+    }
+
+    #[test]
+    fn log_levels_survive_round_trip() {
+        let toml_str = "\
+            [game.ui]\nscale = 80\nauto_open_sidebar = true\n\n\
+            [log_levels.game]\nChatFrame = \"Debug\"\n\n\
+            [log_levels.app]\nWebSocket = \"Trace\"\n";
+        let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.log_levels.game.get("ChatFrame").unwrap(), "Debug");
+        assert_eq!(parsed.log_levels.app.get("WebSocket").unwrap(), "Trace");
+
+        // Re-serialize and parse again: log_levels must survive
+        let serialized = toml::to_string_pretty(&parsed).unwrap();
+        let reparsed: AppSettings = toml::from_str(&serialized).unwrap();
+        assert_eq!(reparsed.log_levels.game.get("ChatFrame").unwrap(), "Debug");
+        assert_eq!(reparsed.log_levels.app.get("WebSocket").unwrap(), "Trace");
+        assert_eq!(reparsed.game.ui.scale, Some(80));
+    }
+
+    #[test]
+    fn log_levels_omitted_when_empty() {
+        let settings = AppSettings::default();
+        let serialized = toml::to_string_pretty(&settings).unwrap();
+        assert!(!serialized.contains("log_levels"));
     }
 
     #[test]
