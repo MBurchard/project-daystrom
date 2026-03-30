@@ -29,6 +29,9 @@ pub struct GameUiSettings {
     /// Whether to auto-open the chat sidebar on game start.
     #[serde(default, deserialize_with = "lenient_option")]
     pub auto_open_sidebar: Option<bool>,
+    /// Whether to auto-expand the job queue panel from compact to full view.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub auto_expand_job_queue: Option<bool>,
 }
 
 /// Game settings received from Daystrom.
@@ -61,6 +64,11 @@ pub fn auto_open_sidebar() -> bool {
     state().lock().unwrap().ui.auto_open_sidebar.unwrap_or(false)
 }
 
+/// Whether the job queue panel should be auto-expanded from compact to full view.
+pub fn auto_expand_job_queue() -> bool {
+    state().lock().unwrap().ui.auto_expand_job_queue.unwrap_or(false)
+}
+
 /// Replace all settings with a full snapshot from Daystrom (`settings.sync`).
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
@@ -69,6 +77,7 @@ pub fn apply_sync(settings: GameSettings) {
     { *state().lock().unwrap() = settings; }
     crate::hooks::ui_scale::apply_current_scale();
     crate::hooks::chat_frame::on_settings_synced();
+    crate::hooks::job_queue::on_settings_synced();
 }
 
 /// Patch individual settings from an incremental update (`settings.update`).
@@ -91,6 +100,12 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             if let Some(v) = value.as_bool() {
                 debug!(target: "Settings", "Update: game.ui.auto_open_sidebar = {v}");
                 s.ui.auto_open_sidebar = Some(v);
+            }
+        }
+        "game.ui.auto_expand_job_queue" => {
+            if let Some(v) = value.as_bool() {
+                debug!(target: "Settings", "Update: game.ui.auto_expand_job_queue = {v}");
+                s.ui.auto_expand_job_queue = Some(v);
             }
         }
         other => {

@@ -46,10 +46,14 @@ const PROFILE_ASSEMBLIES: &[&str] = &[
 /// Always calls the original function and returns its result. Our custom logic (reading player
 /// data) runs inside `catch_unwind` so a panic never propagates across the FFI boundary.
 extern "C" fn hook(this: *mut Il2CppObject) -> *mut Il2CppObject {
-    let original: GetLocalUserProfileFn = unsafe { std::mem::transmute(ORIGINAL.load(Relaxed)) };
-
-    // Always call original first
-    let result = unsafe { original(this) };
+    // Always call original first.
+    let orig_ptr = ORIGINAL.load(Relaxed);
+    let result = if !orig_ptr.is_null() {
+        let original: GetLocalUserProfileFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this) }
+    } else {
+        std::ptr::null_mut()
+    };
 
     // Run our logic only if the hook is still active and we got a result
     if HOOK_INFO.is_active() && !result.is_null() {

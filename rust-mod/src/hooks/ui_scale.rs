@@ -105,10 +105,12 @@ pub fn apply_current_scale() {
 /// caches the scaler pointer and original scale factor, then applies the user's scale multiplier.
 /// Only touches the root canvas, leaving other canvases (daily goals, away teams, etc.) untouched.
 extern "C" fn hook_update(this: *mut Il2CppObject) {
-    let original: UpdateFn = unsafe { std::mem::transmute(ORIGINAL_FN.load(Relaxed)) };
-
     // Always call the original first so the game's normal scaling runs.
-    unsafe { original(this) };
+    let orig_ptr = ORIGINAL_FN.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let original: UpdateFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this) };
+    }
 
     if !HOOK_INFO.is_active() {
         return;

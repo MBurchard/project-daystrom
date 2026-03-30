@@ -30,6 +30,17 @@ function onAutoOpenSidebarChange(event: Event) {
   save();
 }
 
+/**
+ * Toggle the "Auto-expand Job Queue" checkbox and send to backend.
+ *
+ * @param event - Native change event from the checkbox.
+ */
+function onAutoExpandJobQueueChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.ui.auto_expand_job_queue = target.checked;
+  save();
+}
+
 /** Effective UI scale, defaulting to 100% when not set. */
 const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
 </script>
@@ -64,6 +75,14 @@ const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
             type="checkbox"
             :checked="settings.ui.auto_open_sidebar ?? false"
             @change="onAutoOpenSidebarChange">
+      </div>
+
+      <div class="setting-row">
+        <label for="auto-expand-job-queue">Auto-expand Job Queue</label>
+        <input id="auto-expand-job-queue"
+            type="checkbox"
+            :checked="settings.ui.auto_expand_job_queue ?? false"
+            @change="onAutoExpandJobQueueChange">
       </div>
     </section>
   </div>

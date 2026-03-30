@@ -152,8 +152,11 @@ extern "C" fn hook_get_key_down(key: i32) -> bool {
     if key == KEYCODE_SPACE && SPACE_CONSUMED.load(Relaxed) {
         return false;
     }
-    let original: GetKeyDownIntFn =
-        unsafe { std::mem::transmute(ORIGINAL_GET_KEY_DOWN.load(Relaxed)) };
+    let orig_ptr = ORIGINAL_GET_KEY_DOWN.load(Relaxed);
+    if orig_ptr.is_null() {
+        return false;
+    }
+    let original: GetKeyDownIntFn = unsafe { std::mem::transmute(orig_ptr) };
     unsafe { original(key) }
 }
 
@@ -187,8 +190,11 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
     }
 
     // Original update runs AFTER our key processing.
-    let original: UpdateFn = unsafe { std::mem::transmute(ORIGINAL_UPDATE.load(Relaxed)) };
-    unsafe { original(this) };
+    let orig_ptr = ORIGINAL_UPDATE.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let original: UpdateFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this) };
+    }
 }
 
 /// If an `AnimatedRewardsScreenViewController` is tracked and active, collect rewards via `OnCollectClicked()`.

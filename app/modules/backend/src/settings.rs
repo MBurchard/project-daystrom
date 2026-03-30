@@ -34,6 +34,8 @@ pub enum SettingsEvent {
     GameUiScale(u32),
     /// The "auto-open sidebar" toggle changed.
     AutoOpenSidebar(bool),
+    /// The "auto-expand job queue" toggle changed.
+    AutoExpandJobQueue(bool),
 }
 
 impl SettingsEvent {
@@ -42,6 +44,7 @@ impl SettingsEvent {
         match self {
             Self::GameUiScale(_) => "game.ui.scale",
             Self::AutoOpenSidebar(_) => "game.ui.auto_open_sidebar",
+            Self::AutoExpandJobQueue(_) => "game.ui.auto_expand_job_queue",
         }
     }
 
@@ -50,6 +53,7 @@ impl SettingsEvent {
         match self {
             Self::GameUiScale(scale) => serde_json::json!(scale),
             Self::AutoOpenSidebar(v) => serde_json::json!(v),
+            Self::AutoExpandJobQueue(v) => serde_json::json!(v),
         }
     }
 }
@@ -137,6 +141,9 @@ pub struct GameUiSettings {
     /// Whether to auto-open the chat sidebar when the game starts.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub auto_open_sidebar: Option<bool>,
+    /// Whether to auto-expand the job queue panel from compact to full view.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub auto_expand_job_queue: Option<bool>,
 }
 
 /// Game-related settings that are sent to the mod.
@@ -169,6 +176,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
         ui: GameUiSettings {
             scale: None,
             auto_open_sidebar: None,
+            auto_expand_job_queue: None,
         },
     },
 });
@@ -393,6 +401,11 @@ pub fn set_game_settings(settings: GameSettings) {
                 events.push(SettingsEvent::AutoOpenSidebar(v));
             }
         }
+        if let Some(v) = s.game.ui.auto_expand_job_queue {
+            if s.game.ui.auto_expand_job_queue != old.ui.auto_expand_job_queue {
+                events.push(SettingsEvent::AutoExpandJobQueue(v));
+            }
+        }
         events
     };
 
@@ -405,6 +418,7 @@ pub fn set_game_settings(settings: GameSettings) {
             match event {
                 SettingsEvent::GameUiScale(scale) => log_debug!("UI scale set to {scale}%"),
                 SettingsEvent::AutoOpenSidebar(v) => log_debug!("Auto-open sidebar set to {v}"),
+                SettingsEvent::AutoExpandJobQueue(v) => log_debug!("Auto-expand job queue set to {v}"),
             }
         }
     }

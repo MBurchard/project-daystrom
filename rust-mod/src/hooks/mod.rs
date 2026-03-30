@@ -8,6 +8,7 @@ pub(crate) mod tracker;
 pub(crate) mod chat_frame;
 mod hotkeys;
 pub mod il2cpp_init;
+pub(crate) mod job_queue;
 mod player_prefs;
 mod spacebar;
 pub(crate) mod ui_scale;
@@ -61,6 +62,7 @@ pub fn install_all_hooks() {
     ui_scale::install(api);
     hotkeys::install(api);
     chat_frame::install(api);
+    job_queue::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }
