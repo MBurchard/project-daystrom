@@ -1,6 +1,6 @@
 [package]
 name = "stfc-mod"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 
 [lib]
@@ -13,7 +13,7 @@ max_level_trace = [ "log/max_level_trace" ]
 
 [dependencies]
 chrono = "0.4"
-ctor = "0.6"
+ctor = "0.8.0"
 dirs = "6"
 futures-util = { version = "0.3", default-features = false, features = [ "sink" ] }
 libc = "0.2"

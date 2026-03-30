@@ -105,6 +105,10 @@ struct AuthSection {
     scopely_id_allow_association: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     current_version: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    is_first_launch: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_service_api_version: Option<i32>,
 }
 
 impl AuthSection {
@@ -129,7 +133,48 @@ impl AuthSection {
             && self.login_allow_association.is_none()
             && self.scopely_id_allow_association.is_none()
             && self.current_version.is_none()
+            && self.is_first_launch.is_none()
+            && self.account_service_api_version.is_none()
     }
+}
+
+// ---- Known defaults -------------------------------------------------------
+
+/// A default value for a PlayerPrefs key that must always be available,
+/// even before the user ID is known (Phase 1).
+///
+/// String keys don't need entries here because the blocked path in the
+/// hook layer returns "" for any unknown string key, matching Unity's
+/// PlayerPrefs.GetString behaviour.
+enum KnownDefault {
+    Int(i32),
+}
+
+/// Keys with known defaults. These are never blocked in Phase 1 and fall
+/// back to their default when not yet stored.
+const KNOWN_DEFAULTS: &[(&str, KnownDefault)] = &[
+    ("isFirstLaunch", KnownDefault::Int(1)),
+    ("Login/AccountServiceApiVersion", KnownDefault::Int(2)),
+];
+
+/// Look up the known default for a key.
+fn known_default(key: &str) -> Option<&'static KnownDefault> {
+    KNOWN_DEFAULTS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| v)
+}
+
+/// Seed all known defaults into the store if not already present.
+fn seed_known_defaults(state: &mut StoreState) {
+    for (key, default) in KNOWN_DEFAULTS {
+        let KnownDefault::Int(i) = default;
+        if state.get_int(key).is_none() {
+            state.put_int(key, *i);
+        }
+    }
+    // Seeding should not mark the store as dirty.
+    state.dirty = false;
 }
 
 // ---- Key routing ----------------------------------------------------------
@@ -161,6 +206,8 @@ fn route_key(key: &str) -> KeyRoute<'_> {
         "player_level" => KeyRoute::Profil("player_level"),
         "accounts/3/server_instance_id" => KeyRoute::Profil("server_instance_id"),
         // [auth]
+        "isFirstLaunch" => KeyRoute::Auth("is_first_launch"),
+        "Login/AccountServiceApiVersion" => KeyRoute::Auth("account_service_api_version"),
         "selected_authentication" => KeyRoute::Auth("selected_authentication"),
         "accounts/current_version" => KeyRoute::Auth("current_version"),
         "accounts/3/master_id" => KeyRoute::Auth("master_id"),
@@ -222,14 +269,15 @@ impl StoreState {
     /// Whether a key can be correctly routed right now.
     ///
     /// Phase 1 (no `user_id`): only keys with an explicit match in
-    /// `route_key()` are routable. Keys that fall through to the `Misc`
-    /// catch-all might be uid-prefixed and we cannot tell yet.
+    /// `route_key()` are routable, plus keys in `KNOWN_DEFAULTS`. Keys
+    /// that fall through to the `Misc` catch-all might be uid-prefixed
+    /// and we cannot tell yet.
     /// Phase 2 (`user_id` known): everything is routable.
     fn can_route(&self, key: &str) -> bool {
         if self.data.profil.user_id.is_some() {
             return true;
         }
-        !matches!(route_key(key), KeyRoute::Misc)
+        known_default(key).is_some() || !matches!(route_key(key), KeyRoute::Misc)
     }
 
     /// Check if a key is a user-ID-prefixed chat key (e.g. `{uid}chatHist`).
@@ -426,6 +474,18 @@ impl StoreState {
                 self.dirty = true;
                 true
             }
+            KeyRoute::Auth("is_first_launch") => {
+                if self.data.auth.is_first_launch == Some(value) { return false; }
+                self.data.auth.is_first_launch = Some(value);
+                self.dirty = true;
+                true
+            }
+            KeyRoute::Auth("account_service_api_version") => {
+                if self.data.auth.account_service_api_version == Some(value) { return false; }
+                self.data.auth.account_service_api_version = Some(value);
+                self.dirty = true;
+                true
+            }
             KeyRoute::Auth("scopely_id_allow_association") => {
                 if self.data.auth.scopely_id_allow_association == Some(value) { return false; }
                 self.data.auth.scopely_id_allow_association = Some(value);
@@ -505,7 +565,7 @@ impl StoreState {
             return self.get_player_value(suffix).is_some();
         }
 
-        match route_key(key) {
+        let stored = match route_key(key) {
             KeyRoute::Profil(field) => match field {
                 "player_level" => self.data.profil.player_level.is_some(),
                 "server_instance_id" => self.data.profil.server_instance_id.is_some(),
@@ -513,6 +573,8 @@ impl StoreState {
             },
             KeyRoute::Auth(field) => match field {
                 "current_version" => self.data.auth.current_version.is_some(),
+                "is_first_launch" => self.data.auth.is_first_launch.is_some(),
+                "account_service_api_version" => self.data.auth.account_service_api_version.is_some(),
                 "scopely_id_allow_association" => self.data.auth.scopely_id_allow_association.is_some(),
                 "login_allow_association" => self.data.auth.login_allow_association.is_some(),
                 _ => self.auth_field(field).is_some_and(|v| v.is_some()),
@@ -520,7 +582,8 @@ impl StoreState {
             KeyRoute::Chat => self.data.chat.contains_key(key),
             KeyRoute::Misc => self.data.misc.contains_key(key),
             KeyRoute::Cache => self.data.cache.contains_key(key),
-        }
+        };
+        stored || known_default(key).is_some()
     }
 
     /// Look up a stored string value. Returns `None` if never set.
@@ -563,6 +626,8 @@ impl StoreState {
             KeyRoute::Profil("player_level") => self.data.profil.player_level,
             KeyRoute::Profil("server_instance_id") => self.data.profil.server_instance_id,
             KeyRoute::Auth("current_version") => self.data.auth.current_version,
+            KeyRoute::Auth("is_first_launch") => self.data.auth.is_first_launch,
+            KeyRoute::Auth("account_service_api_version") => self.data.auth.account_service_api_version,
             KeyRoute::Auth("scopely_id_allow_association") => self.data.auth.scopely_id_allow_association,
             KeyRoute::Auth("login_allow_association") => self.data.auth.login_allow_association,
             KeyRoute::Chat => self.data.chat.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
@@ -570,6 +635,10 @@ impl StoreState {
             KeyRoute::Cache => self.data.cache.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
             _ => None,
         }
+        .or_else(|| match known_default(key) {
+            Some(KnownDefault::Int(i)) => Some(*i),
+            _ => None,
+        })
     }
 
     /// Look up a stored float value.
@@ -651,6 +720,12 @@ impl StoreState {
             }
             crate::logging::rename_log(&new_stem);
             self.current_stem = Some(new_stem.clone());
+        }
+
+        // First flush means the account is established. Clear the
+        // first-launch flag so subsequent starts skip the new-player flow.
+        if self.data.auth.is_first_launch == Some(1) {
+            self.data.auth.is_first_launch = Some(0);
         }
 
         match toml::to_string_pretty(&self.data) {
@@ -772,14 +847,16 @@ where
                 }
             }
             ProfileMode::NewAccount => {
-                info!(target: "ProfileStore", "New account mode: all values empty");
-                StoreState {
+                info!(target: "ProfileStore", "New account mode: seeding defaults");
+                let mut state = StoreState {
                     data: ProfileData::default(),
                     dirty: false,
                     last_flush: Instant::now(),
                     mode,
                     current_stem: None,
-                }
+                };
+                seed_known_defaults(&mut state);
+                state
             }
             ProfileMode::Import => {
                 // Try to load an existing profile, otherwise start fresh
