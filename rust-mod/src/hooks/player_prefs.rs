@@ -220,10 +220,8 @@ extern "C" fn hook_set_string(
     if super::is_trace_only() {
         unsafe { original(key, value, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            let v = display_string(value);
-            info!(target: "Trace", "SET_STRING \"{k}\" = \"{v}\"");
-        }
+        let v = display_string(value);
+        super::trace_log("SET_STRING", &k, &format!("= \"{v}\""));
         return;
     }
 
@@ -241,8 +239,8 @@ extern "C" fn hook_set_string(
 
         if profile_store::is_routed(&k) {
             let known = profile_store::record(&k, &v);
-            if !known {
-                debug!(target: "PlayerPrefs", "STORE SET \"{k}\"");
+            if super::should_log("SET_STRING", &k) {
+                debug!(target: "PlayerPrefs", "STORE SET \"{k}\" = \"{v}\" (known={known})");
             }
             return true; // handled, don't call original
         }
@@ -268,10 +266,8 @@ extern "C" fn hook_get_string_2(
             unsafe { std::mem::transmute(ORIGINAL_GET_STRING_2.load(Relaxed)) };
         let result = unsafe { original(key, default_value, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            let v = display_string(result);
-            info!(target: "Trace", "GET_STRING/2 \"{k}\" -> \"{v}\"");
-        }
+        let v = display_string(result);
+        super::trace_log("GET_STRING/2", &k, &format!("-> \"{v}\""));
         return result;
     }
 
@@ -281,12 +277,20 @@ extern "C" fn hook_get_string_2(
 
             // Try store first
             if let Some(stored) = profile_store::get(&k) {
+                if super::should_log("GET_STRING", &k) {
+                    debug!(target: "PlayerPrefs", "STORE HIT \"{k}\" -> \"{stored}\"");
+                }
                 return make_il2cpp_string(&stored);
             }
 
-            // Block Registry in NewAccount/Known modes
+            // Block Registry in NewAccount/Known modes.
+            // Always return "" for blocked strings, matching Unity's
+            // PlayerPrefs.GetString behaviour (never null).
             if registry_blocked() {
-                return default_value;
+                if super::should_log("BLOCKED", &k) {
+                    debug!(target: "PlayerPrefs", "BLOCKED \"{k}\"");
+                }
+                return make_il2cpp_string("");
             }
 
             // Import mode: fall through to Registry
@@ -325,10 +329,8 @@ extern "C" fn hook_get_string_1(
             unsafe { std::mem::transmute(ORIGINAL_GET_STRING_1.load(Relaxed)) };
         let result = unsafe { original(key, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            let v = display_string(result);
-            info!(target: "Trace", "GET_STRING/1 \"{k}\" -> \"{v}\"");
-        }
+        let v = display_string(result);
+        super::trace_log("GET_STRING/1", &k, &format!("-> \"{v}\""));
         return result;
     }
 
@@ -376,9 +378,7 @@ extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *con
     if super::is_trace_only() {
         unsafe { original(key, value, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            info!(target: "Trace", "SET_INT \"{k}\" = {value}");
-        }
+        super::trace_log("SET_INT", &k, &format!("= {value}"));
         return;
     }
 
@@ -391,8 +391,8 @@ extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *con
         let k = display_string(key);
         if profile_store::is_routed(&k) {
             let known = profile_store::record_int(&k, value);
-            if !known {
-                debug!(target: "PlayerPrefs", "STORE SET_INT \"{k}\" = {value}");
+            if super::should_log("SET_INT", &k) {
+                debug!(target: "PlayerPrefs", "STORE SET_INT \"{k}\" = {value} (known={known})");
             }
             return true;
         }
@@ -413,9 +413,7 @@ extern "C" fn hook_get_int(
         let original: GetIntFn = unsafe { std::mem::transmute(ORIGINAL_GET_INT.load(Relaxed)) };
         let result = unsafe { original(key, default_value, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            info!(target: "Trace", "GET_INT \"{k}\" -> {result}");
-        }
+        super::trace_log("GET_INT", &k, &format!("-> {result}"));
         return result;
     }
 
@@ -424,10 +422,16 @@ extern "C" fn hook_get_int(
             let k = display_string(key);
 
             if let Some(stored) = profile_store::get_int(&k) {
+                if super::should_log("GET_INT", &k) {
+                    debug!(target: "PlayerPrefs", "STORE HIT_INT \"{k}\" -> {stored}");
+                }
                 return stored;
             }
 
             if registry_blocked() {
+                if super::should_log("BLOCKED_INT", &k) {
+                    debug!(target: "PlayerPrefs", "BLOCKED_INT \"{k}\" -> default {default_value}");
+                }
                 return default_value;
             }
 
@@ -458,9 +462,7 @@ extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *c
     if super::is_trace_only() {
         unsafe { original(key, value, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            info!(target: "Trace", "SET_FLOAT \"{k}\" = {value}");
-        }
+        super::trace_log("SET_FLOAT", &k, &format!("= {value}"));
         return;
     }
 
@@ -473,8 +475,8 @@ extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *c
         let k = display_string(key);
         if profile_store::is_routed(&k) {
             let known = profile_store::record_float(&k, value);
-            if !known {
-                debug!(target: "PlayerPrefs", "STORE SET_FLOAT \"{k}\" = {value}");
+            if super::should_log("SET_FLOAT", &k) {
+                debug!(target: "PlayerPrefs", "STORE SET_FLOAT \"{k}\" = {value} (known={known})");
             }
             return true;
         }
@@ -496,9 +498,7 @@ extern "C" fn hook_get_float(
             unsafe { std::mem::transmute(ORIGINAL_GET_FLOAT.load(Relaxed)) };
         let result = unsafe { original(key, default_value, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            info!(target: "Trace", "GET_FLOAT \"{k}\" -> {result}");
-        }
+        super::trace_log("GET_FLOAT", &k, &format!("-> {result}"));
         return result;
     }
 
@@ -544,9 +544,7 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
         let original: HasKeyFn = unsafe { std::mem::transmute(ORIGINAL_HAS_KEY.load(Relaxed)) };
         let result = unsafe { original(key, method_info) };
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            info!(target: "Trace", "HAS_KEY \"{k}\" -> {result}");
-        }
+        super::trace_log("HAS_KEY", &k, &format!("-> {result}"));
         return result;
     }
 
@@ -559,6 +557,9 @@ extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInf
                     || profile_store::get_int(&k).is_some()
                     || profile_store::get_float(&k).is_some();
                 if exists {
+                    if super::should_log("HAS_KEY", &k) {
+                        debug!(target: "PlayerPrefs", "HASKEY HIT \"{k}\"");
+                    }
                     return 1;
                 }
                 // Key is routed but not in store. For primary profiles
@@ -607,9 +608,7 @@ extern "C" fn hook_delete_key(key: *mut Il2CppString, method_info: *const Method
     // Trace-only: log matched keys, no store interaction
     if super::is_trace_only() {
         let k = display_string(key);
-        if super::is_trace_match(&k) {
-            info!(target: "Trace", "DELETE \"{k}\"");
-        }
+        super::trace_log("DELETE", &k, "");
         return;
     }
 

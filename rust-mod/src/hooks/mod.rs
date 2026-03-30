@@ -1,4 +1,7 @@
-use log::debug;
+use std::collections::HashSet;
+use std::sync::Mutex;
+
+use log::{debug, info};
 
 pub(crate) mod tracker;
 
@@ -12,19 +15,34 @@ mod user_profile;
 
 // ---- Trace mode (dev tool) ------------------------------------------------
 
-/// Hardcoded trace pattern. Set to `Some("substring")` to activate observation mode.
+/// Set to `true` to activate trace/observation mode.
 /// When active, all hooks pass through to the original, no store interaction, no TOML.
-/// Only keys containing the pattern are logged. Set to `None` for normal operation.
-const TRACE_PATTERN: Option<&str> = None;
-
-/// Whether a key matches the active trace pattern.
-pub fn is_trace_match(key: &str) -> bool {
-    TRACE_PATTERN.is_some_and(|p| key.contains(p))
-}
+const TRACE_ENABLED: bool = false;
 
 /// Whether the mod is in trace/observation mode (no store, pure passthrough).
 pub fn is_trace_only() -> bool {
-    TRACE_PATTERN.is_some()
+    TRACE_ENABLED
+}
+
+/// Dedup state: each op:key combination is logged only once per session.
+static DEDUP: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Check if an op+key combination should be logged (dedup).
+///
+/// Returns `false` for combinations already seen. High-frequency keys
+/// (frame polling) are handled generically: logged once, then silent.
+pub fn should_log(op: &str, key: &str) -> bool {
+    let mut guard = DEDUP.lock().unwrap_or_else(|e| e.into_inner());
+    let seen = guard.get_or_insert_with(HashSet::new);
+    seen.insert(format!("{op}:{key}"))
+}
+
+/// Log a PlayerPrefs operation in trace mode (deduped).
+pub fn trace_log(op: &str, key: &str, detail: &str) {
+    if !should_log(op, key) {
+        return;
+    }
+    info!(target: "Trace", "{op} \"{key}\" {detail}");
 }
 
 // ---- Hook installation ----------------------------------------------------
