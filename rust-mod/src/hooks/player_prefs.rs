@@ -108,6 +108,24 @@ fn is_suppressed(key: &str) -> bool {
         || HASKEY_SUPPRESS_PREFIX.iter().any(|&p| key.starts_with(p))
 }
 
+// ---- Log helpers ----------------------------------------------------------
+
+/// Maximum length for string values in log output. Longer values are truncated with an ellipsis.
+const LOG_VALUE_MAX_LEN: usize = 80;
+
+/// Truncate a string value for log output, appending "..." if it exceeds [`LOG_VALUE_MAX_LEN`].
+///
+/// Truncates at a valid UTF-8 character boundary to avoid panics on multibyte characters.
+fn truncate_value(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.len() <= LOG_VALUE_MAX_LEN {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        // Find the last char boundary at or before LOG_VALUE_MAX_LEN.
+        let end = s.floor_char_boundary(LOG_VALUE_MAX_LEN);
+        std::borrow::Cow::Owned(format!("{}...", &s[..end]))
+    }
+}
+
 // ---- Set-hook dispatch helper ---------------------------------------------
 
 /// Dispatch the result of a `catch_unwind` in a PlayerPrefs set hook.
@@ -221,7 +239,8 @@ extern "C" fn hook_set_string(
         unsafe { original(key, value, method_info) };
         let k = display_string(key);
         let v = display_string(value);
-        super::trace_log("SET_STRING", &k, &format!("= \"{v}\""));
+        let tv = truncate_value(&v);
+        super::trace_log("SET_STRING", &k, &format!("= \"{tv}\""));
         return;
     }
 
@@ -240,7 +259,8 @@ extern "C" fn hook_set_string(
         if profile_store::is_routed(&k) {
             let known = profile_store::record(&k, &v);
             if super::should_log("SET_STRING", &k) {
-                debug!(target: "PlayerPrefs", "STORE SET \"{k}\" = \"{v}\" (known={known})");
+                let tv = truncate_value(&v);
+                debug!(target: "PlayerPrefs", "STORE SET \"{k}\" = \"{tv}\" (known={known})");
             }
             return true; // handled, don't call original
         }
@@ -267,7 +287,8 @@ extern "C" fn hook_get_string_2(
         let result = unsafe { original(key, default_value, method_info) };
         let k = display_string(key);
         let v = display_string(result);
-        super::trace_log("GET_STRING/2", &k, &format!("-> \"{v}\""));
+        let tv = truncate_value(&v);
+        super::trace_log("GET_STRING/2", &k, &format!("-> \"{tv}\""));
         return result;
     }
 
@@ -278,7 +299,8 @@ extern "C" fn hook_get_string_2(
             // Try store first
             if let Some(stored) = profile_store::get(&k) {
                 if super::should_log("GET_STRING", &k) {
-                    debug!(target: "PlayerPrefs", "STORE HIT \"{k}\" -> \"{stored}\"");
+                    let tv = truncate_value(&stored);
+                    debug!(target: "PlayerPrefs", "STORE HIT \"{k}\" -> \"{tv}\"");
                 }
                 return make_il2cpp_string(&stored);
             }
@@ -330,7 +352,8 @@ extern "C" fn hook_get_string_1(
         let result = unsafe { original(key, method_info) };
         let k = display_string(key);
         let v = display_string(result);
-        super::trace_log("GET_STRING/1", &k, &format!("-> \"{v}\""));
+        let tv = truncate_value(&v);
+        super::trace_log("GET_STRING/1", &k, &format!("-> \"{tv}\""));
         return result;
     }
 
@@ -711,4 +734,52 @@ pub fn install(api: &Il2CppApi) {
         class, api, "DeleteKey", 1, "PlayerPrefs.DeleteKey",
         hook_delete_key as *const (), &ORIGINAL_DELETE_KEY,
     );
+}
+
+// ---- Tests ----------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_short_string_unchanged() {
+        let s = "hello";
+        let result = truncate_value(s);
+        assert_eq!(&*result, "hello");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn truncate_exact_boundary_unchanged() {
+        let s = "a".repeat(LOG_VALUE_MAX_LEN);
+        let result = truncate_value(&s);
+        assert_eq!(result.len(), LOG_VALUE_MAX_LEN);
+        assert!(!result.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_long_string_adds_ellipsis() {
+        let s = "a".repeat(LOG_VALUE_MAX_LEN + 20);
+        let result = truncate_value(&s);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.len(), LOG_VALUE_MAX_LEN + 3); // 80 chars + "..."
+    }
+
+    #[test]
+    fn truncate_empty_string() {
+        assert_eq!(&*truncate_value(""), "");
+    }
+
+    #[test]
+    fn truncate_multibyte_at_boundary() {
+        // 78 ASCII bytes + a 4-byte emoji = 82 bytes total.
+        // Truncation at byte 80 would split the emoji; floor_char_boundary backs up to 78.
+        let s = format!("{}{}", "a".repeat(78), "\u{1F30D}"); // 🌍
+        assert_eq!(s.len(), 82);
+        let result = truncate_value(&s);
+        assert!(result.ends_with("..."));
+        assert!(!result.contains('\u{FFFD}')); // no replacement chars
+        assert_eq!(&result[..78], "a".repeat(78));
+    }
 }

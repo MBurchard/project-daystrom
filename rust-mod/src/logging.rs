@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -6,7 +7,8 @@ use std::sync::OnceLock;
 use std::thread;
 
 use chrono::{Local, NaiveDate};
-use log::{Level, Log, Metadata, Record};
+use log::{Level, LevelFilter, Log, Metadata, Record};
+use serde::Deserialize;
 
 use crate::TAURI_IDENTIFIER;
 
@@ -258,6 +260,63 @@ fn writer_thread(rx: mpsc::Receiver<LogMessage>, dir: PathBuf, mut base_name: St
 
 // ---- Logger implementation ------------------------------------------------
 
+// ---- Per-target log levels from settings.toml ---------------------------------
+
+/// Per-target log level overrides, loaded once at init from `[log_levels]` in settings.toml.
+static TARGET_LEVELS: OnceLock<HashMap<String, LevelFilter>> = OnceLock::new();
+
+/// Minimal struct to extract only the `[log_levels.game]` section from settings.toml.
+#[derive(Default, Deserialize)]
+struct LogLevelSettings {
+    #[serde(default)]
+    log_levels: LogLevelScopes,
+}
+
+/// Scoped log level overrides: `game` for the mod, `app` for the Daystrom backend.
+#[derive(Default, Deserialize)]
+struct LogLevelScopes {
+    #[serde(default)]
+    game: HashMap<String, String>,
+    #[serde(default)]
+    app: HashMap<String, String>,
+}
+
+/// Parse a level string (case-insensitive) into a [`LevelFilter`].
+fn parse_level_filter(s: &str) -> Option<LevelFilter> {
+    match s.to_lowercase().as_str() {
+        "off" => Some(LevelFilter::Off),
+        "error" => Some(LevelFilter::Error),
+        "warn" => Some(LevelFilter::Warn),
+        "info" => Some(LevelFilter::Info),
+        "debug" => Some(LevelFilter::Debug),
+        "trace" => Some(LevelFilter::Trace),
+        _ => None,
+    }
+}
+
+/// Load per-target log level overrides from `[log_levels.game]` in settings.toml.
+///
+/// Returns an empty map when the file is missing, unreadable, or contains no overrides.
+/// Invalid level strings are silently skipped.
+fn load_log_levels() -> HashMap<String, LevelFilter> {
+    let Some(path) = dirs::data_dir()
+        .map(|d| d.join(TAURI_IDENTIFIER).join("settings.toml")) else {
+        return HashMap::new();
+    };
+    let Ok(content) = fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    let settings: LogLevelSettings = toml::from_str(&content).unwrap_or_default();
+
+    settings.log_levels.game.into_iter()
+        .filter_map(|(target, level_str)| {
+            Some((target, parse_level_filter(&level_str)?))
+        })
+        .collect()
+}
+
+// ---- Logger -------------------------------------------------------------------
+
 /// Custom `log::Log` implementation that writes to the mod log file in Daystrom's bit-log format
 /// via a background writer thread.
 ///
@@ -273,14 +332,20 @@ struct ModLogger;
 impl Log for ModLogger {
     /// Check whether a log record should be emitted.
     ///
-    /// Always returns `true` because compile-time level filtering via Cargo features (`max_level_debug` /
-    /// `max_level_trace`) already eliminates unwanted levels at zero cost.
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
+    /// Checks per-target level overrides from `[log_levels.game]` in settings.toml.
+    /// Targets without an explicit override use the default level (Info).
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        let max_level = TARGET_LEVELS.get()
+            .and_then(|levels| levels.get(metadata.target()).copied())
+            .unwrap_or(LevelFilter::Info);
+        metadata.level() <= max_level
     }
 
     /// Format a log line and send it to the background writer thread.
     fn log(&self, record: &Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
         let Some(sender) = LOG_SENDER.get() else {
             return;
         };
@@ -339,8 +404,15 @@ pub fn init() {
         .spawn(move || writer_thread(rx, writer_dir, writer_name))
         .expect("failed to spawn log writer thread");
 
+    let levels = TARGET_LEVELS.get_or_init(load_log_levels);
+
+    // The global max level must be the most permissive of the default (Info) and any per-target override.
+    // Otherwise the `log` crate's compile-time/static filter would discard records before they even reach `enabled()`.
+    let max_override = levels.values().copied().max().unwrap_or(LevelFilter::Off);
+    let effective_max = std::cmp::max(LevelFilter::Info, max_override);
+
     log::set_logger(&LOGGER).expect("logger already initialised");
-    log::set_max_level(log::LevelFilter::Trace);
+    log::set_max_level(effective_max);
 }
 
 /// Rename the active log file to a new profile-specific name.
@@ -581,5 +653,70 @@ mod tests {
         let content = fs::read_to_string(dir.join("mod_106_Nabor.log")).unwrap();
         assert!(content.contains("before rename"));
         assert!(content.contains("after rename"));
+    }
+
+    // ---- parse_level_filter tests -----------------------------------------
+
+    #[test]
+    fn parse_level_filter_valid_levels() {
+        assert_eq!(parse_level_filter("off"), Some(LevelFilter::Off));
+        assert_eq!(parse_level_filter("error"), Some(LevelFilter::Error));
+        assert_eq!(parse_level_filter("warn"), Some(LevelFilter::Warn));
+        assert_eq!(parse_level_filter("info"), Some(LevelFilter::Info));
+        assert_eq!(parse_level_filter("debug"), Some(LevelFilter::Debug));
+        assert_eq!(parse_level_filter("trace"), Some(LevelFilter::Trace));
+    }
+
+    #[test]
+    fn parse_level_filter_case_insensitive() {
+        assert_eq!(parse_level_filter("DEBUG"), Some(LevelFilter::Debug));
+        assert_eq!(parse_level_filter("Info"), Some(LevelFilter::Info));
+        assert_eq!(parse_level_filter("TRACE"), Some(LevelFilter::Trace));
+    }
+
+    #[test]
+    fn parse_level_filter_invalid() {
+        assert_eq!(parse_level_filter(""), None);
+        assert_eq!(parse_level_filter("invalid"), None);
+        assert_eq!(parse_level_filter("Debu"), None);
+    }
+
+    // ---- LogLevelSettings deserialization tests ----------------------------
+
+    #[test]
+    fn deserialize_log_levels_game_section() {
+        let toml_str = r#"
+[log_levels.game]
+PlayerPrefs = "Info"
+HookEngine = "Debug"
+"#;
+        let settings: LogLevelSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(settings.log_levels.game.len(), 2);
+        assert_eq!(settings.log_levels.game["PlayerPrefs"], "Info");
+        assert_eq!(settings.log_levels.game["HookEngine"], "Debug");
+    }
+
+    #[test]
+    fn deserialize_log_levels_ignores_app_section() {
+        let toml_str = r#"
+[log_levels.app]
+Settings = "Debug"
+
+[log_levels.game]
+PlayerPrefs = "Info"
+"#;
+        let settings: LogLevelSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(settings.log_levels.game.len(), 1);
+    }
+
+    #[test]
+    fn deserialize_missing_log_levels_uses_defaults() {
+        let toml_str = r#"
+[ui]
+scale = 100
+"#;
+        let settings: LogLevelSettings = toml::from_str(toml_str).unwrap();
+        assert!(settings.log_levels.game.is_empty());
+        assert!(settings.log_levels.app.is_empty());
     }
 }
