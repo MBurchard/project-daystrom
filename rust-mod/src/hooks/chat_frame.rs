@@ -1,20 +1,18 @@
 //! Auto-open chat sidebar on game start.
 //!
-//! Hooks `UIFrameManager.ShowSideFrame()` to apply the maximum width after the sidebar opens.
-//!
-//! Hooks `ChatPreviewController.OnEnable()` to detect when the game's chat UI is ready.
-//! When `auto_open_sidebar` is enabled, simulates a click on the side panel button and resizes the sidebar to maximum
-//! width (the game clamps to its actual limit).
+//! Hooks `UIFrameManager.OnEnable()` to capture the manager instance and `ChatPreviewController.OnEnable()` to detect
+//! when the game's chat UI is ready.
+//! When `auto_open_sidebar` is enabled, simulates a click on the side panel button and calls `ResizeSideFrame`
+//! directly to maximize the sidebar width (the game clamps to its actual limit).
 
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
 
 use log::debug;
 
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
-use crate::il2cpp::resolver;
-use crate::il2cpp::types::*;
+use crate::il2cpp::{resolver, types::*};
 
 // ---- Constants ------------------------------------------------------------
 
@@ -24,11 +22,14 @@ const OFFSET_FOCUSED_PANEL: usize = 0x90;
 /// `ChatChannelCategory.Alliance` — the default tab for auto-open.
 const TAB_ALLIANCE: i32 = 2;
 
-/// Width value passed to ResizeSideFrame during restore. Intentionally larger than any screen, so the game clamps it
-/// to its actual maximum.
-const RESTORE_WIDTH: f32 = 2000.0;
+/// Fallback width when GetMaxSideFrameWidth is not available.
+/// Intentionally larger than any screen, so the game clamps it to its actual maximum.
+const FALLBACK_WIDTH: f32 = 2000.0;
 
 // ---- State ----------------------------------------------------------------
+
+/// Tracked UIFrameManager instance (set by the OnEnable hook).
+static FRAME_MGR: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Tracked ChatPreviewController instance (set by the OnEnable hook).
 static CHAT_PREVIEW: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
@@ -39,53 +40,44 @@ static CLICK_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// Resolved function pointer for `UIFrameManager.ResizeSideFrame(float)`.
 static RESIZE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Resolved function pointer for `UIFrameManager.GetMaxSideFrameWidth() -> float`.
+static MAX_WIDTH_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original function pointer for `UIFrameManager.OnEnable()`.
+static ORIG_MGR_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
 /// Original function pointer for `ChatPreviewController.OnEnable()`.
 static ORIG_CHAT_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Original function pointer for `UIFrameManager.ShowSideFrame()`.
-static ORIG_SHOW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Pending restore width (f32 bits). Non-zero when a restore is in progress.
-///
-/// Set before calling `OnSidePanelButtonClicked`, consumed by the `ShowSideFrame` hook.
-static PENDING_WIDTH: AtomicU32 = AtomicU32::new(0);
 
 /// Whether restore has been attempted (prevents double restore).
 static RESTORED: AtomicBool = AtomicBool::new(false);
 
-/// Whether the OnEnable hook has been logged at least once.
+/// Whether the ChatPreviewController OnEnable hook has been logged at least once.
 static CHAT_ENABLE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 // ---- Type aliases ---------------------------------------------------------
 
 type VoidFn = unsafe extern "C" fn(*mut Il2CppObject);
 type ResizeFn = unsafe extern "C" fn(*mut Il2CppObject, f32);
+type GetFloatFn = unsafe extern "C" fn(*mut Il2CppObject) -> f32;
 
 // ---- Hooks ----------------------------------------------------------------
 
-/// Hook for `UIFrameManager.ShowSideFrame()`.
+/// Hook for `UIFrameManager.OnEnable()`.
 ///
-/// Delegates to the original, then applies any pending restore width.
-/// The pending width is set by [`try_restore`] before triggering the side panel click.
-extern "C" fn hook_show(this: *mut Il2CppObject) {
-    let orig_ptr = ORIG_SHOW.load(Relaxed);
+/// Captures the UIFrameManager instance for later use by [`try_restore`].
+/// UIFrameManager has no Awake/OnDestroy, so OnEnable is the lifecycle entry point.
+extern "C" fn hook_mgr_enable(this: *mut Il2CppObject) {
+    let orig_ptr = ORIG_MGR_ENABLE.load(Relaxed);
     if !orig_ptr.is_null() {
         let original: VoidFn = unsafe { std::mem::transmute(orig_ptr) };
         unsafe { original(this) };
     }
 
-    // Apply pending restore width (set by try_restore before the click).
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let width_bits = PENDING_WIDTH.swap(0, Relaxed);
-        if width_bits != 0 {
-            let width = f32::from_bits(width_bits);
-            let resize_ptr = RESIZE_FN.load(Relaxed);
-            if !resize_ptr.is_null() {
-                let resize: ResizeFn = unsafe { std::mem::transmute(resize_ptr) };
-                unsafe { resize(this, width) };
-                debug!(target: "ChatFrame", "Applied sidebar width: {width:.0}");
-            }
-        }
+        FRAME_MGR.store(this, Relaxed);
+        debug!(target: "ChatFrame", "UIFrameManager instance captured");
+        try_restore();
     }));
 }
 
@@ -113,7 +105,7 @@ extern "C" fn hook_chat_enable(this: *mut Il2CppObject) {
 
 /// Called when settings are synced from Daystrom.
 ///
-/// Triggers a restore check in case the ChatPreviewController is already active, but settings were not available yet
+/// Triggers a restore check in case both controllers are already active, but settings were not available yet
 /// at that time.
 pub fn on_settings_synced() {
     try_restore();
@@ -121,17 +113,22 @@ pub fn on_settings_synced() {
 
 /// Attempt to auto-open the chat sidebar.
 ///
-/// Called from two places to handle either timing scenario:
-/// - `hook_chat_enable` — chat UI is ready, settings may not be synced yet
-/// - `on_settings_synced` — settings arrived, chat UI may not be ready yet
+/// Called from three places to handle any timing scenario:
+/// - `hook_mgr_enable` — UIFrameManager ready, chat/settings may not be
+/// - `hook_chat_enable` — chat UI ready, manager/settings may not be
+/// - `on_settings_synced` — settings arrived, UI may not be ready yet
 ///
-/// On success, triggers `OnSidePanelButtonClicked` to open the chat through the game's normal flow.
-/// The width is applied by [`hook_show`] when `ShowSideFrame` fires as a result.
+/// All three conditions must be met before restore proceeds. On success, triggers `OnSidePanelButtonClicked` to open
+/// the chat through the game's normal flow, then calls `ResizeSideFrame` directly on the captured `UIFrameManager`
+/// instance to maximize the width.
 fn try_restore() {
     if RESTORED.load(Relaxed) {
         return;
     }
     if CHAT_PREVIEW.load(Relaxed).is_null() {
+        return;
+    }
+    if FRAME_MGR.load(Relaxed).is_null() {
         return;
     }
     if !crate::settings::auto_open_sidebar() {
@@ -146,8 +143,6 @@ fn try_restore() {
         return;
     }
 
-    PENDING_WIDTH.store(RESTORE_WIDTH.to_bits(), Relaxed);
-
     // Set _focusedPanel to Alliance (ChatChannelCategory = 2) before the click,
     // so the sidebar opens on the Alliance chat like a manual button press would.
     let chat = CHAT_PREVIEW.load(Relaxed);
@@ -159,30 +154,78 @@ fn try_restore() {
     let click: VoidFn = unsafe { std::mem::transmute(click_ptr) };
     unsafe { click(chat) };
     debug!(target: "ChatFrame", "Auto-opened chat sidebar (Alliance tab)");
+
+    // Resize directly on the captured UIFrameManager instance.
+    let mgr = FRAME_MGR.load(Relaxed);
+    let resize_ptr = RESIZE_FN.load(Relaxed);
+    if !resize_ptr.is_null() {
+        let width = get_max_width(mgr);
+        let resize: ResizeFn = unsafe { std::mem::transmute(resize_ptr) };
+        unsafe { resize(mgr, width) };
+        debug!(target: "ChatFrame", "Applied sidebar width: {width:.0}");
+    }
+}
+
+/// Query the game for the maximum sidebar width, falling back to [`FALLBACK_WIDTH`].
+fn get_max_width(mgr: *mut Il2CppObject) -> f32 {
+    let ptr = MAX_WIDTH_FN.load(Relaxed);
+    if ptr.is_null() {
+        return FALLBACK_WIDTH;
+    }
+    let get_max: GetFloatFn = unsafe { std::mem::transmute(ptr) };
+    let width = unsafe { get_max(mgr) };
+    if width > 0.0 { width } else { FALLBACK_WIDTH }
 }
 
 // ---- Installation ---------------------------------------------------------
 
+/// Helper to resolve a method pointer, install a hook, and store the original.
+fn install_hook(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    name: &str,
+    hook_fn: *const (),
+    original: &AtomicPtr<()>,
+) {
+    let Some(ptr) = tracker::resolve_fn(api, class, name, 0) else {
+        log::warn!(target: "ChatFrame", "{name} not found");
+        return;
+    };
+    match crate::hook::engine::install_hook(name, ptr, hook_fn) {
+        Ok(orig) => {
+            original.store(orig as *mut (), Relaxed);
+            debug!(target: "ChatFrame", "{name} hook installed");
+        }
+        Err(e) => log::warn!(target: "ChatFrame", "Failed to hook {name}: {e}"),
+    }
+}
+
 /// Install chat sidebar hooks.
 ///
-/// Hooks `UIFrameManager.ShowSideFrame` (pending width application) and
-/// `ChatPreviewController.OnEnable` (restore trigger). Resolves `ResizeSideFrame` and
-/// `OnSidePanelButtonClicked` as callable functions.
+/// Hooks `UIFrameManager.OnEnable` to capture the manager instance and resolves `ResizeSideFrame` as a callable
+/// function. Hooks `ChatPreviewController.OnEnable` as the restore trigger and resolves `OnSidePanelButtonClicked`.
 pub fn install(api: &Il2CppApi) {
     // ---- UIFrameManager ----
-    let Some(frame_mgr) = resolver::resolve_class(
+    let Some(frame_mgr_class) = resolver::resolve_class(
         api, "Assembly-CSharp", "Digit.Client.UI", "UIFrameManager",
     ) else {
         log::warn!(target: "ChatFrame", "UIFrameManager not found");
         return;
     };
 
-    install_hook(api, frame_mgr, "ShowSideFrame", 0, hook_show as *const (), &ORIG_SHOW);
+    install_hook(
+        api, frame_mgr_class, "OnEnable",
+        hook_mgr_enable as *const (), &ORIG_MGR_ENABLE,
+    );
 
-    // Resolve ResizeSideFrame (called during restore, not hooked).
-    if let Some(ptr) = tracker::resolve_fn(api, frame_mgr, "ResizeSideFrame", 1) {
+    // Resolve ResizeSideFrame and GetMaxSideFrameWidth (called during restore, not hooked).
+    if let Some(ptr) = tracker::resolve_fn(api, frame_mgr_class, "ResizeSideFrame", 1) {
         RESIZE_FN.store(ptr as *mut (), Relaxed);
         debug!(target: "ChatFrame", "ResizeSideFrame resolved");
+    }
+    if let Some(ptr) = tracker::resolve_fn(api, frame_mgr_class, "GetMaxSideFrameWidth", 0) {
+        MAX_WIDTH_FN.store(ptr as *mut (), Relaxed);
+        debug!(target: "ChatFrame", "GetMaxSideFrameWidth resolved");
     }
 
     // ---- ChatPreviewController ----
@@ -194,7 +237,8 @@ pub fn install(api: &Il2CppApi) {
     };
 
     install_hook(
-        api, chat_class, "OnEnable", 0, hook_chat_enable as *const (), &ORIG_CHAT_ENABLE,
+        api, chat_class, "OnEnable",
+        hook_chat_enable as *const (), &ORIG_CHAT_ENABLE,
     );
 
     // Resolve OnSidePanelButtonClicked (called during restore, not hooked).
@@ -203,27 +247,5 @@ pub fn install(api: &Il2CppApi) {
         debug!(target: "ChatFrame", "OnSidePanelButtonClicked resolved");
     } else {
         log::warn!(target: "ChatFrame", "OnSidePanelButtonClicked not found");
-    }
-}
-
-/// Install a single hook, logging success or failure.
-fn install_hook(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    name: &str,
-    param_count: i32,
-    hook_fn: *const (),
-    original: &AtomicPtr<()>,
-) {
-    let Some(ptr) = tracker::resolve_fn(api, class, name, param_count) else {
-        log::warn!(target: "ChatFrame", "{name} not found");
-        return;
-    };
-    match crate::hook::engine::install_hook(name, ptr, hook_fn) {
-        Ok(orig) => {
-            original.store(orig as *mut (), Relaxed);
-            debug!(target: "ChatFrame", "{name} hook installed");
-        }
-        Err(e) => log::warn!(target: "ChatFrame", "Failed to hook {name}: {e}"),
     }
 }
