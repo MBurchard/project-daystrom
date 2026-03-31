@@ -1,0 +1,75 @@
+{
+  "Combat": [
+    "FleetBattle",
+    "Victory",
+    "Defeat",
+    "PartialVictory",
+    "StationBattle",
+    "StationVictory",
+    "StationDefeat",
+    "StrikeHit",
+    "StrikeDefeat",
+    "AssaultVictory",
+    "AssaultDefeat"
+  ],
+  "Station": [
+    "IncomingAttack",
+    "IncomingAttackFaction"
+  ],
+  "Armada": [
+    "ArmadaCreated",
+    "ArmadaCanceled",
+    "ArmadaIncomingAttack",
+    "ArmadaBattleWon",
+    "ArmadaBattleLost",
+    "ArmadaPlayerBlocked",
+    "ArmadaPlayerUnblocked",
+    "CrossAllianceArmadaVictory",
+    "CrossAllianceArmadaDefeat",
+    "CrossAllianceArmadaPartialVictory"
+  ],
+  "Territory": [
+    "JoinedTakeover",
+    "CompetitorJoinedTakeover",
+    "AbandonedTerritory",
+    "TakeoverVictory",
+    "TakeoverDefeat",
+    "OutpostStartedOrEnded"
+  ],
+  "Faction": [
+    "FactionWarning",
+    "FactionLevelUp",
+    "FactionLevelDown",
+    "FactionDiscovered",
+    "DiplomacyUpdated",
+    "FactionWeeklyEventsProgress",
+    "FactionWeeklyEventsComplete"
+  ],
+  "Events & Challenges": [
+    "Tournament",
+    "ChallengeComplete",
+    "ChallengeFailed",
+    "ChainedEventScored",
+    "DynamicCrisisUpdate",
+    "DynamicCrisisFailed",
+    "DynamicCrisisCompleted"
+  ],
+  "Economy": [
+    "TreasuryProgress",
+    "TreasuryFull",
+    "WarchestProgress",
+    "WarchestFull",
+    "QueueForLeaseActivated",
+    "QueueForLeaseExpired",
+    "PermanentQueuePurchased"
+  ],
+  "Other": [
+    "Standard",
+    "Achievement",
+    "FleetPresetApplied",
+    "SurgeWarmUpEnded",
+    "SurgeHostileGroupDefeated",
+    "SurgeTimeLeft",
+    "ArenaTimeLeft"
+  ]
+}

@@ -32,6 +32,12 @@ pub struct GameUiSettings {
     /// Whether to auto-expand the job queue panel from compact to full view.
     #[serde(default, deserialize_with = "lenient_option")]
     pub auto_expand_job_queue: Option<bool>,
+    /// Whether to suppress all toast banner notifications.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub disable_all_banners: Option<bool>,
+    /// List of specific banner type names to suppress (e.g. `["Victory", "Defeat"]`).
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub disabled_banner_types: Option<Vec<String>>,
 }
 
 /// Game settings received from Daystrom.
@@ -69,6 +75,16 @@ pub fn auto_expand_job_queue() -> bool {
     state().lock().unwrap().ui.auto_expand_job_queue.unwrap_or(false)
 }
 
+/// Whether all toast banner notifications should be suppressed.
+pub fn disable_all_banners() -> bool {
+    state().lock().unwrap().ui.disable_all_banners.unwrap_or(false)
+}
+
+/// List of specific banner type names to suppress.
+pub fn disabled_banner_types() -> Vec<String> {
+    state().lock().unwrap().ui.disabled_banner_types.clone().unwrap_or_default()
+}
+
 /// Replace all settings with a full snapshot from Daystrom (`settings.sync`).
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
@@ -78,6 +94,7 @@ pub fn apply_sync(settings: GameSettings) {
     crate::hooks::ui_scale::apply_current_scale();
     crate::hooks::chat_frame::on_settings_synced();
     crate::hooks::job_queue::on_settings_synced();
+    crate::hooks::toast_banner::on_settings_changed();
 }
 
 /// Patch individual settings from an incremental update (`settings.update`).
@@ -104,6 +121,22 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             let new_val = value.as_bool();
             debug!(target: "Settings", "Update: game.ui.auto_expand_job_queue = {new_val:?}");
             s.ui.auto_expand_job_queue = new_val;
+        }
+        "game.ui.disable_all_banners" => {
+            let new_val = value.as_bool();
+            debug!(target: "Settings", "Update: game.ui.disable_all_banners = {new_val:?}");
+            s.ui.disable_all_banners = new_val;
+            drop(s);
+            crate::hooks::toast_banner::on_settings_changed();
+        }
+        "game.ui.disabled_banner_types" => {
+            let new_val = value.as_array().map(|arr| {
+                arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+            });
+            debug!(target: "Settings", "Update: game.ui.disabled_banner_types = {new_val:?}");
+            s.ui.disabled_banner_types = new_val;
+            drop(s);
+            crate::hooks::toast_banner::on_settings_changed();
         }
         other => {
             debug!(target: "Settings", "Unknown setting: {other}");

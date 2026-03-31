@@ -2,6 +2,8 @@
 import {useSettings} from '@app/composables/useSettings';
 import {computed} from 'vue';
 
+import bannerCategories from './toast-banner-categories.json';
+
 const emit = defineEmits<{
   close: [];
 }>();
@@ -43,6 +45,46 @@ function onAutoExpandJobQueueChange(event: Event) {
 
 /** Effective UI scale, defaulting to 100% when not set. */
 const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
+
+// ---- Toast banner handlers --------------------------------------------------
+
+/** Whether all banners are disabled (convenience toggle). */
+const allBannersDisabled = computed(() => settings.value.ui.disable_all_banners ?? false);
+
+/** Set of currently disabled banner type names. */
+const disabledBannerSet = computed(
+  () => new Set(settings.value.ui.disabled_banner_types ?? []),
+);
+
+/**
+ * Toggle the "Disable All Banners" kill switch.
+ *
+ * @param event - Native change event from the checkbox.
+ */
+function onDisableAllBannersChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.ui.disable_all_banners = target.checked;
+  save();
+}
+
+/**
+ * Toggle an individual banner type.
+ *
+ * Checked means "show this banner", unchecked means "suppress it".
+ *
+ * @param name - The ToastState variant name.
+ * @param checked - Whether the banner should be shown.
+ */
+function onBannerTypeToggle(name: string, checked: boolean) {
+  const current = new Set(settings.value.ui.disabled_banner_types ?? []);
+  if (checked) {
+    current.delete(name);
+  } else {
+    current.add(name);
+  }
+  settings.value.ui.disabled_banner_types = [...current].sort();
+  save();
+}
 </script>
 
 <template>
@@ -83,6 +125,34 @@ const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
             type="checkbox"
             :checked="settings.ui.auto_expand_job_queue ?? false"
             @change="onAutoExpandJobQueueChange">
+      </div>
+    </section>
+
+    <section class="settings-category">
+      <h3>Toast Banners</h3>
+
+      <div class="setting-row">
+        <label for="disable-all-banners">Disable All Banners</label>
+        <input id="disable-all-banners"
+            type="checkbox"
+            :checked="allBannersDisabled"
+            @change="onDisableAllBannersChange">
+      </div>
+
+      <div class="banner-categories" :class="{ disabled: allBannersDisabled }">
+        <details v-for="(types, category) in bannerCategories" :key="category"
+            class="banner-category">
+          <summary>{{ category }}</summary>
+          <div class="banner-type-list">
+            <label v-for="name in types" :key="name" class="banner-type">
+              <input type="checkbox"
+                  :checked="!disabledBannerSet.has(name)"
+                  :disabled="allBannersDisabled"
+                  @change="onBannerTypeToggle(name, ($event.target as HTMLInputElement).checked)">
+              {{ name }}
+            </label>
+          </div>
+        </details>
       </div>
     </section>
   </div>
@@ -151,5 +221,43 @@ const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
   min-width: 3.5rem;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.banner-categories {
+  margin-top: 0.25rem;
+}
+
+.banner-categories.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.banner-category {
+  margin-bottom: 0.25rem;
+}
+
+.banner-category summary {
+  cursor: pointer;
+  padding: 0.25rem 0;
+  font-weight: 500;
+}
+
+.banner-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.25rem 0 0.5rem 1.25rem;
+}
+
+.banner-type {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.banner-type input[type="checkbox"] {
+  cursor: pointer;
 }
 </style>
