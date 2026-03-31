@@ -1,7 +1,11 @@
 //! System view zoom extension.
 //!
-//! Hooks `NavigationZoom.SetViewParameters()` to extend the zoom-out limit when entering a system.
+//! Hooks `NavigationZoom.SetDepth()` to extend the zoom-out limit when entering a system.
 //! Uses the game's own `OverrideZoomLimits()` API to push the maximum beyond the default radius.
+//!
+//! `SetViewParameters` delegates to `SetDepth` on all platforms, making `SetDepth` the more robust hook target.
+//! On Windows, MSVC additionally inlines `SetViewParameters` at all call sites (verified: zero CALL references in
+//! GameAssembly.dll), but the inlined copies are still called `SetDepth`.
 
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
@@ -37,8 +41,8 @@ static OFFSET_DEFAULT_ZOOM_RATIO: AtomicUsize = AtomicUsize::new(0);
 
 // ---- State ----------------------------------------------------------------
 
-/// Original function pointer for `NavigationZoom.SetViewParameters(float, NodeDepth)`.
-static ORIG_SET_VIEW_PARAMS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Original function pointer for `NavigationZoom.SetDepth(NodeDepth)`.
+static ORIG_SET_DEPTH: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Resolved function pointer for `NavigationZoom.OverrideZoomLimits(float, float)`.
 static OVERRIDE_ZOOM_LIMITS_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -57,7 +61,7 @@ static LOGGED_FIRST: AtomicBool = AtomicBool::new(false);
 
 // ---- Type aliases ---------------------------------------------------------
 
-type SetViewParamsFn = unsafe extern "C" fn(*mut Il2CppObject, f32, i32);
+type SetDepthFn = unsafe extern "C" fn(*mut Il2CppObject, i32);
 type OverrideZoomLimitsFn = unsafe extern "C" fn(*mut Il2CppObject, f32, f32);
 type SetDistanceFn = unsafe extern "C" fn(*mut Il2CppObject, f32);
 
@@ -176,16 +180,17 @@ pub fn on_settings_changed() {
 
 // ---- Hook -----------------------------------------------------------------
 
-/// Hook for `NavigationZoom.SetViewParameters(float radius, NodeDepth depth)`.
+/// Hook for `NavigationZoom.SetDepth(NodeDepth value)`.
 ///
-/// Called when entering a system, galaxy, planet, or starbase view. Logs the zoom state after the original method has
-/// set up the parameters.
-extern "C" fn hook_set_view_params(this: *mut Il2CppObject, radius: f32, depth: i32) {
+/// Called when the navigation depth changes (system, galaxy, planet, starbase).
+/// The inlined callers of `SetViewParameters` call `SetDepth` after setting up the view parameters, so this fires
+/// reliably on all platforms.
+extern "C" fn hook_set_depth(this: *mut Il2CppObject, depth: i32) {
     // Always call the original first.
-    let orig_ptr = ORIG_SET_VIEW_PARAMS.load(Relaxed);
+    let orig_ptr = ORIG_SET_DEPTH.load(Relaxed);
     if !orig_ptr.is_null() {
-        let original: SetViewParamsFn = unsafe { std::mem::transmute(orig_ptr) };
-        unsafe { original(this, radius, depth) };
+        let original: SetDepthFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this, depth) };
     }
 
     if !HOOK_INFO.is_active() {
@@ -199,7 +204,7 @@ extern "C" fn hook_set_view_params(this: *mut Il2CppObject, radius: f32, depth: 
         if is_first || is_system {
             debug!(
                 target: "SystemZoom",
-                "SetViewParameters(radius={radius:.1}, depth={})",
+                "SetDepth(depth={})",
                 depth_name(depth),
             );
             log_zoom_state(this, "  Before override:");
@@ -243,8 +248,8 @@ fn resolve_field(
 
 /// Install system zoom hooks.
 ///
-/// Hooks `SetViewParameters` to extend the zoom-out limit for system views and resolves `OverrideZoomLimits` as a
-/// callable function.
+/// Hooks `SetDepth` to extend the zoom-out limit for system views and resolves `OverrideZoomLimits` as a callable
+/// function.
 pub fn install(api: &Il2CppApi) {
     let Some(class) = resolver::resolve_class(
         api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom",
@@ -264,21 +269,21 @@ pub fn install(api: &Il2CppApi) {
     resolve_field(api, class, "_farRatioSystemExtended", &OFFSET_FAR_RATIO_EXTENDED);
     resolve_field(api, class, "_systemDefaultZoomRatio", &OFFSET_DEFAULT_ZOOM_RATIO);
 
-    // Hook SetViewParameters (called when entering a system/galaxy/planet/starbase view).
-    if let Some(method) = resolver::resolve_method(api, class, "SetViewParameters", 2) {
-        let target = unsafe { (*method).method_pointer };
+    // Hook SetDepth (called when the navigation depth changes).
+    // SetViewParameters is inlined by MSVC on Windows, but its inlined copies are still called SetDepth.
+    if let Some(ptr) = tracker::resolve_fn(api, class, "SetDepth", 1) {
         match engine::install_hook(
-            "SystemZoom.SetViewParameters", target, hook_set_view_params as *const (),
+            "SystemZoom.SetDepth", ptr, hook_set_depth as *const (),
         ) {
             Ok(orig) => {
-                ORIG_SET_VIEW_PARAMS.store(orig as *mut (), Relaxed);
-                debug!(target: "SystemZoom", "SetViewParameters hook installed");
+                ORIG_SET_DEPTH.store(orig as *mut (), Relaxed);
+                debug!(target: "SystemZoom", "SetDepth hook installed");
             }
-            Err(e) => warn!(target: "SystemZoom", "Failed to hook SetViewParameters: {e}"),
+            Err(e) => warn!(target: "SystemZoom", "Failed to hook SetDepth: {e}"),
         }
     }
 
-    // Resolve OverrideZoomLimits (called from the SetViewParameters hook).
+    // Resolve OverrideZoomLimits (called from the SetDepth hook).
     if let Some(ptr) = tracker::resolve_fn(api, class, "OverrideZoomLimits", 2) {
         OVERRIDE_ZOOM_LIMITS_FN.store(ptr as *mut (), Relaxed);
         debug!(target: "SystemZoom", "OverrideZoomLimits resolved");
