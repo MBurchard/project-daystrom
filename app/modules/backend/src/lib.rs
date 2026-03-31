@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+
 use tauri::{Listener, Manager};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -20,6 +22,18 @@ use profile_state::get_cached_profile_state;
 use settings::{get_game_settings, set_game_settings};
 
 use_log!("Startup");
+
+/// Set when set_position() is called; cleared by the first Moved event which then shows the window.
+static SHOW_AFTER_REPOSITION: AtomicBool = AtomicBool::new(false);
+
+/// Make the window visible and open DevTools in debug builds.
+fn show_window(window: &tauri::WebviewWindow) {
+    let _ = window.show();
+    #[cfg(debug_assertions)]
+    if std::env::var("DAYSTROM_DEVTOOLS").as_deref() != Ok("0") {
+        window.open_devtools();
+    }
+}
 
 /// Select the appropriate warning message based on which Daystrom-started processes are running.
 ///
@@ -153,12 +167,17 @@ pub fn run() {
             settings::load();
 
             // Restore saved window position and size (stored as logical pixels).
-            if let Some(ws) = settings::get_window_settings() {
-                if let Some(window) = app.get_webview_window("main") {
+            // The window starts invisible (tauri.conf.json) to prevent a flash on the primary screen.
+            // On macOS, set_position dispatches async on the main queue, so we defer show() until the Moved event fires
+            // (handled in on_window_event below).
+            if let Some(window) = app.get_webview_window("main") {
+                let mut needs_reposition = false;
+                if let Some(ws) = settings::get_window_settings() {
                     if let (Some(x), Some(y)) = (ws.x, ws.y) {
                         let _ = window.set_position(
                             tauri::LogicalPosition::new(x as f64, y as f64),
                         );
+                        needs_reposition = true;
                     }
                     if let (Some(w), Some(h)) = (ws.width, ws.height) {
                         let _ = window.set_size(
@@ -168,6 +187,12 @@ pub fn run() {
                     if ws.maximized.unwrap_or(false) {
                         let _ = window.maximize();
                     }
+                }
+
+                if needs_reposition {
+                    SHOW_AFTER_REPOSITION.store(true, Relaxed);
+                } else {
+                    show_window(&window);
                 }
             }
 
@@ -239,15 +264,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // ---- DevTools (debug only) ----------------------------------------------
-
-            #[cfg(debug_assertions)]
-            if std::env::var("DAYSTROM_DEVTOOLS").as_deref() != Ok("0") {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
-                log_debug!("DevTools opened");
-            }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -274,6 +290,15 @@ pub fn run() {
                     }
                 }
                 tauri::WindowEvent::Moved(..) | tauri::WindowEvent::Resized(..) => {
+                    // Show the window after set_position has been applied (one-shot).
+                    // Only react to Moved, not Resized, to avoid showing before the position is applied.
+                    if matches!(event, tauri::WindowEvent::Moved(..))
+                        && SHOW_AFTER_REPOSITION.swap(false, Relaxed)
+                    {
+                        if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
+                            show_window(&wv);
+                        }
+                    }
                     // Windows fallback: detect minimizing via Resized (macOS uses native hook).
                     #[cfg(not(target_os = "macos"))]
                     if window.is_minimized().unwrap_or(false) {
