@@ -1,4 +1,4 @@
-# Project Daystrom
+# Project Daystrom ![Version](https://img.shields.io/github/v/release/MBurchard/project-daystrom?color=4488FF&label=)
 
 ![Crafted with Rust](https://img.shields.io/badge/Crafted_with-Rust-000000?logo=rust&logoColor=white)
 ![Crafted with TypeScript](https://img.shields.io/badge/Crafted_with-TypeScript-3178C6?logo=typescript&logoColor=white)
@@ -25,6 +25,9 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
   - Keyboard hotkeys: ESC to collect rewards, SPACE to engage, mine, or warp
   - Adjustable UI scale (50-200%), applied live to the running game
   - Auto-open chat sidebar on game start
+  - Auto-expand job queue panel on game start
+  - Configurable system view zoom distance and ship name visibility range
+  - Toast banner suppression with per-type opt-out (combat, station, armada, etc.)
   - Automatic game update detection via the Scopely update API
 - **Native cross-platform app** (Tauri 2 + Vue 3)
   - Unified launcher: entitlement patching on macOS, DLL proxy injection on Windows
