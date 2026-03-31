@@ -166,10 +166,12 @@ pub fn run() {
 
             settings::load();
 
-            // Restore saved window position and size (stored as logical pixels).
+            // Restore the saved window position and size (stored as logical pixels).
             // The window starts invisible (tauri.conf.json) to prevent a flash on the primary screen.
             // On macOS, set_position dispatches async on the main queue, so we defer show() until the Moved event fires
             // (handled in on_window_event below).
+            // On Windows, set_position() is synchronous and the event loop is not yet running during setup(), so we
+            // show directly.
             if let Some(window) = app.get_webview_window("main") {
                 let mut needs_reposition = false;
                 if let Some(ws) = settings::get_window_settings() {
@@ -189,7 +191,7 @@ pub fn run() {
                     }
                 }
 
-                if needs_reposition {
+                if needs_reposition && cfg!(target_os = "macos") {
                     SHOW_AFTER_REPOSITION.store(true, Relaxed);
                 } else {
                     show_window(&window);
