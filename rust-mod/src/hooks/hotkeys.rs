@@ -14,7 +14,7 @@ use log::{debug, error, warn};
 
 use crate::hook::engine;
 use crate::hook::safety::HookInfo;
-use crate::hooks::tracker::{self, instance_tracker};
+use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -40,9 +40,6 @@ static ORIGINAL_GET_KEY_DOWN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut(
 /// while this flag is set, preventing the game from also processing it.
 static SPACE_CONSUMED: AtomicBool = AtomicBool::new(false);
 
-// AnimatedRewardsScreenViewController instance tracker.
-instance_tracker!(reward);
-
 /// Function pointer for `ScreenManager.get_IsInputFocused()` (static).
 static IS_INPUT_FOCUSED_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -52,11 +49,55 @@ static EVENT_SYSTEM_CURRENT_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 /// Function pointer for `EventSystem.SetSelectedGameObject(GameObject)`.
 static SET_SELECTED_GO_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `AnimatedRewardsScreenViewController.OnCollectClicked()`.
-static ON_COLLECT_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Function pointer for `IsActive() -> bool` on the reward controller.
+/// Function pointer for `IsActive() -> bool` (from UIBehaviour, shared by all reward screens).
 static IS_ACTIVE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+// ---- Reward screen tracking -----------------------------------------------
+
+/// Per-subclass tracking slot for `GenericRewardsScreenViewController` descendants.
+///
+/// Each slot holds the IL2CPP class pointer (for runtime dispatch in the base-class Awake hook), the currently
+/// tracked instance, and the resolved `OnCollectClicked` function pointer.
+struct RewardTarget {
+    class: AtomicPtr<()>,
+    instance: AtomicPtr<()>,
+    on_collect: AtomicPtr<()>,
+}
+
+impl RewardTarget {
+    const fn new() -> Self {
+        Self {
+            class: AtomicPtr::new(std::ptr::null_mut()),
+            instance: AtomicPtr::new(std::ptr::null_mut()),
+            on_collect: AtomicPtr::new(std::ptr::null_mut()),
+        }
+    }
+}
+
+/// Reward screen tracking slots.
+///
+/// - Slot 0: `AnimatedRewardsScreenViewController` (has own Awake/OnDestroy overrides)
+/// - Slot 1: `ShipScrappingRewardsScreenViewController` (shares base Awake)
+/// - Slot 2: `FirstTimeSpenderScreenViewController` (shares base Awake)
+/// - Slot 3: `RewardPreviewMultipleListViewController` (shares base Awake)
+static REWARD_TARGETS: [RewardTarget; 4] = [
+    RewardTarget::new(),
+    RewardTarget::new(),
+    RewardTarget::new(),
+    RewardTarget::new(),
+];
+
+/// Original trampoline for `AnimatedRewardsScreenViewController.Awake()`.
+static ORIG_ANIMATED_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original trampoline for `AnimatedRewardsScreenViewController.OnDestroy()`.
+static ORIG_ANIMATED_DESTROY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original trampoline for `GenericRewardsScreenViewController.Awake()` (shared by slots 1-3).
+static ORIG_BASE_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original trampoline for the inherited `OnDestroy()` (shared by slots 1-3).
+static ORIG_BASE_DESTROY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Original function pointer for `ShortcutsManager.InitializeActions()`.
 ///
@@ -68,11 +109,11 @@ static ORIG_INITIALIZE_ACTIONS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 /// Per-hook error tracking.
 static HOOK_INFO: HookInfo = HookInfo::new("Hotkeys");
 
-/// Whether the first ESC collect has been logged.
-static LOGGED_FIRST_COLLECT: AtomicBool = AtomicBool::new(false);
 
 // ---- Type aliases ---------------------------------------------------------
 
+type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
+type GsharedLifecycleFn = unsafe extern "C" fn(*mut Il2CppObject, *const ());
 type UpdateFn = unsafe extern "C" fn(*mut Il2CppObject);
 type GetKeyDownIntFn = unsafe extern "C" fn(i32) -> bool;
 type IsInputFocusedFn = unsafe extern "C" fn() -> bool;
@@ -197,45 +238,111 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
     }
 }
 
-/// If an `AnimatedRewardsScreenViewController` is tracked and active, collect rewards via `OnCollectClicked()`.
-///
-/// Unlike the stfc-mod (which calls `GoBackToLastSection` and merely dismisses), we trigger the actual collect action.
-/// This handles both `ClaimOnShow` (already claimed, just closes) and `ClaimOnCollect` (triggers the claim callback,
-/// then closes).
-fn collect_reward_screen() {
-    let instance = reward::get() as *mut Il2CppObject;
-    if instance.is_null() {
-        return;
-    }
+// ---- Reward Awake/OnDestroy hooks -----------------------------------------
 
-    // Check IsActive; skip if we couldn't resolve the method.
-    let is_active_ptr = IS_ACTIVE_FN.load(Relaxed);
-    if !is_active_ptr.is_null() {
-        let is_active: IsActiveFn = unsafe { std::mem::transmute(is_active_ptr) };
-        if !unsafe { is_active(instance) } {
-            return;
+/// Awake hook for `AnimatedRewardsScreenViewController` (slot 0, own override).
+extern "C" fn hook_animated_awake(this: *mut Il2CppObject) {
+    REWARD_TARGETS[0].instance.store(this as *mut (), Relaxed);
+    debug!(target: "Hotkeys", "Reward instance tracked (AnimatedRewards)");
+    let orig = ORIG_ANIMATED_AWAKE.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+}
+
+/// OnDestroy hook for `AnimatedRewardsScreenViewController` (slot 0).
+extern "C" fn hook_animated_destroy(this: *mut Il2CppObject) {
+    let _ = REWARD_TARGETS[0].instance.compare_exchange(
+        this as *mut (), std::ptr::null_mut(), Relaxed, Relaxed,
+    );
+    let orig = ORIG_ANIMATED_DESTROY.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+}
+
+/// Awake hook for `GenericRewardsScreenViewController` (shared by slots 1-3).
+///
+/// Reads the IL2CPP class pointer from the instance at runtime (offset 0) and matches it against the stored
+/// class pointers to determine which tracking slot to use.
+extern "C" fn hook_base_reward_awake(this: *mut Il2CppObject) {
+    let class = unsafe { tracker::read_ptr(this as *const (), 0) };
+    for (i, target) in REWARD_TARGETS[1..].iter().enumerate() {
+        if target.class.load(Relaxed) == class {
+            target.instance.store(this as *mut (), Relaxed);
+            debug!(target: "Hotkeys", "Reward instance tracked (base slot {})", i + 1);
+            break;
         }
     }
+    let orig = ORIG_BASE_AWAKE.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+}
 
-    let on_collect_ptr = ON_COLLECT_FN.load(Relaxed);
-    if on_collect_ptr.is_null() {
+/// OnDestroy hook for the inherited `ViewController<T>.OnDestroy()` (shared by slots 1-3).
+///
+/// This is a generic shared (`_gshared`) method with a hidden `MethodInfo*` second parameter.
+/// We must forward it to the trampoline, otherwise the original crashes reading generic context.
+extern "C" fn hook_base_reward_destroy(this: *mut Il2CppObject, method: *const ()) {
+    for target in &REWARD_TARGETS[1..] {
+        let _ = target.instance.compare_exchange(
+            this as *mut (), std::ptr::null_mut(), Relaxed, Relaxed,
+        );
+    }
+    let orig = ORIG_BASE_DESTROY.load(Relaxed);
+    if !orig.is_null() {
+        let f: GsharedLifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this, method) };
+    }
+}
+
+// ---- Reward collection ----------------------------------------------------
+
+/// Find the first active reward screen and collect via `OnCollectClicked()`.
+///
+/// Iterates over all four tracking slots (one per `GenericRewardsScreenViewController` subclass).
+/// The first slot with a non-null, active instance wins.
+/// This handles AnimatedRewards, ShipScrapping, FirstTimeSpender, and RewardPreviewMultipleList screens.
+fn collect_reward_screen() {
+    let is_active_ptr = IS_ACTIVE_FN.load(Relaxed);
+
+    for target in &REWARD_TARGETS {
+        let instance = target.instance.load(Relaxed);
+        if instance.is_null() {
+            continue;
+        }
+        let instance = instance as *mut Il2CppObject;
+
+        // Check IsActive (from UIBehaviour); skip if not resolved.
+        if !is_active_ptr.is_null() {
+            let is_active: IsActiveFn = unsafe { std::mem::transmute(is_active_ptr) };
+            if !unsafe { is_active(instance) } {
+                continue;
+            }
+        }
+
+        let on_collect_ptr = target.on_collect.load(Relaxed);
+        if on_collect_ptr.is_null() {
+            continue;
+        }
+
+        debug!(target: "Hotkeys", "ESC: collecting reward screen");
+        let on_collect: OnCollectFn = unsafe { std::mem::transmute(on_collect_ptr) };
+        unsafe { on_collect(instance) };
         return;
     }
-
-    if !LOGGED_FIRST_COLLECT.swap(true, Relaxed) {
-        debug!(target: "Hotkeys", "ESC: collecting reward screen");
-    }
-
-    let on_collect: OnCollectFn = unsafe { std::mem::transmute(on_collect_ptr) };
-    unsafe { on_collect(instance) };
 }
 
 // ---- Installation ---------------------------------------------------------
 
 /// Install all hotkey-related hooks.
 ///
-/// Hooks Input.GetKeyDownInt for key detection and consumption, tracks AnimatedRewardsScreenViewController
-/// instances, installs spacebar hooks, and hooks ScreenManager.Update() for per-frame key checks.
+/// Hooks Input.GetKeyDownInt for key detection and consumption, tracks all GenericRewardsScreenViewController
+/// subclasses for ESC collection, installs spacebar hooks, and hooks ScreenManager.Update() for per-frame key checks.
 pub fn install(api: &Il2CppApi) {
     suppress_scopely_shortcuts(api);
     if !install_input(api) {
@@ -335,35 +442,104 @@ fn install_input(api: &Il2CppApi) -> bool {
     true
 }
 
-/// Hook `AnimatedRewardsScreenViewController.Awake()` and `OnDestroy()` for instance, tracking, and resolve
-/// `OnCollectClicked()` + `IsActive()`.
+/// Track all `GenericRewardsScreenViewController` subclasses for ESC reward collection.
+///
+/// Slot 0 (`AnimatedRewardsScreenViewController`) has its own Awake/OnDestroy overrides and is hooked separately.
+/// Slots 1-3 share the base class Awake/OnDestroy and use a single hook with runtime class dispatch.
 fn install_reward_tracking(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api,
-        "Assembly-CSharp",
-        "Digit.Prime.Missions.UI",
-        "AnimatedRewardsScreenViewController",
-    ) else {
-        warn!(target: "Hotkeys", "AnimatedRewardsScreenViewController not found");
-        return;
-    };
+    // Subclass definitions: (slot, assembly, namespace, class name, label).
+    let subclasses: [(usize, &str, &str, &str); 4] = [
+        (0, "Digit.Prime.Missions.UI", "AnimatedRewardsScreenViewController", "AnimatedRewards"),
+        (1, "Digit.Prime.Ships", "ShipScrappingRewardsScreenViewController", "ShipScrapping"),
+        (2, "Digit.Prime.SharedFeatures", "FirstTimeSpenderScreenViewController", "FirstTimeSpender"),
+        (3, "Digit.Prime.SharedFeatures", "RewardPreviewMultipleListViewController", "RewardPreview"),
+    ];
 
-    // Resolve OnCollectClicked (required).
-    let Some(ptr) = tracker::resolve_fn(api, class, "OnCollectClicked", 0) else {
-        warn!(target: "Hotkeys", "OnCollectClicked not found");
-        return;
-    };
-    ON_COLLECT_FN.store(ptr as *mut (), Relaxed);
+    // Resolve each subclass: store its Il2CppClass pointer and OnCollectClicked.
+    for &(slot, ns, name, label) in &subclasses {
+        let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", ns, name) else {
+            warn!(target: "Hotkeys", "{name} not found");
+            continue;
+        };
+        REWARD_TARGETS[slot].class.store(class as *mut (), Relaxed);
 
-    // Resolve IsActive (optional, skip if not found).
-    if let Some(ptr) = tracker::resolve_fn(api, class, "IsActive", 0) {
-        IS_ACTIVE_FN.store(ptr as *mut (), Relaxed);
-    } else {
-        warn!(target: "Hotkeys", "IsActive not found, skipping active check");
+        if let Some(ptr) = tracker::resolve_fn(api, class, "OnCollectClicked", 0) {
+            REWARD_TARGETS[slot].on_collect.store(ptr as *mut (), Relaxed);
+            debug!(target: "Hotkeys", "{label}: OnCollectClicked resolved");
+        } else {
+            warn!(target: "Hotkeys", "{label}: OnCollectClicked not found");
+        }
     }
 
-    // Hook Awake/OnDestroy for instance tracking.
-    reward::install(api, class, "Reward");
+    // Resolve IsActive from UIBehaviour (shared, only need it once from any resolved class).
+    for target in &REWARD_TARGETS {
+        let class = target.class.load(Relaxed);
+        if !class.is_null() {
+            if let Some(ptr) = tracker::resolve_fn(
+                api, class as *mut Il2CppClass, "IsActive", 0,
+            ) {
+                IS_ACTIVE_FN.store(ptr as *mut (), Relaxed);
+                debug!(target: "Hotkeys", "IsActive resolved (from UIBehaviour)");
+                break;
+            }
+        }
+    }
+
+    // Hook AnimatedRewardsScreenViewController.Awake/OnDestroy (slot 0, own overrides).
+    let animated_class = REWARD_TARGETS[0].class.load(Relaxed);
+    if !animated_class.is_null() {
+        let class = animated_class as *mut Il2CppClass;
+        if let Some(ptr) = tracker::resolve_fn(api, class, "Awake", 0) {
+            match engine::install_hook("RewardAnimatedAwake", ptr, hook_animated_awake as *const ()) {
+                Ok(orig) => {
+                    ORIG_ANIMATED_AWAKE.store(orig as *mut (), Relaxed);
+                    debug!(target: "Hotkeys", "AnimatedRewards Awake hook installed");
+                }
+                Err(e) => warn!(target: "Hotkeys", "Failed to hook AnimatedRewards Awake: {e}"),
+            }
+        }
+        if let Some(ptr) = tracker::resolve_fn(api, class, "OnDestroy", 0) {
+            match engine::install_hook(
+                "RewardAnimatedDestroy", ptr, hook_animated_destroy as *const (),
+            ) {
+                Ok(orig) => {
+                    ORIG_ANIMATED_DESTROY.store(orig as *mut (), Relaxed);
+                    debug!(target: "Hotkeys", "AnimatedRewards OnDestroy hook installed");
+                }
+                Err(e) => warn!(target: "Hotkeys", "Failed to hook AnimatedRewards OnDestroy: {e}"),
+            }
+        }
+    }
+
+    // Hook GenericRewardsScreenViewController.Awake/OnDestroy (shared by slots 1-3).
+    let Some(base_class) = resolver::resolve_class(
+        api, "Assembly-CSharp", "Digit.Prime.SharedFeatures",
+        "GenericRewardsScreenViewController",
+    ) else {
+        warn!(target: "Hotkeys", "GenericRewardsScreenViewController not found");
+        return;
+    };
+
+    if let Some(ptr) = tracker::resolve_fn(api, base_class, "Awake", 0) {
+        match engine::install_hook("RewardBaseAwake", ptr, hook_base_reward_awake as *const ()) {
+            Ok(orig) => {
+                ORIG_BASE_AWAKE.store(orig as *mut (), Relaxed);
+                debug!(target: "Hotkeys", "Base reward Awake hook installed");
+            }
+            Err(e) => warn!(target: "Hotkeys", "Failed to hook base reward Awake: {e}"),
+        }
+    }
+    if let Some(ptr) = tracker::resolve_fn(api, base_class, "OnDestroy", 0) {
+        match engine::install_hook(
+            "RewardBaseDestroy", ptr, hook_base_reward_destroy as *const (),
+        ) {
+            Ok(orig) => {
+                ORIG_BASE_DESTROY.store(orig as *mut (), Relaxed);
+                debug!(target: "Hotkeys", "Base reward OnDestroy hook installed");
+            }
+            Err(e) => warn!(target: "Hotkeys", "Failed to hook base reward OnDestroy: {e}"),
+        }
+    }
 }
 
 /// Hook `ScreenManager.Update()` for per-frame key checks.
@@ -408,6 +584,20 @@ fn install_update_hook(api: &Il2CppApi) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate global reward state.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Reset all reward tracking slots to null.
+    fn reset_reward_targets() {
+        for target in &REWARD_TARGETS {
+            target.class.store(std::ptr::null_mut(), Relaxed);
+            target.instance.store(std::ptr::null_mut(), Relaxed);
+            target.on_collect.store(std::ptr::null_mut(), Relaxed);
+        }
+        IS_ACTIVE_FN.store(std::ptr::null_mut(), Relaxed);
+    }
 
     #[test]
     fn keycode_escape_is_27() {
@@ -420,18 +610,8 @@ mod tests {
     }
 
     #[test]
-    fn reward_instance_starts_null() {
-        assert!(reward::get().is_null());
-    }
-
-    #[test]
     fn key_down_returns_false_when_fn_not_resolved() {
         assert!(!key_down(KEYCODE_ESCAPE));
-    }
-
-    #[test]
-    fn collect_is_noop_without_instance() {
-        collect_reward_screen();
     }
 
     #[test]
@@ -448,5 +628,204 @@ mod tests {
     #[test]
     fn space_consumed_starts_false() {
         assert!(!SPACE_CONSUMED.load(Relaxed));
+    }
+
+    #[test]
+    fn collect_is_noop_without_instance() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+        // Should not panic when all slots are empty.
+        collect_reward_screen();
+    }
+
+    #[test]
+    fn animated_awake_stores_in_slot_0() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+
+        let fake_instance = 0xDEAD_0000usize as *mut Il2CppObject;
+        REWARD_TARGETS[0].instance.store(std::ptr::null_mut(), Relaxed);
+        hook_animated_awake(fake_instance);
+        assert_eq!(REWARD_TARGETS[0].instance.load(Relaxed), fake_instance as *mut ());
+
+        reset_reward_targets();
+    }
+
+    #[test]
+    fn animated_destroy_clears_matching_slot_0() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+
+        let fake = 0xDEAD_0001usize as *mut ();
+        REWARD_TARGETS[0].instance.store(fake, Relaxed);
+        hook_animated_destroy(fake as *mut Il2CppObject);
+        assert!(REWARD_TARGETS[0].instance.load(Relaxed).is_null());
+
+        reset_reward_targets();
+    }
+
+    #[test]
+    fn animated_destroy_ignores_non_matching() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+
+        let tracked = 0xDEAD_0002usize as *mut ();
+        let other = 0xDEAD_0003usize as *mut ();
+        REWARD_TARGETS[0].instance.store(tracked, Relaxed);
+        hook_animated_destroy(other as *mut Il2CppObject);
+        assert_eq!(REWARD_TARGETS[0].instance.load(Relaxed), tracked);
+
+        reset_reward_targets();
+    }
+
+    #[test]
+    fn base_awake_dispatches_to_correct_slot() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+
+        // Build a fake IL2CPP object: class pointer at offset 0.
+        let fake_class = 0xC1A5_0001usize as *mut ();
+        let fake_obj: [*mut (); 1] = [fake_class];
+        let fake_ptr = fake_obj.as_ptr() as *mut Il2CppObject;
+
+        // Register the class in slot 2 (index 1 in the 1.. slice = slot 2 overall).
+        REWARD_TARGETS[2].class.store(fake_class, Relaxed);
+
+        hook_base_reward_awake(fake_ptr);
+        assert_eq!(REWARD_TARGETS[2].instance.load(Relaxed), fake_ptr as *mut ());
+        // Other slots untouched.
+        assert!(REWARD_TARGETS[0].instance.load(Relaxed).is_null());
+        assert!(REWARD_TARGETS[1].instance.load(Relaxed).is_null());
+        assert!(REWARD_TARGETS[3].instance.load(Relaxed).is_null());
+
+        reset_reward_targets();
+    }
+
+    #[test]
+    fn base_awake_ignores_unknown_class() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+
+        let unknown_class = 0xC1A5_FFFFusize as *mut ();
+        let fake_obj: [*mut (); 1] = [unknown_class];
+        let fake_ptr = fake_obj.as_ptr() as *mut Il2CppObject;
+
+        hook_base_reward_awake(fake_ptr);
+        for target in &REWARD_TARGETS {
+            assert!(target.instance.load(Relaxed).is_null());
+        }
+
+        reset_reward_targets();
+    }
+
+    #[test]
+    fn base_destroy_clears_matching_slot() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+
+        let fake = 0xDEAD_0004usize as *mut ();
+        REWARD_TARGETS[1].instance.store(fake, Relaxed);
+        REWARD_TARGETS[2].instance.store(fake, Relaxed);
+
+        hook_base_reward_destroy(fake as *mut Il2CppObject, std::ptr::null());
+        assert!(REWARD_TARGETS[1].instance.load(Relaxed).is_null());
+        assert!(REWARD_TARGETS[2].instance.load(Relaxed).is_null());
+        // Slot 0 is not touched by base destroy.
+        assert!(REWARD_TARGETS[0].instance.load(Relaxed).is_null());
+
+        reset_reward_targets();
+    }
+
+    #[test]
+    fn collect_skips_slot_without_on_collect() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+
+        // Instance present but no on_collect resolved.
+        let fake = 0xDEAD_0005usize as *mut ();
+        REWARD_TARGETS[0].instance.store(fake, Relaxed);
+        // on_collect is null, should skip without crash.
+        collect_reward_screen();
+
+        reset_reward_targets();
+    }
+
+    // ---- Behavioral tests -------------------------------------------------
+
+    /// Track which slot's on_collect was called.
+    static COLLECT_CALLED_SLOT: AtomicI32 = AtomicI32::new(-1);
+
+    extern "C" fn fake_collect_0(_: *mut Il2CppObject) {
+        COLLECT_CALLED_SLOT.store(0, Relaxed);
+    }
+
+    extern "C" fn fake_collect_2(_: *mut Il2CppObject) {
+        COLLECT_CALLED_SLOT.store(2, Relaxed);
+    }
+
+    use std::sync::atomic::AtomicI32;
+
+    #[test]
+    fn collect_picks_first_active_slot() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+        COLLECT_CALLED_SLOT.store(-1, Relaxed);
+
+        // Slot 0 and 2 both have instances and on_collect. Slot 0 should win.
+        let inst_0 = 0xDEAD_1000usize as *mut ();
+        let inst_2 = 0xDEAD_2000usize as *mut ();
+        REWARD_TARGETS[0].instance.store(inst_0, Relaxed);
+        REWARD_TARGETS[0].on_collect.store(fake_collect_0 as *mut (), Relaxed);
+        REWARD_TARGETS[2].instance.store(inst_2, Relaxed);
+        REWARD_TARGETS[2].on_collect.store(fake_collect_2 as *mut (), Relaxed);
+
+        collect_reward_screen();
+        assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), 0);
+
+        reset_reward_targets();
+    }
+
+    #[test]
+    fn collect_skips_to_next_slot_when_first_empty() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+        COLLECT_CALLED_SLOT.store(-1, Relaxed);
+
+        // Slot 0 empty, slot 2 populated. Slot 2 should be called.
+        let inst_2 = 0xDEAD_3000usize as *mut ();
+        REWARD_TARGETS[2].instance.store(inst_2, Relaxed);
+        REWARD_TARGETS[2].on_collect.store(fake_collect_2 as *mut (), Relaxed);
+
+        collect_reward_screen();
+        assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), 2);
+
+        reset_reward_targets();
+    }
+
+    extern "C" fn fake_is_active_false(_: *mut Il2CppObject) -> bool {
+        false
+    }
+
+    #[test]
+    fn collect_skips_inactive_instance() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_reward_targets();
+        COLLECT_CALLED_SLOT.store(-1, Relaxed);
+
+        // Slot 0 has instance + on_collect, but IsActive returns false.
+        // Slot 2 has instance + on_collect and no IsActive gate (should be called).
+        IS_ACTIVE_FN.store(fake_is_active_false as *mut (), Relaxed);
+        let inst_0 = 0xDEAD_4000usize as *mut ();
+        let inst_2 = 0xDEAD_5000usize as *mut ();
+        REWARD_TARGETS[0].instance.store(inst_0, Relaxed);
+        REWARD_TARGETS[0].on_collect.store(fake_collect_0 as *mut (), Relaxed);
+        REWARD_TARGETS[2].instance.store(inst_2, Relaxed);
+        REWARD_TARGETS[2].on_collect.store(fake_collect_2 as *mut (), Relaxed);
+
+        collect_reward_screen();
+        // IsActive is global, returns false for ALL instances. Neither should be called.
+        assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), -1);
+
+        reset_reward_targets();
     }
 }
