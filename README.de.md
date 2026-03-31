@@ -1,4 +1,4 @@
-# Project Daystrom
+# Project Daystrom ![Version](https://img.shields.io/github/v/release/MBurchard/project-daystrom?color=4488FF&label=)
 
 ![Crafted with Rust](https://img.shields.io/badge/Crafted_with-Rust-000000?logo=rust&logoColor=white)
 ![Crafted with TypeScript](https://img.shields.io/badge/Crafted_with-TypeScript-3178C6?logo=typescript&logoColor=white)
@@ -26,6 +26,9 @@ Spiels eingreift.
   - Tastenkürzel: ESC zum Einsammeln von Belohnungen, LEERTASTE zum Angreifen, Abbauen oder Warpen
   - Einstellbare UI-Skalierung (50-200%), wird live auf das laufende Spiel angewendet
   - Automatisches Öffnen der Chat-Sidebar beim Spielstart
+  - Automatisches Aufklappen des Auftragsqueue-Panels beim Spielstart
+  - Konfigurierbarer Systemansicht-Zoom und Schiffsnamen-Sichtbarkeitsreichweite
+  - Toast-Banner-Unterdrückung mit typ-basiertem Opt-out (Kampf, Station, Armada, etc.)
   - Automatische Erkennung von Spiel-Updates über die Scopely-Update-API
 - **Native plattformübergreifende App** (Tauri 2 + Vue 3)
   - Einheitlicher Launcher: Entitlement-Patching auf macOS, DLL-Proxy-Injection auf Windows
