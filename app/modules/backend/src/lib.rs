@@ -318,6 +318,7 @@ pub fn run() {
                 }
                 tauri::RunEvent::Exit => {
                     log_debug!("[EVENT] Exit (app is shutting down)");
+                    settings::flush_saves();
                     websocket::cleanup();
                 }
                 _ => {}
