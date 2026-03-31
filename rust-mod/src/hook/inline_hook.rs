@@ -335,22 +335,18 @@ unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mu
             (region_addr as usize).min(max_addr)
         };
 
-        // Try to allocate in this gap (aligned to granularity)
+        // Try to allocate in this gap (aligned to granularity). Use mach_vm_allocate (VM_FLAGS_FIXED) instead of mmap
+        // MAP_FIXED because MAP_FIXED silently overwrites collisions while mach_vm_allocate returns KERN_NO_SPACE and
+        // leaves memory intact.
         if gap_end > gap_start {
             let alloc_at = (gap_start + GRANULARITY - 1) & !(GRANULARITY - 1);
             if alloc_at + size <= gap_end {
-                let ptr = unsafe {
-                    libc::mmap(
-                        alloc_at as *mut c_void,
-                        size,
-                        libc::PROT_READ | libc::PROT_WRITE,
-                        libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
-                        -1,
-                        0,
-                    )
+                let mut addr = alloc_at as u64;
+                let kr = unsafe {
+                    mach_vm_allocate(mach_task_self(), &mut addr, size as u64, 0)
                 };
-                if ptr != libc::MAP_FAILED {
-                    return Ok(ptr);
+                if kr == 0 {
+                    return Ok(addr as *mut c_void);
                 }
             }
         }
@@ -379,6 +375,9 @@ fn page_size() -> usize {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn mach_task_self() -> u32;
+    fn mach_vm_allocate(
+        task: u32, address: *mut u64, size: u64, flags: i32,
+    ) -> i32;
     fn mach_vm_protect(
         task: u32, address: u64, size: u64, set_maximum: i32, protection: i32,
     ) -> i32;
