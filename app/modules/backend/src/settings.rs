@@ -308,8 +308,8 @@ fn save() {
 ///
 /// Takes the stored [`JoinHandle`](std::thread::JoinHandle) and joins it.
 /// Returns immediately when no save is in flight.
-#[cfg(test)]
-fn flush_saves() {
+/// Called during app shutdown to prevent dropping a pending debounced write.
+pub fn flush_saves() {
     let handle = SAVE_HANDLE.lock().unwrap().take();
     if let Some(h) = handle {
         h.join().expect("save thread panicked");
