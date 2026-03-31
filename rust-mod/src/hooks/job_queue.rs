@@ -8,7 +8,7 @@
 //! vtable slot (IL2CPP generic sharing), causing a C++ foreign exception.
 
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::debug;
 
@@ -17,10 +17,10 @@ use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
-// ---- Constants ------------------------------------------------------------
+// ---- Dynamically resolved field offsets -----------------------------------
 
 /// Offset of `_listCollapsed` (bool) on JobQueuePanelViewController.
-const OFFSET_LIST_COLLAPSED: usize = 0x88;
+static OFFSET_LIST_COLLAPSED: AtomicUsize = AtomicUsize::new(0);
 
 // ---- State ----------------------------------------------------------------
 
@@ -99,8 +99,13 @@ fn try_expand() {
     }
 
     // Only expand if the panel is currently collapsed.
+    let collapsed_offset = OFFSET_LIST_COLLAPSED.load(Relaxed);
+    if collapsed_offset == 0 {
+        debug!(target: "JobQueue", "Auto-expand skipped: _listCollapsed offset not resolved");
+        return;
+    }
     let collapsed = unsafe {
-        let ptr = (panel as *mut u8).add(OFFSET_LIST_COLLAPSED) as *const bool;
+        let ptr = (panel as *mut u8).add(collapsed_offset) as *const bool;
         ptr.read()
     };
     if !collapsed {
@@ -135,6 +140,14 @@ pub fn install(api: &Il2CppApi) {
         log::warn!(target: "JobQueue", "JobQueuePanelViewController not found");
         return;
     };
+
+    // Resolve field offset dynamically via IL2CPP reflection.
+    if let Some(offset) = resolver::resolve_field_offset(api, class, "_listCollapsed") {
+        OFFSET_LIST_COLLAPSED.store(offset, Relaxed);
+        debug!(target: "JobQueue", "JobQueuePanelViewController._listCollapsed offset: {offset:#x}");
+    } else {
+        log::warn!(target: "JobQueue", "Could not resolve _listCollapsed");
+    }
 
     // Hook RegenerateLists: non-virtual, class-specific method that fires when the panel
     // rebuilds its job list. Unlike OnEnable (inherited from the generic ViewController<T>),

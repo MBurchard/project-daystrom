@@ -36,6 +36,13 @@ pub type Il2CppRuntimeInvokeFn = unsafe extern "C" fn(
     *mut *mut Il2CppException,
 ) -> *mut Il2CppObject;
 
+/// Type alias for `il2cpp_class_get_field_from_name(class, name) -> field_info`.
+type Il2CppClassGetFieldFromNameFn =
+    unsafe extern "C" fn(*mut Il2CppClass, *const c_char) -> *mut FieldInfo;
+
+/// Type alias for `il2cpp_field_get_offset(field) -> offset`.
+type Il2CppFieldGetOffsetFn = unsafe extern "C" fn(*mut FieldInfo) -> usize;
+
 /// Type alias for `il2cpp_string_new(str) -> Il2CppString*`.
 type Il2CppStringNewFn = unsafe extern "C" fn(*const c_char) -> *mut Il2CppString;
 
@@ -51,6 +58,8 @@ pub struct Il2CppApi {
     pub assembly_get_image: Il2CppAssemblyGetImageFn,
     pub class_from_name: Il2CppClassFromNameFn,
     pub class_get_method_from_name: Il2CppClassGetMethodFromNameFn,
+    pub class_get_field_from_name: Il2CppClassGetFieldFromNameFn,
+    pub field_get_offset: Il2CppFieldGetOffsetFn,
     pub runtime_invoke: Il2CppRuntimeInvokeFn,
     pub string_new: Il2CppStringNewFn,
 }
@@ -102,6 +111,8 @@ pub fn load() -> Result<Il2CppApi, Il2CppError> {
             assembly_get_image: resolve(lib, "il2cpp_assembly_get_image\0")?,
             class_from_name: resolve(lib, "il2cpp_class_from_name\0")?,
             class_get_method_from_name: resolve(lib, "il2cpp_class_get_method_from_name\0")?,
+            class_get_field_from_name: resolve(lib, "il2cpp_class_get_field_from_name\0")?,
+            field_get_offset: resolve(lib, "il2cpp_field_get_offset\0")?,
             runtime_invoke: resolve(lib, "il2cpp_runtime_invoke\0")?,
             string_new: resolve(lib, "il2cpp_string_new\0")?,
         })

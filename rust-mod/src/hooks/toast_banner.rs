@@ -4,7 +4,7 @@
 //! Returns `false` for suppressed types, causing the game to skip the toast through its own control flow.
 
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering::Relaxed};
 
 use log::debug;
 
@@ -13,10 +13,10 @@ use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
-// ---- Constants ------------------------------------------------------------
+// ---- Dynamically resolved field offsets -----------------------------------
 
 /// Offset of `<State>k__BackingField` (ToastState enum, i32) on Toast.
-const TOAST_STATE_OFFSET: usize = 0x10;
+static TOAST_STATE_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 /// Mapping of ToastState variant names to their integer values (game v145).
 ///
@@ -172,9 +172,13 @@ extern "C" fn hook_are_toasts_allowed(
             return true;
         }
 
-        // Read Toast.State (ToastState enum backing field at offset 0x10).
+        // Read Toast.State (ToastState enum backing field).
+        let state_offset = TOAST_STATE_OFFSET.load(Relaxed);
+        if state_offset == 0 {
+            return true;
+        }
         let state_value = unsafe {
-            tracker::read_i32(toast as *const (), TOAST_STATE_OFFSET)
+            tracker::read_i32(toast as *const (), state_offset)
         };
         if state_value < 0 {
             return true;
@@ -210,6 +214,22 @@ extern "C" fn hook_are_toasts_allowed(
 /// Hooks `ToastObserver.AreToastsAllowed` which is called before any toast is displayed.
 /// A single hook covers all toast enqueue paths.
 pub fn install(api: &Il2CppApi) {
+    // Resolve Toast field offset for reading the toast state in the hook.
+    if let Some(toast_class) = resolver::resolve_class(
+        api, "Assembly-CSharp", "Digit.Prime.HUD", "Toast",
+    ) {
+        if let Some(offset) = resolver::resolve_field_offset(
+            api, toast_class, "<State>k__BackingField",
+        ) {
+            TOAST_STATE_OFFSET.store(offset, Relaxed);
+            debug!(target: "ToastBanner", "Toast.<State>k__BackingField offset: {offset:#x}");
+        } else {
+            log::warn!(target: "ToastBanner", "Could not resolve Toast.<State>k__BackingField");
+        }
+    } else {
+        log::warn!(target: "ToastBanner", "Toast class not found");
+    }
+
     let Some(class) = resolver::resolve_class(
         api, "Assembly-CSharp", "Digit.Prime.HUD", "ToastObserver",
     ) else {
