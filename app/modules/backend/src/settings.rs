@@ -31,12 +31,12 @@ use_log!("Settings");
 /// generic forwarding.
 #[derive(Clone, Debug)]
 pub enum SettingsEvent {
-    /// The in-game UI scale percentage changed.
-    GameUiScale(u32),
-    /// The "auto-open sidebar" toggle changed.
-    AutoOpenSidebar(bool),
-    /// The "auto-expand job queue" toggle changed.
-    AutoExpandJobQueue(bool),
+    /// The in-game UI scale percentage changed (None = reset to default).
+    GameUiScale(Option<u32>),
+    /// The "auto-open sidebar" toggle changed (None = reset to default).
+    AutoOpenSidebar(Option<bool>),
+    /// The "auto-expand job queue" toggle changed (None = reset to default).
+    AutoExpandJobQueue(Option<bool>),
 }
 
 impl SettingsEvent {
@@ -49,10 +49,10 @@ impl SettingsEvent {
         }
     }
 
-    /// The new value as a JSON value.
+    /// The new value as a JSON value. Returns `null` for `None` (reset to default).
     pub fn value(&self) -> serde_json::Value {
         match self {
-            Self::GameUiScale(scale) => serde_json::json!(scale),
+            Self::GameUiScale(v) => serde_json::json!(v),
             Self::AutoOpenSidebar(v) => serde_json::json!(v),
             Self::AutoExpandJobQueue(v) => serde_json::json!(v),
         }
@@ -421,20 +421,14 @@ pub fn set_game_settings(settings: GameSettings) {
         }
 
         let mut events = Vec::new();
-        if let Some(scale) = s.game.ui.scale {
-            if s.game.ui.scale != old.ui.scale {
-                events.push(SettingsEvent::GameUiScale(scale));
-            }
+        if s.game.ui.scale != old.ui.scale {
+            events.push(SettingsEvent::GameUiScale(s.game.ui.scale));
         }
-        if let Some(v) = s.game.ui.auto_open_sidebar {
-            if s.game.ui.auto_open_sidebar != old.ui.auto_open_sidebar {
-                events.push(SettingsEvent::AutoOpenSidebar(v));
-            }
+        if s.game.ui.auto_open_sidebar != old.ui.auto_open_sidebar {
+            events.push(SettingsEvent::AutoOpenSidebar(s.game.ui.auto_open_sidebar));
         }
-        if let Some(v) = s.game.ui.auto_expand_job_queue {
-            if s.game.ui.auto_expand_job_queue != old.ui.auto_expand_job_queue {
-                events.push(SettingsEvent::AutoExpandJobQueue(v));
-            }
+        if s.game.ui.auto_expand_job_queue != old.ui.auto_expand_job_queue {
+            events.push(SettingsEvent::AutoExpandJobQueue(s.game.ui.auto_expand_job_queue));
         }
         events
     };
@@ -446,9 +440,9 @@ pub fn set_game_settings(settings: GameSettings) {
     if log::log_enabled!(log::Level::Debug) {
         for event in &events {
             match event {
-                SettingsEvent::GameUiScale(scale) => log_debug!("UI scale set to {scale}%"),
-                SettingsEvent::AutoOpenSidebar(v) => log_debug!("Auto-open sidebar set to {v}"),
-                SettingsEvent::AutoExpandJobQueue(v) => log_debug!("Auto-expand job queue set to {v}"),
+                SettingsEvent::GameUiScale(v) => log_debug!("UI scale set to {v:?}"),
+                SettingsEvent::AutoOpenSidebar(v) => log_debug!("Auto-open sidebar set to {v:?}"),
+                SettingsEvent::AutoExpandJobQueue(v) => log_debug!("Auto-expand job queue set to {v:?}"),
             }
         }
     }

@@ -87,26 +87,23 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
     let mut s = state().lock().unwrap();
     match key {
         "game.ui.scale" => {
-            if let Some(scale) = value.as_u64().map(|v| v as u32) {
-                debug!(target: "Settings", "Update: game.ui.scale = {scale}");
-                s.ui.scale = Some(scale);
-                // Release the Mutex before apply_current_scale(),
-                // which calls get_scale() and would deadlock on the same lock.
-                drop(s);
-                crate::hooks::ui_scale::apply_current_scale();
-            }
+            let new_scale = value.as_u64().map(|v| v as u32);
+            debug!(target: "Settings", "Update: game.ui.scale = {new_scale:?}");
+            s.ui.scale = new_scale;
+            // Release the Mutex before apply_current_scale(),
+            // which calls get_scale() and would deadlock on the same lock.
+            drop(s);
+            crate::hooks::ui_scale::apply_current_scale();
         }
         "game.ui.auto_open_sidebar" => {
-            if let Some(v) = value.as_bool() {
-                debug!(target: "Settings", "Update: game.ui.auto_open_sidebar = {v}");
-                s.ui.auto_open_sidebar = Some(v);
-            }
+            let new_val = value.as_bool();
+            debug!(target: "Settings", "Update: game.ui.auto_open_sidebar = {new_val:?}");
+            s.ui.auto_open_sidebar = new_val;
         }
         "game.ui.auto_expand_job_queue" => {
-            if let Some(v) = value.as_bool() {
-                debug!(target: "Settings", "Update: game.ui.auto_expand_job_queue = {v}");
-                s.ui.auto_expand_job_queue = Some(v);
-            }
+            let new_val = value.as_bool();
+            debug!(target: "Settings", "Update: game.ui.auto_expand_job_queue = {new_val:?}");
+            s.ui.auto_expand_job_queue = new_val;
         }
         other => {
             debug!(target: "Settings", "Unknown setting: {other}");
