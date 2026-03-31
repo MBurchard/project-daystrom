@@ -37,6 +37,10 @@ pub enum SettingsEvent {
     AutoOpenSidebar(Option<bool>),
     /// The "auto-expand job queue" toggle changed (None = reset to default).
     AutoExpandJobQueue(Option<bool>),
+    /// The "disable all banners" toggle changed (None = reset to default).
+    DisableAllBanners(Option<bool>),
+    /// The list of individually disabled banner type names changed (None = reset to default).
+    DisabledBannerTypes(Option<Vec<String>>),
 }
 
 impl SettingsEvent {
@@ -46,6 +50,8 @@ impl SettingsEvent {
             Self::GameUiScale(_) => "game.ui.scale",
             Self::AutoOpenSidebar(_) => "game.ui.auto_open_sidebar",
             Self::AutoExpandJobQueue(_) => "game.ui.auto_expand_job_queue",
+            Self::DisableAllBanners(_) => "game.ui.disable_all_banners",
+            Self::DisabledBannerTypes(_) => "game.ui.disabled_banner_types",
         }
     }
 
@@ -55,6 +61,8 @@ impl SettingsEvent {
             Self::GameUiScale(v) => serde_json::json!(v),
             Self::AutoOpenSidebar(v) => serde_json::json!(v),
             Self::AutoExpandJobQueue(v) => serde_json::json!(v),
+            Self::DisableAllBanners(v) => serde_json::json!(v),
+            Self::DisabledBannerTypes(v) => serde_json::json!(v),
         }
     }
 }
@@ -145,6 +153,12 @@ pub struct GameUiSettings {
     /// Whether to auto-expand the job queue panel from compact to full view.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub auto_expand_job_queue: Option<bool>,
+    /// Whether to suppress all toast banner notifications.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub disable_all_banners: Option<bool>,
+    /// List of specific banner type names to suppress (e.g. `["Victory", "Defeat"]`).
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub disabled_banner_types: Option<Vec<String>>,
 }
 
 /// Game-related settings that are sent to the mod.
@@ -203,6 +217,8 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
             scale: None,
             auto_open_sidebar: None,
             auto_expand_job_queue: None,
+            disable_all_banners: None,
+            disabled_banner_types: None,
         },
     },
     log_levels: LogLevelScopes {
@@ -430,6 +446,14 @@ pub fn set_game_settings(settings: GameSettings) {
         if s.game.ui.auto_expand_job_queue != old.ui.auto_expand_job_queue {
             events.push(SettingsEvent::AutoExpandJobQueue(s.game.ui.auto_expand_job_queue));
         }
+        if s.game.ui.disable_all_banners != old.ui.disable_all_banners {
+            events.push(SettingsEvent::DisableAllBanners(s.game.ui.disable_all_banners));
+        }
+        if s.game.ui.disabled_banner_types != old.ui.disabled_banner_types {
+            events.push(SettingsEvent::DisabledBannerTypes(
+                s.game.ui.disabled_banner_types.clone(),
+            ));
+        }
         events
     };
 
@@ -443,6 +467,8 @@ pub fn set_game_settings(settings: GameSettings) {
                 SettingsEvent::GameUiScale(v) => log_debug!("UI scale set to {v:?}"),
                 SettingsEvent::AutoOpenSidebar(v) => log_debug!("Auto-open sidebar set to {v:?}"),
                 SettingsEvent::AutoExpandJobQueue(v) => log_debug!("Auto-expand job queue set to {v:?}"),
+                SettingsEvent::DisableAllBanners(v) => log_debug!("Disable all banners set to {v:?}"),
+                SettingsEvent::DisabledBannerTypes(v) => log_debug!("Disabled banner types: {v:?}"),
             }
         }
     }
