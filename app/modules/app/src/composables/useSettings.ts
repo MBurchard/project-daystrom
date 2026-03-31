@@ -8,7 +8,7 @@ const log = getLogger('Settings');
 
 // ---- State -----------------------------------------------------------------
 
-const settings = ref<GameSettings>({ui: {}});
+const settings = ref<GameSettings>({ui: {}, banners: {}});
 
 // ---- Public API ------------------------------------------------------------
 

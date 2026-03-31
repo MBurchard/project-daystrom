@@ -474,14 +474,14 @@ fn install_reward_tracking(api: &Il2CppApi) {
     // Resolve IsActive from UIBehaviour (shared, only need it once from any resolved class).
     for target in &REWARD_TARGETS {
         let class = target.class.load(Relaxed);
-        if !class.is_null() {
-            if let Some(ptr) = tracker::resolve_fn(
+        if !class.is_null()
+            && let Some(ptr) = tracker::resolve_fn(
                 api, class as *mut Il2CppClass, "IsActive", 0,
-            ) {
-                IS_ACTIVE_FN.store(ptr as *mut (), Relaxed);
-                debug!(target: "Hotkeys", "IsActive resolved (from UIBehaviour)");
-                break;
-            }
+            )
+        {
+            IS_ACTIVE_FN.store(ptr as *mut (), Relaxed);
+            debug!(target: "Hotkeys", "IsActive resolved (from UIBehaviour)");
+            break;
         }
     }
 

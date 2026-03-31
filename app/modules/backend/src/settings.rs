@@ -38,9 +38,9 @@ pub enum SettingsEvent {
     /// The "auto-expand job queue" toggle changed (None = reset to default).
     AutoExpandJobQueue(Option<bool>),
     /// The "disable all banners" toggle changed (None = reset to default).
-    DisableAllBanners(Option<bool>),
+    BannersDisableAll(Option<bool>),
     /// The list of individually disabled banner type names changed (None = reset to default).
-    DisabledBannerTypes(Option<Vec<String>>),
+    BannersDisabledTypes(Option<Vec<String>>),
     /// The system view zoom distance changed (None = reset to default).
     SystemZoom(Option<u32>),
     /// The ship names visibility distance changed (None = reset to default).
@@ -54,8 +54,8 @@ impl SettingsEvent {
             Self::GameUiScale(_) => "game.ui.scale",
             Self::AutoOpenSidebar(_) => "game.ui.auto_open_sidebar",
             Self::AutoExpandJobQueue(_) => "game.ui.auto_expand_job_queue",
-            Self::DisableAllBanners(_) => "game.ui.disable_all_banners",
-            Self::DisabledBannerTypes(_) => "game.ui.disabled_banner_types",
+            Self::BannersDisableAll(_) => "game.banners.disable_all",
+            Self::BannersDisabledTypes(_) => "game.banners.disabled_types",
             Self::SystemZoom(_) => "game.ui.system_zoom",
             Self::ShipNamesVisible(_) => "game.ui.ship_names_visible",
         }
@@ -67,8 +67,8 @@ impl SettingsEvent {
             Self::GameUiScale(v) => serde_json::json!(v),
             Self::AutoOpenSidebar(v) => serde_json::json!(v),
             Self::AutoExpandJobQueue(v) => serde_json::json!(v),
-            Self::DisableAllBanners(v) => serde_json::json!(v),
-            Self::DisabledBannerTypes(v) => serde_json::json!(v),
+            Self::BannersDisableAll(v) => serde_json::json!(v),
+            Self::BannersDisabledTypes(v) => serde_json::json!(v),
             Self::SystemZoom(v) => serde_json::json!(v),
             Self::ShipNamesVisible(v) => serde_json::json!(v),
         }
@@ -155,24 +155,30 @@ pub struct GameUiSettings {
     /// UI scale percentage (50-200). Applied as a multiplier on the original scale factor.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub scale: Option<u32>,
+    /// System view zoom distance (1000-3000). Controls the default camera distance when entering a system.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub system_zoom: Option<u32>,
+    /// Ship names visibility distance (1000-3000). Controls how far ship names stay visible.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub ship_names_visible: Option<u32>,
     /// Whether to auto-open the chat sidebar when the game starts.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub auto_open_sidebar: Option<bool>,
     /// Whether to auto-expand the job queue panel from compact to full view.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub auto_expand_job_queue: Option<bool>,
+}
+
+/// Toast banner suppression settings.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GameBannerSettings {
     /// Whether to suppress all toast banner notifications.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
-    pub disable_all_banners: Option<bool>,
+    pub disable_all: Option<bool>,
     /// List of specific banner type names to suppress (e.g. `["Victory", "Defeat"]`).
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
-    pub disabled_banner_types: Option<Vec<String>>,
-    /// System view zoom distance (100-3000). Controls the default camera distance when entering a system.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
-    pub system_zoom: Option<u32>,
-    /// Ship names visibility distance (1000-3000). Controls how far ship names stay visible.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
-    pub ship_names_visible: Option<u32>,
+    pub disabled_types: Option<Vec<String>>,
 }
 
 /// Game-related settings that are sent to the mod.
@@ -182,6 +188,9 @@ pub struct GameSettings {
     /// In-game UI appearance.
     #[serde(default)]
     pub ui: GameUiSettings,
+    /// Toast banner suppression.
+    #[serde(default)]
+    pub banners: GameBannerSettings,
 }
 
 /// Per-target log level overrides, preserved across settings saves.
@@ -229,12 +238,14 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
     game: GameSettings {
         ui: GameUiSettings {
             scale: None,
-            auto_open_sidebar: None,
-            auto_expand_job_queue: None,
-            disable_all_banners: None,
-            disabled_banner_types: None,
             system_zoom: None,
             ship_names_visible: None,
+            auto_open_sidebar: None,
+            auto_expand_job_queue: None,
+        },
+        banners: GameBannerSettings {
+            disable_all: None,
+            disabled_types: None,
         },
     },
     log_levels: LogLevelScopes {
@@ -310,14 +321,16 @@ fn save() {
     if SAVE_PENDING.swap(true, Ordering::SeqCst) {
         return;
     }
-    let handle = std::thread::spawn(|| {
+    // Capture the path now so tests can reset PATH_OVERRIDE without racing the thread.
+    let Some(path) = settings_path() else {
+        SAVE_PENDING.store(false, Ordering::SeqCst);
+        log_warn!("Cannot determine settings path");
+        return;
+    };
+    let handle = std::thread::spawn(move || {
         std::thread::sleep(SAVE_DEBOUNCE);
         SAVE_PENDING.store(false, Ordering::SeqCst);
         let settings = SETTINGS.lock().unwrap().clone();
-        let Some(path) = settings_path() else {
-            log_warn!("Cannot determine settings path");
-            return;
-        };
         if let Some(dir) = path.parent() {
             if let Err(e) = fs::create_dir_all(dir) {
                 log_error!("Failed to create settings directory: {e}");
@@ -462,12 +475,12 @@ pub fn set_game_settings(settings: GameSettings) {
         if s.game.ui.auto_expand_job_queue != old.ui.auto_expand_job_queue {
             events.push(SettingsEvent::AutoExpandJobQueue(s.game.ui.auto_expand_job_queue));
         }
-        if s.game.ui.disable_all_banners != old.ui.disable_all_banners {
-            events.push(SettingsEvent::DisableAllBanners(s.game.ui.disable_all_banners));
+        if s.game.banners.disable_all != old.banners.disable_all {
+            events.push(SettingsEvent::BannersDisableAll(s.game.banners.disable_all));
         }
-        if s.game.ui.disabled_banner_types != old.ui.disabled_banner_types {
-            events.push(SettingsEvent::DisabledBannerTypes(
-                s.game.ui.disabled_banner_types.clone(),
+        if s.game.banners.disabled_types != old.banners.disabled_types {
+            events.push(SettingsEvent::BannersDisabledTypes(
+                s.game.banners.disabled_types.clone(),
             ));
         }
         if s.game.ui.system_zoom != old.ui.system_zoom {
@@ -489,8 +502,8 @@ pub fn set_game_settings(settings: GameSettings) {
                 SettingsEvent::GameUiScale(v) => log_debug!("UI scale set to {v:?}"),
                 SettingsEvent::AutoOpenSidebar(v) => log_debug!("Auto-open sidebar set to {v:?}"),
                 SettingsEvent::AutoExpandJobQueue(v) => log_debug!("Auto-expand job queue set to {v:?}"),
-                SettingsEvent::DisableAllBanners(v) => log_debug!("Disable all banners set to {v:?}"),
-                SettingsEvent::DisabledBannerTypes(v) => log_debug!("Disabled banner types: {v:?}"),
+                SettingsEvent::BannersDisableAll(v) => log_debug!("Disable all banners set to {v:?}"),
+                SettingsEvent::BannersDisabledTypes(v) => log_debug!("Disabled banner types: {v:?}"),
                 SettingsEvent::SystemZoom(v) => log_debug!("System zoom set to {v:?}"),
                 SettingsEvent::ShipNamesVisible(v) => log_debug!("Ship names visible set to {v:?}"),
             }
@@ -1011,6 +1024,7 @@ mod tests {
         for scale in [60, 70, 80, 90] {
             set_game_settings(GameSettings {
                 ui: GameUiSettings { scale: Some(scale), ..Default::default() },
+                ..Default::default()
             });
         }
 

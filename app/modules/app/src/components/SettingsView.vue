@@ -46,8 +46,8 @@ function onAutoExpandJobQueueChange(event: Event) {
 /** Effective UI scale, defaulting to 100% when not set. */
 const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
 
-/** Effective system zoom distance, defaulting to 300 (game default) when not set. */
-const effectiveSystemZoom = computed(() => settings.value.ui.system_zoom ?? 300);
+/** Effective system zoom distance, defaulting to 1000 when not set. */
+const effectiveSystemZoom = computed(() => settings.value.ui.system_zoom ?? 1000);
 
 /** Effective ship names visibility distance, defaulting to 1800 when not set. */
 const effectiveShipNamesVisible = computed(() => settings.value.ui.ship_names_visible ?? 1800);
@@ -77,11 +77,11 @@ function onShipNamesVisibleInput(event: Event) {
 // ---- Toast banner handlers --------------------------------------------------
 
 /** Whether all banners are disabled (convenience toggle). */
-const allBannersDisabled = computed(() => settings.value.ui.disable_all_banners ?? false);
+const allBannersDisabled = computed(() => settings.value.banners.disable_all ?? false);
 
 /** Set of currently disabled banner type names. */
 const disabledBannerSet = computed(
-  () => new Set(settings.value.ui.disabled_banner_types ?? []),
+  () => new Set(settings.value.banners.disabled_types ?? []),
 );
 
 /**
@@ -91,7 +91,7 @@ const disabledBannerSet = computed(
  */
 function onDisableAllBannersChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  settings.value.ui.disable_all_banners = target.checked;
+  settings.value.banners.disable_all = target.checked;
   save();
 }
 
@@ -104,13 +104,13 @@ function onDisableAllBannersChange(event: Event) {
  * @param checked - Whether the banner should be shown.
  */
 function onBannerTypeToggle(name: string, checked: boolean) {
-  const current = new Set(settings.value.ui.disabled_banner_types ?? []);
+  const current = new Set(settings.value.banners.disabled_types ?? []);
   if (checked) {
     current.delete(name);
   } else {
     current.add(name);
   }
-  settings.value.ui.disabled_banner_types = [...current].sort();
+  settings.value.banners.disabled_types = [...current].sort();
   save();
 }
 </script>
@@ -143,7 +143,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
         <label for="system-zoom">System Zoom</label>
         <input id="system-zoom"
             type="range"
-            min="100"
+            min="1000"
             max="3000"
             step="50"
             :value="effectiveSystemZoom"
@@ -257,7 +257,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
 }
 
 .setting-row label {
-  min-width: 5rem;
+  min-width: 12rem;
 }
 
 .setting-row input[type="range"] {
