@@ -73,18 +73,14 @@ pub fn send(msg: &WsMessage) {
 /// Start the WebSocket server in the Tauri async runtime.
 ///
 /// Writes the port to `ws.port` in the app data directory, then accepts connections indefinitely.
-/// Safe to call multiple times, further calls are no-ops.
+/// Safe to call multiple times, further calls are no-ops once the server has bound successfully.
 pub fn start(app: tauri::AppHandle) {
     if BROADCAST.get().is_some() {
         log_debug!("WebSocket server already running");
         return;
     }
 
-    let (tx, _) = broadcast::channel::<String>(64);
-    let _ = BROADCAST.set(tx.clone());
-
-    tauri::async_runtime::spawn(run_server(app, tx));
-    tauri::async_runtime::spawn(forward_settings_events());
+    tauri::async_runtime::spawn(run_server(app));
 }
 
 /// Remove the port discovery file.
@@ -137,7 +133,11 @@ fn write_port_file(port: u16) -> Result<PathBuf, String> {
 }
 
 /// Main server loop: bind, write a port file, accept connections.
-async fn run_server(app: tauri::AppHandle, tx: broadcast::Sender<String>) {
+///
+/// Creates the broadcast channel and registers it in [`BROADCAST`] only after the listener has bound successfully.
+/// This ensures that a transient bind failure does not permanently block retries via the `BROADCAST.get().is_some()`
+/// guard in [`start`].
+async fn run_server(app: tauri::AppHandle) {
     let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(l) => l,
         Err(e) => {
@@ -164,6 +164,13 @@ async fn run_server(app: tauri::AppHandle, tx: broadcast::Sender<String>) {
             return;
         }
     }
+
+    // Publish broadcast channel only after successful startup so the guard in start() stays open on failure, allowing
+    // a retry.
+    let (tx, _) = broadcast::channel::<String>(64);
+    let _ = BROADCAST.set(tx.clone());
+
+    tauri::async_runtime::spawn(forward_settings_events());
 
     let clients: ClientMap = Arc::new(Mutex::new(HashMap::new()));
 
