@@ -11,6 +11,7 @@ pub mod il2cpp_init;
 pub(crate) mod job_queue;
 mod player_prefs;
 mod spacebar;
+pub(crate) mod system_zoom;
 pub(crate) mod toast_banner;
 pub(crate) mod ui_scale;
 mod user_profile;
@@ -65,6 +66,7 @@ pub fn install_all_hooks() {
     chat_frame::install(api);
     job_queue::install(api);
     toast_banner::install(api);
+    system_zoom::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }
