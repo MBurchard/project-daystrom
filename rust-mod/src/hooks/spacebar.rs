@@ -3,7 +3,7 @@
 //! Checks per frame (from the shared `ScreenManager.Update()` hook) whether SPACE was pressed.
 //! If a viewer widget is active, executes the primary action: Engage (ships), Mine (nodes), or Warp (star systems).
 
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
@@ -13,16 +13,16 @@ use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
-// ---- Field offsets (from IL2CPP dump v145) --------------------------------
+// ---- Dynamically resolved field offsets -----------------------------------
 
 /// `ObjectViewerBaseWidget._visibilityController` (inherited by all viewers).
-const OFFSET_VIS_CTRL: usize = 0x80;
+static OFFSET_VIS_CTRL: AtomicUsize = AtomicUsize::new(0);
 
 /// `VisibilityController._state`.
-const OFFSET_VIS_STATE: usize = 0x54;
+static OFFSET_VIS_STATE: AtomicUsize = AtomicUsize::new(0);
 
 /// `PreScanTargetWidget._scanEngageButtonsWidget`.
-const OFFSET_SCAN_ENGAGE: usize = 0x118;
+static OFFSET_SCAN_ENGAGE: AtomicUsize = AtomicUsize::new(0);
 
 /// `VisibilityState.Visible` enum value.
 const VIS_VISIBLE: i32 = 4;
@@ -84,11 +84,16 @@ extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
 /// `Show` (animation in progress).
 /// This matches the `IsShownOrShowing` property on `VisibilityController`.
 unsafe fn is_viewer_visible(instance: *const ()) -> bool {
-    let vis_ctrl = unsafe { tracker::read_ptr(instance, OFFSET_VIS_CTRL) };
+    let ctrl_offset = OFFSET_VIS_CTRL.load(Relaxed);
+    let state_offset = OFFSET_VIS_STATE.load(Relaxed);
+    if ctrl_offset == 0 || state_offset == 0 {
+        return false;
+    }
+    let vis_ctrl = unsafe { tracker::read_ptr(instance, ctrl_offset) };
     if vis_ctrl.is_null() {
         return false;
     }
-    let state = unsafe { tracker::read_i32(vis_ctrl as *const (), OFFSET_VIS_STATE) };
+    let state = unsafe { tracker::read_i32(vis_ctrl as *const (), state_offset) };
     state == VIS_VISIBLE || state == VIS_SHOW
 }
 
@@ -133,7 +138,11 @@ fn try_engage(prescan: *mut ()) -> bool {
     if fn_ptr.is_null() {
         return false;
     }
-    let widget = unsafe { tracker::read_ptr(prescan, OFFSET_SCAN_ENGAGE) };
+    let engage_offset = OFFSET_SCAN_ENGAGE.load(Relaxed);
+    if engage_offset == 0 {
+        return false;
+    }
+    let widget = unsafe { tracker::read_ptr(prescan, engage_offset) };
     if widget.is_null() {
         return false;
     }
@@ -181,10 +190,39 @@ fn log_first(action: &str) {
 /// Resolves viewer classes, hooks Awake/OnDestroy for instance tracking, and resolves action methods.
 /// Called from `hotkeys::install()`.
 pub fn install(api: &Il2CppApi) {
+    // Resolve shared visibility offsets (used by all viewer types).
+    // _visibilityController is inherited from ObjectViewerBaseWidget; resolving on any
+    // concrete subclass works because IL2CPP traverses the class hierarchy.
+    if let Some(c) = resolver::resolve_class(
+        api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController",
+    ) {
+        if let Some(offset) = resolver::resolve_field_offset(api, c, "_state") {
+            OFFSET_VIS_STATE.store(offset, Relaxed);
+            debug!(target: "Hotkeys", "VisibilityController._state offset: {offset:#x}");
+        } else {
+            warn!(target: "Hotkeys", "Could not resolve VisibilityController._state");
+        }
+    }
+
     // PreScanTargetWidget has its own OnDestroy override, so full install is safe.
     if let Some(c) = resolver::resolve_class(
         api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget",
     ) {
+        // Resolve _visibilityController offset on a concrete viewer subclass.
+        if let Some(offset) = resolver::resolve_field_offset(api, c, "_visibilityController") {
+            OFFSET_VIS_CTRL.store(offset, Relaxed);
+            debug!(target: "Hotkeys", "ObjectViewerBaseWidget._visibilityController offset: {offset:#x}");
+        } else {
+            warn!(target: "Hotkeys", "Could not resolve _visibilityController");
+        }
+
+        if let Some(offset) = resolver::resolve_field_offset(api, c, "_scanEngageButtonsWidget") {
+            OFFSET_SCAN_ENGAGE.store(offset, Relaxed);
+            debug!(target: "Hotkeys", "PreScanTargetWidget._scanEngageButtonsWidget offset: {offset:#x}");
+        } else {
+            warn!(target: "Hotkeys", "Could not resolve _scanEngageButtonsWidget");
+        }
+
         prescan::install(api, c, "PreScan");
     }
 

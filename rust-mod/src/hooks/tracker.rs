@@ -48,6 +48,16 @@ pub unsafe fn read_i32(base: *const (), offset: usize) -> i32 {
     unsafe { *((base as *const u8).add(offset) as *const i32) }
 }
 
+/// Read an `f32` field at `offset` bytes from an IL2CPP object.
+///
+/// # Safety
+///
+/// The caller must ensure that `base` is a valid object pointer and that an `f32` field actually exists at
+/// the given offset.
+pub unsafe fn read_f32(base: *const (), offset: usize) -> f32 {
+    unsafe { *((base as *const u8).add(offset) as *const f32) }
+}
+
 // ---- Lifecycle hook installation ------------------------------------------
 
 /// Install Awake and OnDestroy hooks on a class for instance tracking.

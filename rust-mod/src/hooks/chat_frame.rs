@@ -6,7 +6,7 @@
 //! directly to maximize the sidebar width (the game clamps to its actual limit).
 
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::debug;
 
@@ -16,8 +16,8 @@ use crate::il2cpp::{resolver, types::*};
 
 // ---- Constants ------------------------------------------------------------
 
-/// Offset of `_focusedPanel` (ChatChannelCategory, i32) on ChatPreviewController.
-const OFFSET_FOCUSED_PANEL: usize = 0x90;
+/// Dynamically resolved offset of `_focusedPanel` (ChatChannelCategory, i32) on ChatPreviewController.
+static OFFSET_FOCUSED_PANEL: AtomicUsize = AtomicUsize::new(0);
 
 /// `ChatChannelCategory.Alliance` — the default tab for auto-open.
 const TAB_ALLIANCE: i32 = 2;
@@ -146,8 +146,13 @@ fn try_restore() {
     // Set _focusedPanel to Alliance (ChatChannelCategory = 2) before the click,
     // so the sidebar opens on the Alliance chat like a manual button press would.
     let chat = CHAT_PREVIEW.load(Relaxed);
+    let panel_offset = OFFSET_FOCUSED_PANEL.load(Relaxed);
+    if panel_offset == 0 {
+        debug!(target: "ChatFrame", "Auto-open skipped: _focusedPanel offset not resolved");
+        return;
+    }
     unsafe {
-        let ptr = (chat as *mut u8).add(OFFSET_FOCUSED_PANEL) as *mut i32;
+        let ptr = (chat as *mut u8).add(panel_offset) as *mut i32;
         ptr.write(TAB_ALLIANCE);
     }
 
@@ -235,6 +240,13 @@ pub fn install(api: &Il2CppApi) {
         log::warn!(target: "ChatFrame", "ChatPreviewController not found");
         return;
     };
+
+    if let Some(offset) = resolver::resolve_field_offset(api, chat_class, "_focusedPanel") {
+        OFFSET_FOCUSED_PANEL.store(offset, Relaxed);
+        debug!(target: "ChatFrame", "ChatPreviewController._focusedPanel offset: {offset:#x}");
+    } else {
+        log::warn!(target: "ChatFrame", "Could not resolve ChatPreviewController._focusedPanel");
+    }
 
     install_hook(
         api, chat_class, "OnEnable",

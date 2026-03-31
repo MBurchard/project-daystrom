@@ -36,6 +36,12 @@ pub struct Il2CppException {
     _opaque: [u8; 0],
 }
 
+/// Opaque handle to a resolved field.
+#[repr(C)]
+pub struct FieldInfo {
+    _opaque: [u8; 0],
+}
+
 // ---- MethodInfo -----------------------------------------------------------
 
 /// IL2CPP method metadata. Only the `method_pointer` field is accessed directly;

@@ -1,7 +1,7 @@
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering::Relaxed};
 
-use log::{debug, error};
+use log::{debug, error, warn};
 
 use crate::hook::engine;
 use crate::hook::safety::HookInfo;
@@ -9,11 +9,11 @@ use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
-/// Offset of `m_canvasRootScaler` within `ScreenManager` (from IL2CPP dump).
-const M_CANVAS_ROOT_SCALER_OFFSET: usize = 0x28;
+/// Dynamically resolved offset of `m_canvasRootScaler` within `ScreenManager`.
+static OFFSET_ROOT_SCALER: AtomicUsize = AtomicUsize::new(0);
 
-/// Offset of `m_ScaleFactor` within `CanvasScaler` (from IL2CPP dump).
-const M_SCALE_FACTOR_OFFSET: usize = 0x28;
+/// Dynamically resolved offset of `m_ScaleFactor` within `CanvasScaler`.
+static OFFSET_SCALE_FACTOR: AtomicUsize = AtomicUsize::new(0);
 
 /// Original function pointer:
 /// `void UpdateCanvasRootScaleFactor(ScreenManager* this)`.
@@ -39,22 +39,34 @@ type UpdateFn = unsafe extern "C" fn(*mut Il2CppObject);
 
 /// Read the `m_canvasRootScaler` pointer from a ScreenManager instance.
 ///
+/// Returns null if the field offset has not been resolved.
+///
 /// # Safety
 /// Caller must ensure `this` points to a valid ScreenManager instance.
 unsafe fn get_canvas_scaler(this: *mut Il2CppObject) -> *mut Il2CppObject {
+    let offset = OFFSET_ROOT_SCALER.load(Relaxed);
+    if offset == 0 {
+        return std::ptr::null_mut();
+    }
     unsafe {
-        let ptr = (this as *const u8).add(M_CANVAS_ROOT_SCALER_OFFSET);
+        let ptr = (this as *const u8).add(offset);
         *(ptr as *const *mut Il2CppObject)
     }
 }
 
 /// Read the `m_ScaleFactor` field from a CanvasScaler instance.
 ///
+/// Returns 0.0 if the field offset has not been resolved.
+///
 /// # Safety
 /// Caller must ensure `scaler` points to a valid CanvasScaler instance.
 unsafe fn read_scale_factor(scaler: *mut Il2CppObject) -> f32 {
+    let offset = OFFSET_SCALE_FACTOR.load(Relaxed);
+    if offset == 0 {
+        return 0.0;
+    }
     unsafe {
-        let ptr = (scaler as *const u8).add(M_SCALE_FACTOR_OFFSET) as *const f32;
+        let ptr = (scaler as *const u8).add(offset) as *const f32;
         ptr.read()
     }
 }
@@ -62,13 +74,17 @@ unsafe fn read_scale_factor(scaler: *mut Il2CppObject) -> f32 {
 /// Write the `m_ScaleFactor` field on a CanvasScaler instance.
 ///
 /// `Handle()` picks up this value on the next frame and applies it to `Canvas.scaleFactor`, so there is no need
-/// to call `SetScaleFactor()`.
+/// to call `SetScaleFactor()`. No-op if the field offset has not been resolved.
 ///
 /// # Safety
 /// Caller must ensure `scaler` points to a valid CanvasScaler instance.
 unsafe fn write_scale_factor(scaler: *mut Il2CppObject, value: f32) {
+    let offset = OFFSET_SCALE_FACTOR.load(Relaxed);
+    if offset == 0 {
+        return;
+    }
     unsafe {
-        let ptr = (scaler as *mut u8).add(M_SCALE_FACTOR_OFFSET) as *mut f32;
+        let ptr = (scaler as *mut u8).add(offset) as *mut f32;
         ptr.write(value);
     }
 }
@@ -154,6 +170,27 @@ pub fn install(api: &Il2CppApi) {
     ) else {
         return;
     };
+
+    // Resolve field offsets dynamically via IL2CPP reflection.
+    if let Some(offset) = resolver::resolve_field_offset(api, sm_class, "m_canvasRootScaler") {
+        OFFSET_ROOT_SCALER.store(offset, Relaxed);
+        debug!(target: "UiScale", "ScreenManager.m_canvasRootScaler offset: {offset:#x}");
+    } else {
+        warn!(target: "UiScale", "Could not resolve ScreenManager.m_canvasRootScaler");
+    }
+
+    if let Some(cs_class) = resolver::resolve_class(
+        api, "UnityEngine.UI", "UnityEngine.UI", "CanvasScaler",
+    ) {
+        if let Some(offset) = resolver::resolve_field_offset(api, cs_class, "m_ScaleFactor") {
+            OFFSET_SCALE_FACTOR.store(offset, Relaxed);
+            debug!(target: "UiScale", "CanvasScaler.m_ScaleFactor offset: {offset:#x}");
+        } else {
+            warn!(target: "UiScale", "Could not resolve CanvasScaler.m_ScaleFactor");
+        }
+    } else {
+        warn!(target: "UiScale", "CanvasScaler class not found");
+    }
 
     let Some(update_method) =
         resolver::resolve_method(api, sm_class, "UpdateCanvasRootScaleFactor", 0)

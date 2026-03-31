@@ -57,6 +57,32 @@ pub fn resolve_class(
     }
 }
 
+/// Resolve a field's byte offset within an IL2CPP class by name.
+///
+/// Returns the offset suitable for pointer arithmetic on object instances.
+/// Returns `None` and logs a warning if the field is not found.
+pub fn resolve_field_offset(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    field_name: &str,
+) -> Option<usize> {
+    let c_field = CString::new(field_name).unwrap_or_else(|_| {
+        warn!(target: "IL2CPP", "Invalid field name (contains null byte): {field_name}");
+        CString::default()
+    });
+
+    unsafe {
+        let field = (api.class_get_field_from_name)(class, c_field.as_ptr());
+        if field.is_null() {
+            warn!(target: "IL2CPP", "Field not found: {field_name}");
+            return None;
+        }
+
+        let offset = (api.field_get_offset)(field);
+        Some(offset)
+    }
+}
+
 /// Resolve a method on an IL2CPP class by name and parameter count.
 ///
 /// Returns the `MethodInfo` including the raw function pointer for hooking.
