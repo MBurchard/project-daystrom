@@ -46,6 +46,34 @@ function onAutoExpandJobQueueChange(event: Event) {
 /** Effective UI scale, defaulting to 100% when not set. */
 const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
 
+/** Effective system zoom distance, defaulting to 300 (game default) when not set. */
+const effectiveSystemZoom = computed(() => settings.value.ui.system_zoom ?? 300);
+
+/** Effective ship names visibility distance, defaulting to 1800 when not set. */
+const effectiveShipNamesVisible = computed(() => settings.value.ui.ship_names_visible ?? 1800);
+
+/**
+ * Handle system zoom slider input: update the settings ref and send to backend.
+ *
+ * @param event - Native input event from the range slider.
+ */
+function onSystemZoomInput(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.ui.system_zoom = Number(target.value);
+  save();
+}
+
+/**
+ * Handle ship names visible slider input: update the settings ref and send to backend.
+ *
+ * @param event - Native input event from the range slider.
+ */
+function onShipNamesVisibleInput(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.ui.ship_names_visible = Number(target.value);
+  save();
+}
+
 // ---- Toast banner handlers --------------------------------------------------
 
 /** Whether all banners are disabled (convenience toggle). */
@@ -109,6 +137,30 @@ function onBannerTypeToggle(name: string, checked: boolean) {
             :value="effectiveScale"
             @input="onSliderInput">
         <span class="scale-value">{{ effectiveScale }}%</span>
+      </div>
+
+      <div class="setting-row">
+        <label for="system-zoom">System Zoom</label>
+        <input id="system-zoom"
+            type="range"
+            min="100"
+            max="3000"
+            step="50"
+            :value="effectiveSystemZoom"
+            @input="onSystemZoomInput">
+        <span class="scale-value">{{ effectiveSystemZoom }}</span>
+      </div>
+
+      <div class="setting-row">
+        <label for="ship-names-visible">Ship Names Visible</label>
+        <input id="ship-names-visible"
+            type="range"
+            min="1000"
+            max="3000"
+            step="50"
+            :value="effectiveShipNamesVisible"
+            @input="onShipNamesVisibleInput">
+        <span class="scale-value">{{ effectiveShipNamesVisible }}</span>
       </div>
 
       <div class="setting-row">

@@ -38,6 +38,12 @@ pub struct GameUiSettings {
     /// List of specific banner type names to suppress (e.g. `["Victory", "Defeat"]`).
     #[serde(default, deserialize_with = "lenient_option")]
     pub disabled_banner_types: Option<Vec<String>>,
+    /// System view zoom distance (100-3000). Controls the default camera distance when entering a system.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub system_zoom: Option<u32>,
+    /// Ship names visibility distance (1000-3000). Controls how far ship names stay visible.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub ship_names_visible: Option<u32>,
 }
 
 /// Game settings received from Daystrom.
@@ -85,6 +91,16 @@ pub fn disabled_banner_types() -> Vec<String> {
     state().lock().unwrap().ui.disabled_banner_types.clone().unwrap_or_default()
 }
 
+/// System view zoom distance (100-3000, default 300).
+pub fn get_system_zoom() -> u32 {
+    state().lock().unwrap().ui.system_zoom.unwrap_or(300)
+}
+
+/// Ship names visibility distance (1000-3000, default 1800).
+pub fn get_ship_names_visible() -> u32 {
+    state().lock().unwrap().ui.ship_names_visible.unwrap_or(1800)
+}
+
 /// Replace all settings with a full snapshot from Daystrom (`settings.sync`).
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
@@ -95,6 +111,7 @@ pub fn apply_sync(settings: GameSettings) {
     crate::hooks::chat_frame::on_settings_synced();
     crate::hooks::job_queue::on_settings_synced();
     crate::hooks::toast_banner::on_settings_changed();
+    crate::hooks::system_zoom::on_settings_changed();
 }
 
 /// Patch individual settings from an incremental update (`settings.update`).
@@ -137,6 +154,20 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             s.ui.disabled_banner_types = new_val;
             drop(s);
             crate::hooks::toast_banner::on_settings_changed();
+        }
+        "game.ui.system_zoom" => {
+            let new_val = value.as_u64().map(|v| v as u32);
+            debug!(target: "Settings", "Update: game.ui.system_zoom = {new_val:?}");
+            s.ui.system_zoom = new_val;
+            drop(s);
+            crate::hooks::system_zoom::on_settings_changed();
+        }
+        "game.ui.ship_names_visible" => {
+            let new_val = value.as_u64().map(|v| v as u32);
+            debug!(target: "Settings", "Update: game.ui.ship_names_visible = {new_val:?}");
+            s.ui.ship_names_visible = new_val;
+            drop(s);
+            crate::hooks::system_zoom::on_settings_changed();
         }
         other => {
             debug!(target: "Settings", "Unknown setting: {other}");
@@ -241,6 +272,48 @@ mod tests {
 
         apply_update("game.ui.auto_open_sidebar", &serde_json::json!(true));
         assert_eq!(state().lock().unwrap().ui.auto_open_sidebar, Some(true));
+
+        reset();
+    }
+
+    #[test]
+    fn system_zoom_getter_default() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        assert_eq!(get_system_zoom(), 300);
+
+        reset();
+    }
+
+    #[test]
+    fn apply_update_patches_system_zoom() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        apply_update("game.ui.system_zoom", &serde_json::json!(1500));
+        assert_eq!(state().lock().unwrap().ui.system_zoom, Some(1500));
+
+        reset();
+    }
+
+    #[test]
+    fn ship_names_visible_getter_default() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        assert_eq!(get_ship_names_visible(), 1800);
+
+        reset();
+    }
+
+    #[test]
+    fn apply_update_patches_ship_names_visible() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        apply_update("game.ui.ship_names_visible", &serde_json::json!(2500));
+        assert_eq!(state().lock().unwrap().ui.ship_names_visible, Some(2500));
 
         reset();
     }

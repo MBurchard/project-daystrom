@@ -41,6 +41,10 @@ pub enum SettingsEvent {
     DisableAllBanners(Option<bool>),
     /// The list of individually disabled banner type names changed (None = reset to default).
     DisabledBannerTypes(Option<Vec<String>>),
+    /// The system view zoom distance changed (None = reset to default).
+    SystemZoom(Option<u32>),
+    /// The ship names visibility distance changed (None = reset to default).
+    ShipNamesVisible(Option<u32>),
 }
 
 impl SettingsEvent {
@@ -52,6 +56,8 @@ impl SettingsEvent {
             Self::AutoExpandJobQueue(_) => "game.ui.auto_expand_job_queue",
             Self::DisableAllBanners(_) => "game.ui.disable_all_banners",
             Self::DisabledBannerTypes(_) => "game.ui.disabled_banner_types",
+            Self::SystemZoom(_) => "game.ui.system_zoom",
+            Self::ShipNamesVisible(_) => "game.ui.ship_names_visible",
         }
     }
 
@@ -63,6 +69,8 @@ impl SettingsEvent {
             Self::AutoExpandJobQueue(v) => serde_json::json!(v),
             Self::DisableAllBanners(v) => serde_json::json!(v),
             Self::DisabledBannerTypes(v) => serde_json::json!(v),
+            Self::SystemZoom(v) => serde_json::json!(v),
+            Self::ShipNamesVisible(v) => serde_json::json!(v),
         }
     }
 }
@@ -159,6 +167,12 @@ pub struct GameUiSettings {
     /// List of specific banner type names to suppress (e.g. `["Victory", "Defeat"]`).
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub disabled_banner_types: Option<Vec<String>>,
+    /// System view zoom distance (100-3000). Controls the default camera distance when entering a system.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub system_zoom: Option<u32>,
+    /// Ship names visibility distance (1000-3000). Controls how far ship names stay visible.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub ship_names_visible: Option<u32>,
 }
 
 /// Game-related settings that are sent to the mod.
@@ -219,6 +233,8 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
             auto_expand_job_queue: None,
             disable_all_banners: None,
             disabled_banner_types: None,
+            system_zoom: None,
+            ship_names_visible: None,
         },
     },
     log_levels: LogLevelScopes {
@@ -454,6 +470,12 @@ pub fn set_game_settings(settings: GameSettings) {
                 s.game.ui.disabled_banner_types.clone(),
             ));
         }
+        if s.game.ui.system_zoom != old.ui.system_zoom {
+            events.push(SettingsEvent::SystemZoom(s.game.ui.system_zoom));
+        }
+        if s.game.ui.ship_names_visible != old.ui.ship_names_visible {
+            events.push(SettingsEvent::ShipNamesVisible(s.game.ui.ship_names_visible));
+        }
         events
     };
 
@@ -469,6 +491,8 @@ pub fn set_game_settings(settings: GameSettings) {
                 SettingsEvent::AutoExpandJobQueue(v) => log_debug!("Auto-expand job queue set to {v:?}"),
                 SettingsEvent::DisableAllBanners(v) => log_debug!("Disable all banners set to {v:?}"),
                 SettingsEvent::DisabledBannerTypes(v) => log_debug!("Disabled banner types: {v:?}"),
+                SettingsEvent::SystemZoom(v) => log_debug!("System zoom set to {v:?}"),
+                SettingsEvent::ShipNamesVisible(v) => log_debug!("Ship names visible set to {v:?}"),
             }
         }
     }
@@ -1010,5 +1034,35 @@ mod tests {
         let toml_str = "[game.ui]\nscale = 100\nauto_open_sidebar = true\n";
         let parsed: AppSettings = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.game.ui.auto_open_sidebar, Some(true));
+    }
+
+    #[test]
+    fn system_zoom_defaults_to_none() {
+        assert_eq!(GameUiSettings::default().system_zoom, None);
+    }
+
+    #[test]
+    fn system_zoom_serde_round_trip() {
+        let toml_str = "[game.ui]\nsystem_zoom = 1500\n";
+        let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.game.ui.system_zoom, Some(1500));
+
+        let serialized = toml::to_string_pretty(&parsed).unwrap();
+        assert!(serialized.contains("system_zoom = 1500"));
+    }
+
+    #[test]
+    fn ship_names_visible_defaults_to_none() {
+        assert_eq!(GameUiSettings::default().ship_names_visible, None);
+    }
+
+    #[test]
+    fn ship_names_visible_serde_round_trip() {
+        let toml_str = "[game.ui]\nship_names_visible = 2500\n";
+        let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.game.ui.ship_names_visible, Some(2500));
+
+        let serialized = toml::to_string_pretty(&parsed).unwrap();
+        assert!(serialized.contains("ship_names_visible = 2500"));
     }
 }
