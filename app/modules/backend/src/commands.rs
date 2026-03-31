@@ -277,7 +277,7 @@ pub fn remove_mod(
         }
 
         let confirmed = window.dialog()
-            .message("Remove the Community Mod?\n\n\
+            .message("Remove the Daystrom Mod?\n\n\
                       After removal, the game can only be launched through the Scopely Launcher.")
             .title("Remove Mod")
             .kind(MessageDialogKind::Warning)

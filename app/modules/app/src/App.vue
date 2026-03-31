@@ -98,7 +98,7 @@ onUnmounted(() => {
           </li>
 
           <li v-if="status.installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
-            Community Mod
+            Daystrom Mod
             <button v-if="status.mod_available"
                 :disabled="!status.can_install_mod || actionPending"
                 @click="installMod">
@@ -161,11 +161,18 @@ onUnmounted(() => {
 <style>
 body {
   font-family: system-ui, -apple-system, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  -webkit-user-select: none;
   user-select: none;
 }
 
 .error,
 .info-message {
+  -webkit-user-select: text;
   user-select: text;
 }
 </style>

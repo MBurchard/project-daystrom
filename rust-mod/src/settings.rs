@@ -26,24 +26,29 @@ pub struct GameUiSettings {
     /// UI scale percentage (50-200). Applied as a multiplier on the original scale factor.
     #[serde(default, deserialize_with = "lenient_option")]
     pub scale: Option<u32>,
+    /// System view zoom distance (1000-3000). Controls the default camera distance when entering a system.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub system_zoom: Option<u32>,
+    /// Ship names visibility distance (1000-3000). Controls how far ship names stay visible.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub ship_names_visible: Option<u32>,
     /// Whether to auto-open the chat sidebar on game start.
     #[serde(default, deserialize_with = "lenient_option")]
     pub auto_open_sidebar: Option<bool>,
     /// Whether to auto-expand the job queue panel from compact to full view.
     #[serde(default, deserialize_with = "lenient_option")]
     pub auto_expand_job_queue: Option<bool>,
+}
+
+/// Toast banner suppression settings.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct GameBannerSettings {
     /// Whether to suppress all toast banner notifications.
     #[serde(default, deserialize_with = "lenient_option")]
-    pub disable_all_banners: Option<bool>,
+    pub disable_all: Option<bool>,
     /// List of specific banner type names to suppress (e.g. `["Victory", "Defeat"]`).
     #[serde(default, deserialize_with = "lenient_option")]
-    pub disabled_banner_types: Option<Vec<String>>,
-    /// System view zoom distance (100-3000). Controls the default camera distance when entering a system.
-    #[serde(default, deserialize_with = "lenient_option")]
-    pub system_zoom: Option<u32>,
-    /// Ship names visibility distance (1000-3000). Controls how far ship names stay visible.
-    #[serde(default, deserialize_with = "lenient_option")]
-    pub ship_names_visible: Option<u32>,
+    pub disabled_types: Option<Vec<String>>,
 }
 
 /// Game settings received from Daystrom.
@@ -52,6 +57,9 @@ pub struct GameSettings {
     /// In-game UI appearance.
     #[serde(default)]
     pub ui: GameUiSettings,
+    /// Toast banner suppression.
+    #[serde(default)]
+    pub banners: GameBannerSettings,
 }
 
 // ---- Global state ----------------------------------------------------------
@@ -83,17 +91,17 @@ pub fn auto_expand_job_queue() -> bool {
 
 /// Whether all toast banner notifications should be suppressed.
 pub fn disable_all_banners() -> bool {
-    state().lock().unwrap().ui.disable_all_banners.unwrap_or(false)
+    state().lock().unwrap().banners.disable_all.unwrap_or(false)
 }
 
 /// List of specific banner type names to suppress.
 pub fn disabled_banner_types() -> Vec<String> {
-    state().lock().unwrap().ui.disabled_banner_types.clone().unwrap_or_default()
+    state().lock().unwrap().banners.disabled_types.clone().unwrap_or_default()
 }
 
-/// System view zoom distance (100-3000, default 300).
+/// System view zoom distance (1000-3000, default 1000).
 pub fn get_system_zoom() -> u32 {
-    state().lock().unwrap().ui.system_zoom.unwrap_or(300)
+    state().lock().unwrap().ui.system_zoom.unwrap_or(1000)
 }
 
 /// Ship names visibility distance (1000-3000, default 1800).
@@ -139,19 +147,19 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             debug!(target: "Settings", "Update: game.ui.auto_expand_job_queue = {new_val:?}");
             s.ui.auto_expand_job_queue = new_val;
         }
-        "game.ui.disable_all_banners" => {
+        "game.banners.disable_all" => {
             let new_val = value.as_bool();
-            debug!(target: "Settings", "Update: game.ui.disable_all_banners = {new_val:?}");
-            s.ui.disable_all_banners = new_val;
+            debug!(target: "Settings", "Update: game.banners.disable_all = {new_val:?}");
+            s.banners.disable_all = new_val;
             drop(s);
             crate::hooks::toast_banner::on_settings_changed();
         }
-        "game.ui.disabled_banner_types" => {
+        "game.banners.disabled_types" => {
             let new_val = value.as_array().map(|arr| {
                 arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
             });
-            debug!(target: "Settings", "Update: game.ui.disabled_banner_types = {new_val:?}");
-            s.ui.disabled_banner_types = new_val;
+            debug!(target: "Settings", "Update: game.banners.disabled_types = {new_val:?}");
+            s.banners.disabled_types = new_val;
             drop(s);
             crate::hooks::toast_banner::on_settings_changed();
         }
@@ -201,6 +209,7 @@ mod tests {
 
         let settings = GameSettings {
             ui: GameUiSettings { scale: Some(150), ..Default::default() },
+            ..Default::default()
         };
         apply_sync(settings.clone());
 
@@ -281,7 +290,7 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         reset();
 
-        assert_eq!(get_system_zoom(), 300);
+        assert_eq!(get_system_zoom(), 1000);
 
         reset();
     }
