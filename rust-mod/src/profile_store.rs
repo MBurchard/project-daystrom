@@ -188,6 +188,9 @@ enum KeyRoute<'a> {
     Profil(&'a str),
     /// `[auth]` section, with the field name.
     Auth(&'a str),
+    /// `[player]` section. For keys that the game queries both with and without an uid prefix (dual-key pattern like
+    /// `options/*`, `mission/*`).
+    Player,
     /// `[chat]` section, stored under the original key.
     Chat,
     /// `[misc]` section, stored under the original key.
@@ -231,6 +234,13 @@ fn route_key(key: &str) -> KeyRoute<'_> {
         "chat_tabpreference" | "recent_emojis" => KeyRoute::Chat,
         // [cache]
         "DownloadCacheHistoryV2" => KeyRoute::Cache,
+        // [player] for dual-key pattern keys (queried with and without uid)
+        "selected_language" => KeyRoute::Player,
+        _ if key.starts_with("options/")
+            || key.starts_with("mission/")
+            || key.starts_with("QualityManager/")
+            || key.starts_with("Scopely.Analytics.")
+            || key.starts_with("Scopely.Attribution.") => KeyRoute::Player,
         // [misc] (everything else)
         _ => KeyRoute::Misc,
     }
@@ -343,6 +353,17 @@ impl StoreState {
         true
     }
 
+    /// Store a float value for a user-ID-prefixed key.
+    fn put_player_float(&mut self, suffix: &str, value: f32) -> bool {
+        let new_val = toml::Value::Float(value as f64);
+        if self.data.player.get(suffix).is_some_and(|v| *v == new_val) {
+            return false;
+        }
+        self.data.player.insert(suffix.to_string(), new_val);
+        self.dirty = true;
+        true
+    }
+
     /// Resolve a mutable reference to an auth string field by name.
     fn auth_field_mut(&mut self, field: &str) -> Option<&mut Option<String>> {
         match field {
@@ -444,6 +465,9 @@ impl StoreState {
                 self.dirty = true;
                 true
             }
+            KeyRoute::Player => {
+                self.put_player_string(key, value)
+            }
             KeyRoute::Chat => self.put_chat(key, toml::Value::String(value.to_string())),
             KeyRoute::Misc => self.put_misc(key, toml::Value::String(value.to_string())),
             KeyRoute::Cache => self.put_cache(key, toml::Value::String(value.to_string())),
@@ -498,6 +522,7 @@ impl StoreState {
                 self.dirty = true;
                 true
             }
+            KeyRoute::Player => self.put_player_int(key, value),
             KeyRoute::Chat => self.put_chat(key, toml::Value::Integer(value as i64)),
             KeyRoute::Cache => self.put_cache(key, toml::Value::Integer(value as i64)),
             KeyRoute::Profil(_) | KeyRoute::Auth(_) | KeyRoute::Misc => {
@@ -509,15 +534,10 @@ impl StoreState {
     /// Store a float value. Returns `true` if changed.
     fn put_float(&mut self, key: &str, value: f32) -> bool {
         if let Some(suffix) = self.strip_user_prefix(key) {
-            let new_val = toml::Value::Float(value as f64);
-            if self.data.player.get(suffix).is_some_and(|v| *v == new_val) {
-                return false;
-            }
-            self.data.player.insert(suffix.to_string(), new_val);
-            self.dirty = true;
-            return true;
+            return self.put_player_float(suffix, value);
         }
         match route_key(key) {
+            KeyRoute::Player => self.put_player_float(key, value),
             KeyRoute::Chat => self.put_chat(key, toml::Value::Float(value as f64)),
             KeyRoute::Cache => self.put_cache(key, toml::Value::Float(value as f64)),
             _ => self.put_misc(key, toml::Value::Float(value as f64)),
@@ -579,6 +599,7 @@ impl StoreState {
                 "login_allow_association" => self.data.auth.login_allow_association.is_some(),
                 _ => self.auth_field(field).is_some_and(|v| v.is_some()),
             },
+            KeyRoute::Player => self.data.player.contains_key(key),
             KeyRoute::Chat => self.data.chat.contains_key(key),
             KeyRoute::Misc => self.data.misc.contains_key(key),
             KeyRoute::Cache => self.data.cache.contains_key(key),
@@ -611,6 +632,7 @@ impl StoreState {
                 // The Int value is the real one; the Registry returns "" for the String read.
                 None
             }
+            KeyRoute::Player => self.data.player.get(key).and_then(|v| v.as_str()),
             KeyRoute::Chat => self.data.chat.get(key).and_then(|v| v.as_str()),
             KeyRoute::Misc => self.data.misc.get(key).and_then(|v| v.as_str()),
             KeyRoute::Cache => self.data.cache.get(key).and_then(|v| v.as_str()),
@@ -630,6 +652,7 @@ impl StoreState {
             KeyRoute::Auth("account_service_api_version") => self.data.auth.account_service_api_version,
             KeyRoute::Auth("scopely_id_allow_association") => self.data.auth.scopely_id_allow_association,
             KeyRoute::Auth("login_allow_association") => self.data.auth.login_allow_association,
+            KeyRoute::Player => self.data.player.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
             KeyRoute::Chat => self.data.chat.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
             KeyRoute::Misc => self.data.misc.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
             KeyRoute::Cache => self.data.cache.get(key).and_then(|v| v.as_integer()).map(|v| v as i32),
@@ -647,6 +670,7 @@ impl StoreState {
             return self.data.player.get(suffix).and_then(|v| v.as_float()).map(|v| v as f32);
         }
         match route_key(key) {
+            KeyRoute::Player => self.data.player.get(key).and_then(|v| v.as_float()).map(|v| v as f32),
             KeyRoute::Chat => self.data.chat.get(key).and_then(|v| v.as_float()).map(|v| v as f32),
             KeyRoute::Misc => self.data.misc.get(key).and_then(|v| v.as_float()).map(|v| v as f32),
             KeyRoute::Cache => self.data.cache.get(key).and_then(|v| v.as_float()).map(|v| v as f32),
@@ -686,6 +710,7 @@ impl StoreState {
                     _ => false,
                 }
             }
+            KeyRoute::Player => self.data.player.remove(key).is_some(),
             KeyRoute::Auth(_) | KeyRoute::Chat | KeyRoute::Misc | KeyRoute::Cache => false,
         }
     }
@@ -1142,6 +1167,55 @@ mod tests {
         assert!(!state.contains("some_random_key"));
         state.put("some_random_key", "value");
         assert!(state.contains("some_random_key"));
+    }
+
+    // -- Player routing (dual-key pattern) --
+
+    #[test]
+    fn options_key_goes_to_player() {
+        let mut state = empty_state();
+        state.put_int("options/action_queue_enabled", 1);
+        assert_eq!(state.data.player["options/action_queue_enabled"], toml::Value::Integer(1));
+        assert!(!state.data.misc.contains_key("options/action_queue_enabled"));
+    }
+
+    #[test]
+    fn mission_key_goes_to_player() {
+        let mut state = empty_state();
+        state.put_int("mission/daily_goals_unlock", 1);
+        assert_eq!(state.data.player["mission/daily_goals_unlock"], toml::Value::Integer(1));
+    }
+
+    #[test]
+    fn selected_language_goes_to_player() {
+        let mut state = empty_state();
+        state.put_int("selected_language", 0);
+        assert_eq!(state.data.player["selected_language"], toml::Value::Integer(0));
+    }
+
+    #[test]
+    fn dual_key_pattern_converges() {
+        let mut state = state_with_uid("uid1");
+        // Write via uid prefix (strip_user_prefix path)
+        state.put_int("uid1:options/action_queue_enabled", 0);
+        assert_eq!(state.get_int("options/action_queue_enabled"), Some(0));
+
+        // Write via plain key (KeyRoute::Player path)
+        state.put_int("options/action_queue_enabled", 1);
+        // Both paths read the same value
+        assert_eq!(state.get_int("options/action_queue_enabled"), Some(1));
+        assert_eq!(state.get_int("uid1:options/action_queue_enabled"), Some(1));
+    }
+
+    #[test]
+    fn player_route_phase1_routable() {
+        let state = empty_state();
+        assert!(state.can_route("options/action_queue_enabled"));
+        assert!(state.can_route("mission/daily_goals_unlock"));
+        assert!(state.can_route("QualityManager/QualityUserSetting"));
+        assert!(state.can_route("selected_language"));
+        assert!(state.can_route("Scopely.Analytics.DeviceToken"));
+        assert!(state.can_route("Scopely.Attribution.DeviceToken"));
     }
 
     // -- Factions (user-ID-prefixed keys) --
