@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use log::{debug, info};
 
@@ -27,17 +28,30 @@ pub fn is_trace_only() -> bool {
     TRACE_ENABLED
 }
 
-/// Dedup state: each op:key combination is logged only once per session.
-static DEDUP: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+/// Log interval for PlayerPrefs operations. Each `op:key` combination is logged at most once per interval, then
+/// suppressed until the interval elapses.
+const LOG_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Check if an op+key combination should be logged (dedup).
+/// Dedup state: maps each op:key combination to the last time it was logged.
+static DEDUP: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+
+/// Check if an op+key combination should be logged (time-based dedup).
 ///
-/// Returns `false` for combinations already seen. High-frequency keys
-/// (frame polling) are handled generically: logged once, then silent.
+/// Returns `true` on the first call for a given combination and then once every [`LOG_INTERVAL`].
+/// High-frequency keys (frame polling) are handled generically, logged once per interval, then silent.
 pub fn should_log(op: &str, key: &str) -> bool {
     let mut guard = DEDUP.lock().unwrap_or_else(|e| e.into_inner());
-    let seen = guard.get_or_insert_with(HashSet::new);
-    seen.insert(format!("{op}:{key}"))
+    let map = guard.get_or_insert_with(HashMap::new);
+    let now = Instant::now();
+    let combo = format!("{op}:{key}");
+
+    match map.get(&combo) {
+        Some(last) if now.duration_since(*last) < LOG_INTERVAL => false,
+        _ => {
+            map.insert(combo, now);
+            true
+        }
+    }
 }
 
 /// Log a PlayerPrefs operation in trace mode (deduped).
