@@ -1,7 +1,7 @@
 //! Auto-open chat sidebar on game start.
 //!
-//! Hooks `UIFrameManager.OnEnable()` to capture the manager instance and `ChatPreviewController.OnEnable()` to detect
-//! when the game's chat UI is ready.
+//! Hooks `UIFrameManager.OnEnable()` to capture the manager instance and `ChatPreviewController.AboutToShow()` to
+//! detect when the game's chat UI is ready (channels registered, subscriptions active).
 //! When `auto_open_sidebar` is enabled, simulates a click on the side panel button and calls `ResizeSideFrame`
 //! directly to maximize the sidebar width (the game clamps to its actual limit).
 
@@ -31,7 +31,7 @@ const FALLBACK_WIDTH: f32 = 2000.0;
 /// Tracked UIFrameManager instance (set by the OnEnable hook).
 static FRAME_MGR: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Tracked ChatPreviewController instance (set by the OnEnable hook).
+/// Tracked ChatPreviewController instance (set by the AboutToShow hook).
 static CHAT_PREVIEW: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Resolved function pointer for `ChatPreviewController.OnSidePanelButtonClicked()`.
@@ -46,14 +46,14 @@ static MAX_WIDTH_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// Original function pointer for `UIFrameManager.OnEnable()`.
 static ORIG_MGR_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Original function pointer for `ChatPreviewController.OnEnable()`.
-static ORIG_CHAT_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Original function pointer for `ChatPreviewController.AboutToShow()`.
+static ORIG_CHAT_SHOW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Whether restore has been attempted (prevents double restore).
 static RESTORED: AtomicBool = AtomicBool::new(false);
 
-/// Whether the ChatPreviewController OnEnable hook has been logged at least once.
-static CHAT_ENABLE_LOGGED: AtomicBool = AtomicBool::new(false);
+/// Whether the ChatPreviewController AboutToShow hook has been logged at least once.
+static CHAT_SHOW_LOGGED: AtomicBool = AtomicBool::new(false);
 
 // ---- Type aliases ---------------------------------------------------------
 
@@ -81,12 +81,13 @@ extern "C" fn hook_mgr_enable(this: *mut Il2CppObject) {
     }));
 }
 
-/// Hook for `ChatPreviewController.OnEnable()`.
+/// Hook for `ChatPreviewController.AboutToShow()`.
 ///
 /// Captures the ChatPreviewController instance and triggers a restore check.
-/// The chat preview becoming active is a reliable signal that the game's HUD is loaded and interactive.
-extern "C" fn hook_chat_enable(this: *mut Il2CppObject) {
-    let orig_ptr = ORIG_CHAT_ENABLE.load(Relaxed);
+/// `AboutToShow` fires after `RegisterActiveChannels()` and `SubscribeToEvents()`, so channel subscriptions are active,
+/// and messages will be current when the sidebar opens.
+extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
+    let orig_ptr = ORIG_CHAT_SHOW.load(Relaxed);
     if !orig_ptr.is_null() {
         let original: VoidFn = unsafe { std::mem::transmute(orig_ptr) };
         unsafe { original(this) };
@@ -94,8 +95,8 @@ extern "C" fn hook_chat_enable(this: *mut Il2CppObject) {
 
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
         CHAT_PREVIEW.store(this, Relaxed);
-        if !CHAT_ENABLE_LOGGED.swap(true, Relaxed) {
-            debug!(target: "ChatFrame", "ChatPreviewController active");
+        if !CHAT_SHOW_LOGGED.swap(true, Relaxed) {
+            debug!(target: "ChatFrame", "ChatPreviewController ready (AboutToShow)");
         }
         try_restore();
     }));
@@ -115,7 +116,7 @@ pub fn on_settings_synced() {
 ///
 /// Called from three places to handle any timing scenario:
 /// - `hook_mgr_enable` — UIFrameManager ready, chat/settings may not be
-/// - `hook_chat_enable` — chat UI ready, manager/settings may not be
+/// - `hook_chat_about_to_show` — chat UI ready (channels registered), manager/settings may not be
 /// - `on_settings_synced` — settings arrived, UI may not be ready yet
 ///
 /// All three conditions must be met before restore proceeds. On success, triggers `OnSidePanelButtonClicked` to open
@@ -208,7 +209,8 @@ fn install_hook(
 /// Install chat sidebar hooks.
 ///
 /// Hooks `UIFrameManager.OnEnable` to capture the manager instance and resolves `ResizeSideFrame` as a callable
-/// function. Hooks `ChatPreviewController.OnEnable` as the restore trigger and resolves `OnSidePanelButtonClicked`.
+/// function. Hooks `ChatPreviewController.AboutToShow` as the restore trigger (fires after channel registration)
+/// and resolves `OnSidePanelButtonClicked`.
 pub fn install(api: &Il2CppApi) {
     // ---- UIFrameManager ----
     let Some(frame_mgr_class) = resolver::resolve_class(
@@ -249,8 +251,8 @@ pub fn install(api: &Il2CppApi) {
     }
 
     install_hook(
-        api, chat_class, "OnEnable",
-        hook_chat_enable as *const (), &ORIG_CHAT_ENABLE,
+        api, chat_class, "AboutToShow",
+        hook_chat_about_to_show as *const (), &ORIG_CHAT_SHOW,
     );
 
     // Resolve OnSidePanelButtonClicked (called during restore, not hooked).
