@@ -87,6 +87,21 @@ static REWARD_TARGETS: [RewardTarget; 4] = [
     RewardTarget::new(),
 ];
 
+// ---- Widget collect tracking ------------------------------------------------
+//
+// Widgets with a single collect button that should be triggerable via ESC.
+// Unlike the reward ViewControllers, these are Widget<T> subclasses that persist for the entire session
+// and use OnEnable/OnDisable for visibility.
+
+/// Tracked instance of `MissionsNotificationPopoutWidget`.
+static MISSIONS_POPOUT_INSTANCE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Resolved `OnCollectButtonClicked` function pointer for the missions popout.
+static MISSIONS_POPOUT_ON_COLLECT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original trampoline for `MissionsNotificationPopoutWidget.Awake()`.
+static ORIG_MISSIONS_POPOUT_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
 /// Original trampoline for `AnimatedRewardsScreenViewController.Awake()`.
 static ORIG_ANIMATED_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -300,29 +315,46 @@ extern "C" fn hook_base_reward_destroy(this: *mut Il2CppObject, method: *const (
     }
 }
 
+// ---- Widget Awake hooks ---------------------------------------------------
+
+/// Awake hook for `MissionsNotificationPopoutWidget`.
+extern "C" fn hook_missions_popout_awake(this: *mut Il2CppObject) {
+    MISSIONS_POPOUT_INSTANCE.store(this as *mut (), Relaxed);
+    debug!(target: "Hotkeys", "MissionsNotificationPopout instance tracked");
+    let orig = ORIG_MISSIONS_POPOUT_AWAKE.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+}
+
 // ---- Reward collection ----------------------------------------------------
 
-/// Find the first active reward screen and collect via `OnCollectClicked()`.
+/// Find the first active collect screen and trigger its collect button.
 ///
-/// Iterates over all four tracking slots (one per `GenericRewardsScreenViewController` subclass).
-/// The first slot with a non-null, active instance wins.
-/// This handles AnimatedRewards, ShipScrapping, FirstTimeSpender, and RewardPreviewMultipleList screens.
+/// Checks reward screen ViewControllers (slots 0-3) and widget-based collect screens (MissionsNotificationPopout).
+/// The first active instance wins.
 fn collect_reward_screen() {
     let is_active_ptr = IS_ACTIVE_FN.load(Relaxed);
 
+    // Helper: check IsActive on an instance. Returns true if unresolved (optimistic).
+    let check_active = |instance: *mut Il2CppObject| -> bool {
+        if is_active_ptr.is_null() {
+            return true;
+        }
+        let is_active: IsActiveFn = unsafe { std::mem::transmute(is_active_ptr) };
+        unsafe { is_active(instance) }
+    };
+
+    // Reward screen ViewControllers (slots 0-3).
     for target in &REWARD_TARGETS {
         let instance = target.instance.load(Relaxed);
         if instance.is_null() {
             continue;
         }
         let instance = instance as *mut Il2CppObject;
-
-        // Check IsActive (from UIBehaviour); skip if not resolved.
-        if !is_active_ptr.is_null() {
-            let is_active: IsActiveFn = unsafe { std::mem::transmute(is_active_ptr) };
-            if !unsafe { is_active(instance) } {
-                continue;
-            }
+        if !check_active(instance) {
+            continue;
         }
 
         let on_collect_ptr = target.on_collect.load(Relaxed);
@@ -334,6 +366,20 @@ fn collect_reward_screen() {
         let on_collect: OnCollectFn = unsafe { std::mem::transmute(on_collect_ptr) };
         unsafe { on_collect(instance) };
         return;
+    }
+
+    // Widget-based collect screens.
+    let instance = MISSIONS_POPOUT_INSTANCE.load(Relaxed);
+    if !instance.is_null() {
+        let instance = instance as *mut Il2CppObject;
+        if check_active(instance) {
+            let on_collect_ptr = MISSIONS_POPOUT_ON_COLLECT.load(Relaxed);
+            if !on_collect_ptr.is_null() {
+                debug!(target: "Hotkeys", "ESC: collecting missions popout");
+                let on_collect: OnCollectFn = unsafe { std::mem::transmute(on_collect_ptr) };
+                unsafe { on_collect(instance) };
+            }
+        }
     }
 }
 
@@ -349,6 +395,7 @@ pub fn install(api: &Il2CppApi) {
         return;
     }
     install_reward_tracking(api);
+    install_widget_collect_tracking(api);
     super::spacebar::install(api);
     install_update_hook(api);
 }
@@ -538,6 +585,37 @@ fn install_reward_tracking(api: &Il2CppApi) {
                 debug!(target: "Hotkeys", "Base reward OnDestroy hook installed");
             }
             Err(e) => warn!(target: "Hotkeys", "Failed to hook base reward OnDestroy: {e}"),
+        }
+    }
+}
+
+/// Install tracking for widget-based collect screens.
+///
+/// These are `Widget<T>` subclasses with a single collect button that should be triggerable via ESC.
+/// They persist for the session and use OnEnable/OnDisable for visibility.
+fn install_widget_collect_tracking(api: &Il2CppApi) {
+    // MissionsNotificationPopoutWidget
+    let Some(class) = resolver::resolve_class(
+        api, "Assembly-CSharp", "Digit.Prime.HUD", "MissionsNotificationPopoutWidget",
+    ) else {
+        warn!(target: "Hotkeys", "MissionsNotificationPopoutWidget not found");
+        return;
+    };
+
+    if let Some(ptr) = tracker::resolve_fn(api, class, "OnCollectButtonClicked", 0) {
+        MISSIONS_POPOUT_ON_COLLECT.store(ptr as *mut (), Relaxed);
+        debug!(target: "Hotkeys", "MissionsPopout: OnCollectButtonClicked resolved");
+    } else {
+        warn!(target: "Hotkeys", "MissionsPopout: OnCollectButtonClicked not found");
+    }
+
+    if let Some(ptr) = tracker::resolve_fn(api, class, "Awake", 0) {
+        match engine::install_hook("MissionsPopoutAwake", ptr, hook_missions_popout_awake as *const ()) {
+            Ok(orig) => {
+                ORIG_MISSIONS_POPOUT_AWAKE.store(orig as *mut (), Relaxed);
+                debug!(target: "Hotkeys", "MissionsPopout Awake hook installed");
+            }
+            Err(e) => warn!(target: "Hotkeys", "Failed to hook MissionsPopout Awake: {e}"),
         }
     }
 }
