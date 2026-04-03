@@ -1,12 +1,19 @@
 //! Auto-open chat sidebar on game start.
 //!
-//! Hooks `UIFrameManager.OnEnable()` to capture the manager instance and `ChatPreviewController.AboutToShow()` to
-//! detect when the game's chat UI is ready (channels registered, subscriptions active).
-//! When `auto_open_sidebar` is enabled, simulates a click on the side panel button and calls `ResizeSideFrame`
-//! directly to maximize the sidebar width (the game clamps to its actual limit).
+//! Uses a debounce on `ChatService.HandleMessageReceived` to detect when the server has finished delivering
+//! message history. Once no new messages arrive for [`MSG_DEBOUNCE`], the sidebar opens. If no messages arrive
+//! at all, a [`FALLBACK_TIMEOUT`] after `AboutToShow` ensures the sidebar still opens.
+//!
+//! Hooks:
+//! - `UIFrameManager.OnEnable` captures the manager instance for sidebar resize.
+//! - `ChatPreviewController.AboutToShow` captures the controller for the click simulation.
+//! - `ChatPreviewController.Update` checks the debounce each frame.
+//! - `ChatService.HandleMessageReceived` tracks when the last server message arrived.
 
 use std::panic::AssertUnwindSafe;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
+use std::time::{Duration, Instant};
 
 use log::debug;
 
@@ -25,6 +32,14 @@ const TAB_ALLIANCE: i32 = 2;
 /// Fallback width when GetMaxSideFrameWidth is not available.
 /// Intentionally larger than any screen, so the game clamps it to its actual maximum.
 const FALLBACK_WIDTH: f32 = 2000.0;
+
+/// Debounce duration for `HandleMessageReceived`. The sidebar opens once no new messages have arrived for
+/// this long, indicating the server has finished delivering message history.
+const MSG_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// Fallback timeout after `AboutToShow`. If no `HandleMessageReceived` fires at all (e.g. chat server
+/// unreachable), the sidebar opens after this delay to avoid blocking indefinitely.
+const FALLBACK_TIMEOUT: Duration = Duration::from_secs(3);
 
 // ---- State ----------------------------------------------------------------
 
@@ -49,8 +64,20 @@ static ORIG_MGR_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// Original function pointer for `ChatPreviewController.AboutToShow()`.
 static ORIG_CHAT_SHOW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Original function pointer for `ChatPreviewController.Update()`.
+static ORIG_CHAT_UPDATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original function pointer for `ChatService.HandleMessageReceived(Message)`.
+static ORIG_MSG_RECEIVED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
 /// Whether restore has been attempted (prevents double restore).
 static RESTORED: AtomicBool = AtomicBool::new(false);
+
+/// Timestamp of the last `HandleMessageReceived` call. Used for debounce detection.
+static LAST_MSG_RECEIVED: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// The instant when `AboutToShow` first fired. Used as [`FALLBACK_TIMEOUT`] baseline.
+static ABOUT_TO_SHOW_TIME: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Whether the ChatPreviewController AboutToShow hook has been logged at least once.
 static CHAT_SHOW_LOGGED: AtomicBool = AtomicBool::new(false);
@@ -58,6 +85,7 @@ static CHAT_SHOW_LOGGED: AtomicBool = AtomicBool::new(false);
 // ---- Type aliases ---------------------------------------------------------
 
 type VoidFn = unsafe extern "C" fn(*mut Il2CppObject);
+type MsgFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject);
 type ResizeFn = unsafe extern "C" fn(*mut Il2CppObject, f32);
 type GetFloatFn = unsafe extern "C" fn(*mut Il2CppObject) -> f32;
 
@@ -83,9 +111,8 @@ extern "C" fn hook_mgr_enable(this: *mut Il2CppObject) {
 
 /// Hook for `ChatPreviewController.AboutToShow()`.
 ///
-/// Captures the ChatPreviewController instance and triggers a restore check.
-/// `AboutToShow` fires after `RegisterActiveChannels()` and `SubscribeToEvents()`, so channel subscriptions are active,
-/// and messages will be current when the sidebar opens.
+/// Captures the ChatPreviewController instance. The actual auto-open is triggered by the debounce check in
+/// [`hook_chat_update`] once `HandleMessageReceived` has settled.
 extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
     let orig_ptr = ORIG_CHAT_SHOW.load(Relaxed);
     if !orig_ptr.is_null() {
@@ -96,32 +123,68 @@ extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
         CHAT_PREVIEW.store(this, Relaxed);
         if !CHAT_SHOW_LOGGED.swap(true, Relaxed) {
+            if let Ok(mut guard) = ABOUT_TO_SHOW_TIME.lock() {
+                *guard = Some(Instant::now());
+            }
             debug!(target: "ChatFrame", "ChatPreviewController ready (AboutToShow)");
         }
-        try_restore();
     }));
+}
+
+/// Hook for `ChatPreviewController.Update()`.
+///
+/// Runs each frame. Checks the [`MSG_DEBOUNCE`] on `HandleMessageReceived` and triggers the auto-open once
+/// messages have settled. After [`RESTORED`] is set, the check is a single atomic load.
+extern "C" fn hook_chat_update(this: *mut Il2CppObject) {
+    if !RESTORED.load(Relaxed) {
+        try_restore();
+    }
+
+    let orig_ptr = ORIG_CHAT_UPDATE.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let original: VoidFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this) };
+    }
+}
+
+/// Hook for `ChatService.HandleMessageReceived(Message)`.
+///
+/// Updates the debounce timestamp on every call. [`try_restore`] waits until [`MSG_DEBOUNCE`] has elapsed since
+/// the last call, ensuring the server has finished delivering message history.
+extern "C" fn hook_msg_received(this: *mut Il2CppObject, message: *mut Il2CppObject) {
+    let orig_ptr = ORIG_MSG_RECEIVED.load(Relaxed);
+    if !orig_ptr.is_null() {
+        let original: MsgFn = unsafe { std::mem::transmute(orig_ptr) };
+        unsafe { original(this, message) };
+    }
+
+    if !RESTORED.load(Relaxed) {
+        if let Ok(mut guard) = LAST_MSG_RECEIVED.lock() {
+            *guard = Some(Instant::now());
+        }
+    }
 }
 
 // ---- Restore --------------------------------------------------------------
 
 /// Called when settings are synced from Daystrom.
 ///
-/// Triggers a restore check in case both controllers are already active, but settings were not available yet
-/// at that time.
+/// Triggers a restore check in case the timer has already elapsed but settings were not available yet.
 pub fn on_settings_synced() {
     try_restore();
 }
 
 /// Attempt to auto-open the chat sidebar.
 ///
-/// Called from three places to handle any timing scenario:
-/// - `hook_mgr_enable` — UIFrameManager ready, chat/settings may not be
-/// - `hook_chat_about_to_show` — chat UI ready (channels registered), manager/settings may not be
-/// - `on_settings_synced` — settings arrived, UI may not be ready yet
+/// Checks four conditions:
+/// - UIFrameManager instance captured
+/// - ChatPreviewController instance captured
+/// - Message history settled ([`MSG_DEBOUNCE`] elapsed since last `HandleMessageReceived`),
+///   OR [`FALLBACK_TIMEOUT`] elapsed since `AboutToShow` (in case no messages arrive at all)
+/// - `auto_open_sidebar` setting enabled
 ///
-/// All three conditions must be met before restore proceeds. On success, triggers `OnSidePanelButtonClicked` to open
-/// the chat through the game's normal flow, then calls `ResizeSideFrame` directly on the captured `UIFrameManager`
-/// instance to maximize the width.
+/// On success, triggers `OnSidePanelButtonClicked` to open the chat through the game's normal flow, then calls
+/// `ResizeSideFrame` directly on the captured `UIFrameManager` instance to maximize the width.
 fn try_restore() {
     if RESTORED.load(Relaxed) {
         return;
@@ -132,7 +195,17 @@ fn try_restore() {
     if FRAME_MGR.load(Relaxed).is_null() {
         return;
     }
+    let debounce_settled = LAST_MSG_RECEIVED.lock().ok()
+        .and_then(|guard| *guard)
+        .is_some_and(|t| t.elapsed() >= MSG_DEBOUNCE);
+    let fallback_expired = ABOUT_TO_SHOW_TIME.lock().ok()
+        .and_then(|guard| *guard)
+        .is_some_and(|t| t.elapsed() >= FALLBACK_TIMEOUT);
+    if !debounce_settled && !fallback_expired {
+        return;
+    }
     if !crate::settings::auto_open_sidebar() {
+        debug!(target: "ChatFrame", "try_restore: all ready, waiting for settings sync");
         return;
     }
 
@@ -209,8 +282,9 @@ fn install_hook(
 /// Install chat sidebar hooks.
 ///
 /// Hooks `UIFrameManager.OnEnable` to capture the manager instance and resolves `ResizeSideFrame` as a callable
-/// function. Hooks `ChatPreviewController.AboutToShow` as the restore trigger (fires after channel registration)
-/// and resolves `OnSidePanelButtonClicked`.
+/// function. On `ChatPreviewController`, hooks `AboutToShow` to capture the instance, hooks `Update` for the
+/// debounce check, and resolves `OnSidePanelButtonClicked`. On `ChatService`, hooks `HandleMessageReceived`
+/// to track when server messages arrive.
 pub fn install(api: &Il2CppApi) {
     // ---- UIFrameManager ----
     let Some(frame_mgr_class) = resolver::resolve_class(
@@ -255,11 +329,38 @@ pub fn install(api: &Il2CppApi) {
         hook_chat_about_to_show as *const (), &ORIG_CHAT_SHOW,
     );
 
+    install_hook(
+        api, chat_class, "Update",
+        hook_chat_update as *const (), &ORIG_CHAT_UPDATE,
+    );
+
     // Resolve OnSidePanelButtonClicked (called during restore, not hooked).
     if let Some(ptr) = tracker::resolve_fn(api, chat_class, "OnSidePanelButtonClicked", 0) {
         CLICK_FN.store(ptr as *mut (), Relaxed);
         debug!(target: "ChatFrame", "OnSidePanelButtonClicked resolved");
     } else {
         log::warn!(target: "ChatFrame", "OnSidePanelButtonClicked not found");
+    }
+
+    // ---- ChatService (different assembly) ----
+    let Some(chat_service_class) = resolver::resolve_class(
+        api, "Digit.Client.PrimeLib.Runtime", "Digit.PrimePlatform.Services", "ChatService",
+    ) else {
+        log::warn!(target: "ChatFrame", "ChatService not found");
+        return;
+    };
+
+    if let Some(ptr) = tracker::resolve_fn(api, chat_service_class, "HandleMessageReceived", 1) {
+        match crate::hook::engine::install_hook(
+            "HandleMessageReceived", ptr, hook_msg_received as *const (),
+        ) {
+            Ok(orig) => {
+                ORIG_MSG_RECEIVED.store(orig as *mut (), Relaxed);
+                debug!(target: "ChatFrame", "HandleMessageReceived hook installed");
+            }
+            Err(e) => log::warn!(target: "ChatFrame", "Failed to hook HandleMessageReceived: {e}"),
+        }
+    } else {
+        log::warn!(target: "ChatFrame", "HandleMessageReceived not found");
     }
 }
