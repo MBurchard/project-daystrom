@@ -7,11 +7,11 @@ use log::{debug, info};
 pub(crate) mod tracker;
 
 pub(crate) mod chat_frame;
-mod hotkeys;
+pub(crate) mod hotkeys;
 pub mod il2cpp_init;
 pub(crate) mod job_queue;
 mod player_prefs;
-mod spacebar;
+mod main_action;
 pub(crate) mod system_zoom;
 pub(crate) mod toast_banner;
 pub(crate) mod ui_scale;

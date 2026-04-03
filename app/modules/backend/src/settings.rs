@@ -45,6 +45,8 @@ pub enum SettingsEvent {
     SystemZoom(Option<u32>),
     /// The ship names visibility distance changed (None = reset to default).
     ShipNamesVisible(Option<u32>),
+    /// Keyboard shortcut overrides changed.
+    Shortcuts(BTreeMap<String, String>),
 }
 
 impl SettingsEvent {
@@ -58,6 +60,7 @@ impl SettingsEvent {
             Self::BannersDisabledTypes(_) => "game.banners.disabled_types",
             Self::SystemZoom(_) => "game.ui.system_zoom",
             Self::ShipNamesVisible(_) => "game.ui.ship_names_visible",
+            Self::Shortcuts(_) => "game.shortcuts",
         }
     }
 
@@ -71,6 +74,7 @@ impl SettingsEvent {
             Self::BannersDisabledTypes(v) => serde_json::json!(v),
             Self::SystemZoom(v) => serde_json::json!(v),
             Self::ShipNamesVisible(v) => serde_json::json!(v),
+            Self::Shortcuts(v) => serde_json::json!(v),
         }
     }
 }
@@ -90,7 +94,7 @@ pub fn subscribe() -> broadcast::Receiver<SettingsEvent> {
     event_tx().subscribe()
 }
 
-// ---- Lenient deserialisation ----------------------------------------------------
+// ---- Lenient deserialization ----------------------------------------------------
 
 /// Deserialize an `Option<T>` that returns `None` for type mismatches instead of failing.
 ///
@@ -191,6 +195,10 @@ pub struct GameSettings {
     /// Toast banner suppression.
     #[serde(default)]
     pub banners: GameBannerSettings,
+    /// Keyboard shortcut overrides. Key = action name, value = bound key (empty = disabled).
+    /// Absent keys use their default binding.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shortcuts: BTreeMap<String, String>,
 }
 
 /// Per-target log level overrides, preserved across settings saves.
@@ -247,6 +255,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
             disable_all: None,
             disabled_types: None,
         },
+        shortcuts: BTreeMap::new(),
     },
     log_levels: LogLevelScopes {
         game: BTreeMap::new(),
@@ -343,7 +352,7 @@ fn save() {
                     log_error!("Failed to write {}: {e}", path.display());
                 }
             }
-            Err(e) => log_error!("Failed to serialise settings: {e}"),
+            Err(e) => log_error!("Failed to serialize settings: {e}"),
         }
     });
     *SAVE_HANDLE.lock().unwrap() = Some(handle);
@@ -377,8 +386,8 @@ fn update(f: impl FnOnce(&mut AppSettings) -> bool) -> bool {
 
 /// Maximum value for the minimize hint counter.
 ///
-/// Once this threshold is reached, the hint level is [`Silent`](crate::HintLevel::Silent) and
-/// further increments would only waste disk writes.
+/// Once this threshold is reached, the hint level is [`Silent`](crate::HintLevel::Silent) and further increments
+/// would only waste disk writes.
 const MINIMIZE_HINT_MAX: u32 = 5;
 
 /// Return the current minimize-to-tray hint count.
@@ -413,8 +422,8 @@ pub fn get_window_settings() -> Option<WindowSettings> {
 
 /// Save the current window geometry (debounced).
 ///
-/// When `maximized` is true, the previous normal bounds are preserved so the window can be restored
-/// to its pre-maximized position. Calls with zero width or height (minimized) are ignored.
+/// When `maximized` is true, the previous normal bounds are preserved so the window can be restored to its
+/// pre-maximized position. Calls with zero width or height (minimized) are ignored.
 pub fn save_window_state(x: i32, y: i32, width: u32, height: u32, maximized: bool) {
     if width == 0 || height == 0 {
         return;
@@ -489,6 +498,9 @@ pub fn set_game_settings(settings: GameSettings) {
         if s.game.ui.ship_names_visible != old.ui.ship_names_visible {
             events.push(SettingsEvent::ShipNamesVisible(s.game.ui.ship_names_visible));
         }
+        if s.game.shortcuts != old.shortcuts {
+            events.push(SettingsEvent::Shortcuts(s.game.shortcuts.clone()));
+        }
         events
     };
 
@@ -506,6 +518,7 @@ pub fn set_game_settings(settings: GameSettings) {
                 SettingsEvent::BannersDisabledTypes(v) => log_debug!("Disabled banner types: {v:?}"),
                 SettingsEvent::SystemZoom(v) => log_debug!("System zoom set to {v:?}"),
                 SettingsEvent::ShipNamesVisible(v) => log_debug!("Ship names visible set to {v:?}"),
+                SettingsEvent::Shortcuts(v) => log_debug!("Shortcuts changed: {v:?}"),
             }
         }
     }
