@@ -1,16 +1,19 @@
 //! Hotkey hooks for quality-of-life keyboard shortcuts.
 //!
 //! Hooks `ScreenManager.Update()` (per-frame) to intercept key presses.
-//! Currently, handles ESC on reward/collect dialogues and delegates SPACE to the `spacebar` module for
-//! default-action execution.
+//! Currently, handles ESC on reward/collect dialogues and delegates the configurable main action key to the
+//! `main_action` module for default-action execution.
 //!
 //! `Input.GetKeyDownInt` is hooked (not just resolved) so that consumed keys can be suppressed for the rest
 //! of the frame. This prevents the game's own shortcut system from also reacting to keys we already handled.
 
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering::Relaxed};
+use std::sync::Mutex;
 
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
+use serde::{Deserialize, Serialize};
 
 use crate::hook::engine;
 use crate::hook::safety::HookInfo;
@@ -36,9 +39,24 @@ static ORIGINAL_UPDATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// through the hook and sees consumed keys as not pressed.
 static ORIGINAL_GET_KEY_DOWN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Set to `true` after we handle Space in a frame. Our `GetKeyDownInt` hook returns `false` for Space
-/// while this flag is set, preventing the game from also processing it.
-static SPACE_CONSUMED: AtomicBool = AtomicBool::new(false);
+/// Set to `true` after we handle the main action key in a frame. Our `GetKeyDownInt` hook returns `false` for
+/// that key while this flag is set, preventing the game from also processing it.
+static MAIN_ACTION_CONSUMED: AtomicBool = AtomicBool::new(false);
+
+/// Unity KeyCode for the main action shortcut. 0 = disabled. Updated from settings, read per frame.
+static MAIN_ACTION_KEYCODE: AtomicI32 = AtomicI32::new(KEYCODE_SPACE);
+
+/// Flag to trigger `LoadBindings()` on the main thread (next frame). Set by ws-client, consumed by hook_update.
+static RELOAD_BINDINGS_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// Original trampoline for `ShortcutsManager.InitializeActions()`.
+static ORIG_INITIALIZE_ACTIONS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Tracked `ShortcutsManager` instance (captured in the InitializeActions hook).
+static SHORTCUTS_MANAGER: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Resolved `ShortcutsManager.LoadBindings()` method pointer (for `runtime_invoke`).
+static LOAD_BINDINGS_METHOD: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Function pointer for `ScreenManager.get_IsInputFocused()` (static).
 static IS_INPUT_FOCUSED_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -49,15 +67,15 @@ static EVENT_SYSTEM_CURRENT_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 /// Function pointer for `EventSystem.SetSelectedGameObject(GameObject)`.
 static SET_SELECTED_GO_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `IsActive() -> bool` (from UIBehaviour, shared by all reward screens).
-static IS_ACTIVE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Function pointer for `IsActive() -> bool` (from UIBehaviour, shared by all UI widgets).
+pub(super) static IS_ACTIVE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 // ---- Reward screen tracking -----------------------------------------------
 
 /// Per-subclass tracking slot for `GenericRewardsScreenViewController` descendants.
 ///
-/// Each slot holds the IL2CPP class pointer (for runtime dispatch in the base-class Awake hook), the currently
-/// tracked instance, and the resolved `OnCollectClicked` function pointer.
+/// Each slot holds the IL2CPP class pointer (for runtime dispatch in the base-class Awake hook), the currently tracked
+/// instance, and the resolved `OnCollectClicked` function pointer.
 struct RewardTarget {
     class: AtomicPtr<()>,
     instance: AtomicPtr<()>,
@@ -89,9 +107,8 @@ static REWARD_TARGETS: [RewardTarget; 4] = [
 
 // ---- Widget collect tracking ------------------------------------------------
 //
-// Widgets with a single collect button that should be triggerable via ESC.
-// Unlike the reward ViewControllers, these are Widget<T> subclasses that persist for the entire session
-// and use OnEnable/OnDisable for visibility.
+// Widgets with a single collect button that should be triggerable via ESC. Unlike the reward ViewControllers, these
+// are Widget<T> subclasses that persist for the entire session and use OnEnable/OnDisable for visibility.
 
 /// Tracked instance of `MissionsNotificationPopoutWidget`.
 static MISSIONS_POPOUT_INSTANCE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -113,13 +130,6 @@ static ORIG_BASE_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Original trampoline for the inherited `OnDestroy()` (shared by slots 1-3).
 static ORIG_BASE_DESTROY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Original function pointer for `ShortcutsManager.InitializeActions()`.
-///
-/// Stored but never called: suppressing the original prevents Scopely's keyboard shortcuts from being
-/// registered, avoiding conflicts with our own hotkey handling.
-#[allow(dead_code)]
-static ORIG_INITIALIZE_ACTIONS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Per-hook error tracking.
 static HOOK_INFO: HookInfo = HookInfo::new("Hotkeys");
@@ -167,8 +177,8 @@ pub(super) fn is_input_focused() -> bool {
 
 /// Deselect the EventSystem's current selection.
 ///
-/// Unity's `StandaloneInputModule` treats Space/Enter as "Submit", clicking whatever UI element is
-/// selected. Calling this after we handle Space prevents that side effect.
+/// Unity's `StandaloneInputModule` treats Space/Enter as "Submit", clicking whatever UI element is selected.
+/// Calling this after we handle Space prevents that side effect.
 fn deselect_event_system() {
     let current_fn_ptr = EVENT_SYSTEM_CURRENT_FN.load(Relaxed);
     if current_fn_ptr.is_null() {
@@ -188,14 +198,148 @@ fn deselect_event_system() {
     unsafe { set_selected(event_system, std::ptr::null_mut()) };
 }
 
-// ---- ShortcutsManager suppression -----------------------------------------
+// ---- ShortcutsManager hook ------------------------------------------------
 
-/// Hook for `ShortcutsManager.InitializeActions()`.
+/// Dynamically resolved offset of `ShortcutsManager._actions` (InputActionAsset).
+static OFFSET_ACTIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// A game keybinding entry parsed from the InputActionAsset JSON.
+#[derive(Clone, Debug)]
+struct GameBinding {
+    /// The action name (e.g. "ship_locate").
+    action: String,
+    /// The binding GUID (needed for writing overrides).
+    id: String,
+}
+
+/// Default game bindings indexed by keyboard path (e.g. "<Keyboard>/space" → [GameBinding]).
+/// Populated once from `InitializeActions` post-hook.
+static DEFAULT_BINDINGS: Mutex<Option<HashMap<String, Vec<GameBinding>>>> = Mutex::new(None);
+
+/// Partial serde model for Unity's InputActionAsset JSON.
+#[derive(Deserialize)]
+struct InputActionAssetJson {
+    #[serde(default)]
+    maps: Vec<InputActionMap>,
+}
+
+/// A single action map (e.g. "General", "UI").
+#[derive(Deserialize)]
+struct InputActionMap {
+    #[serde(default)]
+    bindings: Vec<InputBinding>,
+}
+
+/// A single binding within a map.
+#[derive(Deserialize)]
+struct InputBinding {
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    path: String,
+}
+
+/// User keybinding overrides stored in PlayerPrefs ("keybindings" key).
+#[derive(Deserialize, Serialize)]
+struct KeybindingsOverride {
+    #[serde(default)]
+    bindings: Vec<OverrideEntry>,
+}
+
+/// A single keybinding override entry.
+#[derive(Deserialize, Serialize)]
+struct OverrideEntry {
+    action: String,
+    id: String,
+    path: String,
+}
+
+/// Post-hook for `ShortcutsManager.InitializeActions()`.
 ///
-/// Suppresses the original to prevent Scopely's keyboard shortcuts (Unity Input System actions) from being
-/// registered. Without this, the game's own Space binding ("find selected ship") fires alongside our hooks.
-extern "C" fn hook_initialize_actions(_this: *mut Il2CppObject) {
-    debug!(target: "Hotkeys", "ShortcutsManager.InitializeActions suppressed");
+/// Calls the original first (so all actions are set up), then reads the `_actions` field and calls
+/// `InputActionAsset.ToJson()` to parse and store the default bindings.
+extern "C" fn hook_initialize_actions(this: *mut Il2CppObject) {
+    let orig = ORIG_INITIALIZE_ACTIONS.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        SHORTCUTS_MANAGER.store(this as *mut (), Relaxed);
+        parse_default_bindings(this);
+    }));
+}
+
+/// Read `_actions` from the ShortcutsManager instance, call `ToJson()`, and parse the default bindings.
+fn parse_default_bindings(manager: *mut Il2CppObject) {
+    let Some(api) = super::il2cpp_init::IL2CPP_API.get() else { return };
+
+    // Read _actions field (InputActionAsset) at known offset.
+    let actions_offset = OFFSET_ACTIONS.load(Relaxed);
+    if actions_offset == 0 {
+        warn!(target: "Hotkeys", "ShortcutsManager._actions offset not resolved");
+        return;
+    }
+    let actions_ptr = unsafe { tracker::read_ptr(manager as *const (), actions_offset) } as *mut Il2CppObject;
+    if actions_ptr.is_null() {
+        warn!(target: "Hotkeys", "ShortcutsManager._actions is null");
+        return;
+    }
+
+    // Resolve InputActionAsset.ToJson() and call it.
+    let Some(asset_class) = resolver::resolve_class(
+        api, "Unity.InputSystem", "UnityEngine.InputSystem", "InputActionAsset",
+    ) else {
+        warn!(target: "Hotkeys", "InputActionAsset class not found");
+        return;
+    };
+
+    let Some(method) = resolver::resolve_method(api, asset_class, "ToJson", 0) else {
+        warn!(target: "Hotkeys", "InputActionAsset.ToJson not found");
+        return;
+    };
+
+    let mut exception: *mut Il2CppException = std::ptr::null_mut();
+    let result = unsafe { (api.runtime_invoke)(method, actions_ptr, std::ptr::null_mut(), &mut exception) };
+
+    if !exception.is_null() || result.is_null() {
+        warn!(target: "Hotkeys", "ToJson() failed");
+        return;
+    }
+
+    let Some(json) = (unsafe { Il2CppString::to_rust_string(result as *const Il2CppString) }) else {
+        warn!(target: "Hotkeys", "ToJson() returned invalid string");
+        return;
+    };
+
+    let Ok(asset) = serde_json::from_str::<InputActionAssetJson>(&json) else {
+        warn!(target: "Hotkeys", "Failed to parse InputActionAsset JSON");
+        return;
+    };
+
+    // Index all keyboard bindings by their path.
+    let mut bindings: HashMap<String, Vec<GameBinding>> = HashMap::new();
+    for map in &asset.maps {
+        for binding in &map.bindings {
+            if binding.path.starts_with("<Keyboard>/") && !binding.action.is_empty() {
+                bindings.entry(binding.path.clone()).or_default().push(GameBinding {
+                    action: binding.action.clone(),
+                    id: binding.id.clone(),
+                });
+            }
+        }
+    }
+
+    let count = bindings.values().map(|v| v.len()).sum::<usize>();
+    info!(target: "Hotkeys", "Parsed {count} default keyboard bindings from InputActionAsset");
+
+    *DEFAULT_BINDINGS.lock().unwrap_or_else(|e| e.into_inner()) = Some(bindings);
+
+    // Settings may have arrived before bindings were parsed. Resolve pending conflicts now.
+    on_shortcuts_changed();
 }
 
 // ---- GetKeyDownInt hook ---------------------------------------------------
@@ -205,7 +349,7 @@ extern "C" fn hook_initialize_actions(_this: *mut Il2CppObject) {
 /// If a key has been consumed by our hotkey system in this frame, it returns `false` so the game's own shortcut
 /// system does not also react to it.
 extern "C" fn hook_get_key_down(key: i32) -> bool {
-    if key == KEYCODE_SPACE && SPACE_CONSUMED.load(Relaxed) {
+    if key == MAIN_ACTION_KEYCODE.load(Relaxed) && MAIN_ACTION_CONSUMED.load(Relaxed) {
         return false;
     }
     let orig_ptr = ORIGINAL_GET_KEY_DOWN.load(Relaxed);
@@ -224,18 +368,23 @@ extern "C" fn hook_get_key_down(key: i32) -> bool {
 /// the game's own update logic runs.
 extern "C" fn hook_update(this: *mut Il2CppObject) {
     // Reset consumption flags at the start of each frame.
-    SPACE_CONSUMED.store(false, Relaxed);
+    MAIN_ACTION_CONSUMED.store(false, Relaxed);
+
+    // Process deferred LoadBindings() on the main thread (safe for IL2CPP calls).
+    if RELOAD_BINDINGS_PENDING.swap(false, Relaxed) {
+        reload_game_bindings();
+    }
 
     if HOOK_INFO.is_active() {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             if key_down(KEYCODE_ESCAPE) {
                 collect_reward_screen();
             }
-            if key_down(KEYCODE_SPACE)
-                && !is_input_focused()
-                && super::spacebar::check()
+            let main_kc = MAIN_ACTION_KEYCODE.load(Relaxed);
+            if main_kc != 0 && key_down(main_kc)
+                && !is_input_focused() && super::main_action::check()
             {
-                SPACE_CONSUMED.store(true, Relaxed);
+                MAIN_ACTION_CONSUMED.store(true, Relaxed);
                 deselect_event_system();
             }
         }));
@@ -383,47 +532,239 @@ fn collect_reward_screen() {
     }
 }
 
+// ---- Settings callbacks ---------------------------------------------------
+
+/// Map a browser `event.code` to a Unity Input System path (e.g. "Space" → "<Keyboard>/space").
+///
+/// Browser codes use physical key positions (US layout), which map directly to Unity's Input System paths.
+fn event_code_to_input_path(code: &str) -> Option<String> {
+    let suffix = match code {
+        "Space" => "space",
+        "Enter" | "NumpadEnter" => "enter",
+        "Tab" => "tab",
+        "Backspace" => "backspace",
+        "Delete" => "delete",
+        "Slash" => "slash",
+        "Backslash" => "backslash",
+        "Minus" => "minus",
+        "Equal" => "equals",
+        "Period" => "period",
+        "Comma" => "comma",
+        "Semicolon" => "semicolon",
+        "Quote" => "quote",
+        "BracketLeft" => "leftBracket",
+        "BracketRight" => "rightBracket",
+        "Backquote" => "backquote",
+        s if s.starts_with("Key") => return Some(format!("<Keyboard>/{}", &s[3..].to_lowercase())),
+        s if s.starts_with("Digit") => return Some(format!("<Keyboard>/{}", &s[5..])),
+        s if s.starts_with("Numpad") => return Some(format!("<Keyboard>/numpad{}", &s[6..].to_lowercase())),
+        s if s.starts_with("F") && s[1..].parse::<u32>().is_ok() => {
+            return Some(format!("<Keyboard>/{}", s.to_lowercase()));
+        }
+        _ => return None,
+    };
+    Some(format!("<Keyboard>/{suffix}"))
+}
+
+/// Map a browser `event.code` to a Unity KeyCode integer. Returns 0 for unknown codes.
+///
+/// Browser codes use physical key positions (US layout), Unity KeyCodes follow the same convention.
+fn event_code_to_keycode(code: &str) -> i32 {
+    match code {
+        "Space" => 32,
+        "Enter" | "NumpadEnter" => 13,
+        "Tab" => 9,
+        "Backspace" => 8,
+        "Delete" => 127,
+        "Slash" => 47,
+        "Backslash" => 92,
+        "Minus" => 45,
+        "Equal" => 61,
+        "Period" => 46,
+        "Comma" => 44,
+        "Semicolon" => 59,
+        "Quote" => 39,
+        "BracketLeft" => 91,
+        "BracketRight" => 93,
+        "Backquote" => 96,
+        s if s.starts_with("Key") && s.len() == 4 => {
+            let c = s.as_bytes()[3].to_ascii_lowercase();
+            c as i32 // Unity KeyCode.A-Z = 97-122
+        }
+        s if s.starts_with("Digit") && s.len() == 6 => {
+            s.as_bytes()[5] as i32 // Unity KeyCode.Alpha0-9 = 48-57
+        }
+        s if s.starts_with("F") && s[1..].parse::<u32>().is_ok() => {
+            let n: u32 = s[1..].parse().unwrap();
+            if (1..=15).contains(&n) { 281 + (n as i32 - 1) } else { 0 } // Unity F1=282..F15=296
+        }
+        _ => 0,
+    }
+}
+
+/// Update the main action key when shortcut settings change.
+///
+/// Called from `settings::apply_sync` and `settings::apply_update` when `game.shortcuts` changes.
+/// If the configured key conflicts with a game binding, writes a keybindings override to clear it.
+pub fn on_shortcuts_changed() {
+    let key_name = crate::settings::trigger_main_action();
+    let keycode = key_name.as_ref().map(|k| event_code_to_keycode(k)).unwrap_or(0);
+    MAIN_ACTION_KEYCODE.store(keycode, Relaxed);
+    debug!(target: "Hotkeys", "Main action keycode: {keycode}");
+
+    if let Some(name) = &key_name {
+        resolve_binding_conflicts(name);
+    }
+}
+
+/// Check if the given key conflicts with any active game binding and write overrides to clear them.
+///
+/// Merges default bindings with user overrides from the profile TOML to determine the actual active bindings.
+/// Only actions that are *currently* on the conflicting key are cleared.
+fn resolve_binding_conflicts(key_name: &str) {
+    let Some(input_path) = event_code_to_input_path(key_name) else { return };
+
+    let guard = DEFAULT_BINDINGS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(defaults) = guard.as_ref() else { return };
+
+    // Build the effective binding state: start with defaults, apply user overrides.
+    // Key = binding ID, Value = (action, current path).
+    let mut effective: HashMap<String, (String, String)> = HashMap::new();
+    for (path, bindings) in defaults {
+        for b in bindings {
+            effective.insert(b.id.clone(), (b.action.clone(), path.clone()));
+        }
+    }
+
+    // Apply user overrides from the profile TOML.
+    if let Some(json) = crate::profile_store::get("keybindings")
+        && let Ok(overrides) = serde_json::from_str::<KeybindingsOverride>(&json)
+    {
+        for entry in &overrides.bindings {
+            if let Some(existing) = effective.get_mut(&entry.id) {
+                existing.1 = entry.path.clone();
+            }
+        }
+    }
+
+    // Find all bindings that are currently on the conflicting key.
+    let conflicts: Vec<(String, String)> = effective.iter()
+        .filter(|(_, (_, path))| *path == input_path)
+        .map(|(id, (action, _))| (id.clone(), action.clone()))
+        .collect();
+
+    if conflicts.is_empty() {
+        debug!(target: "Hotkeys", "No active binding conflict for {input_path}");
+        return;
+    }
+
+    // Build the keybindings override JSON to clear all conflicting bindings.
+    // Preserve existing overrides and add/update the conflicting ones.
+    let mut all_overrides: Vec<OverrideEntry> = Vec::new();
+
+    // Keep existing non-conflicting overrides.
+    if let Some(json) = crate::profile_store::get("keybindings")
+        && let Ok(existing) = serde_json::from_str::<KeybindingsOverride>(&json)
+    {
+        for entry in existing.bindings {
+            if !conflicts.iter().any(|(id, _)| *id == entry.id) {
+                all_overrides.push(entry);
+            }
+        }
+    }
+
+    // Add overrides to clear the conflicting bindings.
+    for (id, action) in &conflicts {
+        info!(target: "Hotkeys", "Clearing conflicting binding: {action} (was on {input_path})");
+        all_overrides.push(OverrideEntry {
+            action: action.clone(),
+            id: id.clone(),
+            path: String::new(),
+        });
+    }
+
+    let override_json = serde_json::to_string(&KeybindingsOverride { bindings: all_overrides }).unwrap_or_default();
+    crate::profile_store::record("keybindings", &override_json);
+    // Defer LoadBindings() to the main thread. IL2CPP methods cannot be called from our ws-client thread
+    // because it lacks thread-static data (CultureInfo, etc.), which causes a NULL pointer crash.
+    RELOAD_BINDINGS_PENDING.store(true, Relaxed);
+}
+
+/// Trigger `ShortcutsManager.LoadBindings()` so the game picks up keybinding overrides immediately.
+fn reload_game_bindings() {
+    let manager = SHORTCUTS_MANAGER.load(Relaxed);
+    let method = LOAD_BINDINGS_METHOD.load(Relaxed);
+    if manager.is_null() || method.is_null() {
+        debug!(target: "Hotkeys", "Cannot reload bindings: manager or method not resolved");
+        return;
+    }
+
+    let Some(api) = super::il2cpp_init::IL2CPP_API.get() else { return };
+    let mut exception: *mut Il2CppException = std::ptr::null_mut();
+    unsafe {
+        (api.runtime_invoke)(method as *const _, manager as *mut Il2CppObject, std::ptr::null_mut(), &mut exception);
+    }
+
+    if exception.is_null() {
+        debug!(target: "Hotkeys", "Game bindings reloaded via LoadBindings()");
+    } else {
+        warn!(target: "Hotkeys", "LoadBindings() threw an exception");
+    }
+}
+
 // ---- Installation ---------------------------------------------------------
 
 /// Install all hotkey-related hooks.
 ///
 /// Hooks Input.GetKeyDownInt for key detection and consumption, tracks all GenericRewardsScreenViewController
-/// subclasses for ESC collection, installs spacebar hooks, and hooks ScreenManager.Update() for per-frame key checks.
+/// subclasses for ESC collection, installs main action hooks, and hooks ScreenManager.Update() for per-frame key checks.
 pub fn install(api: &Il2CppApi) {
-    suppress_scopely_shortcuts(api);
+    install_shortcuts_hook(api);
     if !install_input(api) {
         return;
     }
     install_reward_tracking(api);
     install_widget_collect_tracking(api);
-    super::spacebar::install(api);
+    super::main_action::install(api);
     install_update_hook(api);
 }
 
-/// Hook `ShortcutsManager.InitializeActions()` to prevent the game's own keyboard shortcuts from being
-/// registered.
-///
-/// Scopely's shortcuts use Unity's new Input System and would conflict with our hotkey hooks (e.g. Space =
-/// "find selected ship" instead of engage).
-fn suppress_scopely_shortcuts(api: &Il2CppApi) {
+/// Post-hook `ShortcutsManager.InitializeActions()` to parse default bindings and resolve `LoadBindings()`
+/// for runtime keybinding reloads.
+fn install_shortcuts_hook(api: &Il2CppApi) {
     let Some(class) = resolver::resolve_class(
         api, "Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutsManager",
     ) else {
-        warn!(target: "Hotkeys", "ShortcutsManager not found, game shortcuts may conflict");
+        warn!(target: "Hotkeys", "ShortcutsManager not found");
         return;
     };
+
+    // Resolve _actions field offset for reading the InputActionAsset in the post-hook.
+    if let Some(offset) = resolver::resolve_field_offset(api, class, "_actions") {
+        OFFSET_ACTIONS.store(offset, Relaxed);
+        debug!(target: "Hotkeys", "ShortcutsManager._actions offset: {offset:#x}");
+    } else {
+        warn!(target: "Hotkeys", "Could not resolve ShortcutsManager._actions, binding dump disabled");
+    }
+
+    // Resolve LoadBindings for runtime reloads after conflict resolution.
+    if let Some(method) = resolver::resolve_method(api, class, "LoadBindings", 0) {
+        LOAD_BINDINGS_METHOD.store(method as *mut (), Relaxed);
+        debug!(target: "Hotkeys", "ShortcutsManager.LoadBindings resolved");
+    } else {
+        warn!(target: "Hotkeys", "ShortcutsManager.LoadBindings not found, runtime reload disabled");
+    }
+
     let Some(ptr) = tracker::resolve_fn(api, class, "InitializeActions", 0) else {
-        warn!(target: "Hotkeys", "InitializeActions not found, game shortcuts may conflict");
+        warn!(target: "Hotkeys", "InitializeActions not found");
         return;
     };
-    match engine::install_hook(
-        "InitializeActions", ptr, hook_initialize_actions as *const (),
-    ) {
+    match engine::install_hook("InitializeActions", ptr, hook_initialize_actions as *const ()) {
         Ok(orig) => {
             ORIG_INITIALIZE_ACTIONS.store(orig as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "Scopely shortcuts suppressed");
+            debug!(target: "Hotkeys", "ShortcutsManager.InitializeActions hooked (post-hook)");
         }
-        Err(e) => warn!(target: "Hotkeys", "Failed to suppress Scopely shortcuts: {e}"),
+        Err(e) => warn!(target: "Hotkeys", "Failed to hook InitializeActions: {e}"),
     }
 }
 
@@ -455,7 +796,7 @@ fn install_input(api: &Il2CppApi) -> bool {
         }
     }
 
-    // IsInputFocused is optional; spacebar/future keys still work without it.
+    // IsInputFocused is optional; main action and future keys still work without it.
     if let Some(sm_class) = resolver::resolve_class(
         api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager",
     ) {
@@ -467,7 +808,7 @@ fn install_input(api: &Il2CppApi) -> bool {
         }
     }
 
-    // EventSystem: deselect UI after handling Space to prevent Unity's Submit action.
+    // EventSystem: deselect UI after handling the main action to prevent Unity's Submit action.
     if let Some(es_class) = resolver::resolve_class(
         api, "UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem",
     ) {
@@ -705,7 +1046,7 @@ mod tests {
 
     #[test]
     fn space_consumed_starts_false() {
-        assert!(!SPACE_CONSUMED.load(Relaxed));
+        assert!(!MAIN_ACTION_CONSUMED.load(Relaxed));
     }
 
     #[test]
@@ -766,7 +1107,7 @@ mod tests {
         let fake_obj: [*mut (); 1] = [fake_class];
         let fake_ptr = fake_obj.as_ptr() as *mut Il2CppObject;
 
-        // Register the class in slot 2 (index 1 in the 1.. slice = slot 2 overall).
+        // Register the class in REWARD_TARGETS[2] so the Awake hook matches this slot.
         REWARD_TARGETS[2].class.store(fake_class, Relaxed);
 
         hook_base_reward_awake(fake_ptr);
@@ -819,7 +1160,7 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         reset_reward_targets();
 
-        // Instance present but no on_collect resolved.
+        // Instance is present but no on_collect resolved.
         let fake = 0xDEAD_0005usize as *mut ();
         REWARD_TARGETS[0].instance.store(fake, Relaxed);
         // on_collect is null, should skip without crash.

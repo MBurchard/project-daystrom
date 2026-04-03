@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {useSettings} from '@app/composables/useSettings';
-import {computed} from 'vue';
+import {computed, ref} from 'vue';
 
 import bannerCategories from './toast-banner-categories.json';
 
@@ -71,6 +71,89 @@ function onSystemZoomInput(event: Event) {
 function onShipNamesVisibleInput(event: Event) {
   const target = event.target as HTMLInputElement;
   settings.value.ui.ship_names_visible = Number(target.value);
+  save();
+}
+
+// ---- Shortcut handlers ------------------------------------------------------
+
+/** Known shortcut actions with display labels and default bindings (as event.code values). */
+const shortcutActions = [
+  {key: 'trigger_main_action', label: 'Trigger Main Action', defaultCode: 'Space'},
+];
+
+/**
+ * Display labels for key codes, populated by key capture events.
+ * Maps event.code (e.g. "Slash") to event.key (e.g. "-" on German layout).
+ */
+const keyDisplayLabels: Record<string, string> = {Space: 'Space'};
+
+/**
+ * Get the display label for a shortcut action (localized key name or code fallback).
+ *
+ * @param key - The action identifier.
+ * @param defaultCode - The default key code.
+ */
+function shortcutDisplayLabel(key: string, defaultCode: string): string {
+  const code = settings.value.shortcuts?.[key] ?? defaultCode;
+  return keyDisplayLabels[code] ?? code;
+}
+
+/**
+ * Whether a shortcut is explicitly disabled (empty string).
+ *
+ * @param key - The action identifier.
+ */
+function isShortcutDisabled(key: string): boolean {
+  return settings.value.shortcuts?.[key] === '';
+}
+
+/** The action key currently waiting for a keypress, or null if not capturing. */
+const capturingKey = ref<string | null>(null);
+
+/**
+ * Disable a shortcut by setting it to an empty string.
+ *
+ * @param key - The action identifier.
+ */
+function clearShortcut(key: string) {
+  const shortcuts = settings.value.shortcuts ??= {};
+  shortcuts[key] = '';
+  save();
+}
+
+/**
+ * Start capturing a keypress for a shortcut action.
+ *
+ * @param key - The action identifier.
+ */
+function startCapture(key: string) {
+  capturingKey.value = key;
+  window.addEventListener('keydown', onCaptureKey, {once: true});
+}
+
+/**
+ * Handle a captured keypress. Stores event.code (physical key) and caches event.key (display label).
+ *
+ * @param event - The keyboard event.
+ */
+function onCaptureKey(event: KeyboardEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  const key = capturingKey.value;
+  capturingKey.value = null;
+  if (!key) {
+    return;
+  }
+
+  if (event.code === 'Escape') {
+    return;
+  }
+
+  // Cache the display label for this physical key.
+  keyDisplayLabels[event.code] = event.code === 'Space' ? 'Space' : event.key;
+
+  const shortcuts = settings.value.shortcuts ??= {};
+  shortcuts[key] = event.code;
   save();
 }
 
@@ -181,6 +264,26 @@ function onBannerTypeToggle(name: string, checked: boolean) {
     </section>
 
     <section class="settings-category">
+      <h3>Shortcuts</h3>
+
+      <div v-for="action in shortcutActions" :key="action.key" class="setting-row">
+        <label>{{ action.label }}</label>
+        <span class="shortcut-key"
+            :class="{ disabled: isShortcutDisabled(action.key), capturing: capturingKey === action.key }"
+            tabindex="0"
+            @click="startCapture(action.key)">
+          {{ capturingKey === action.key ? '...' : isShortcutDisabled(action.key) ? '—'
+            : shortcutDisplayLabel(action.key, action.defaultCode) }}
+        </span>
+        <button v-if="!isShortcutDisabled(action.key) && capturingKey !== action.key"
+            class="clear-btn shortcut-clear" title="Disable shortcut"
+            @click="clearShortcut(action.key)">
+          ✕
+        </button>
+      </div>
+    </section>
+
+    <section class="settings-category">
       <h3>Toast Banners</h3>
 
       <div class="setting-row">
@@ -273,6 +376,50 @@ function onBannerTypeToggle(name: string, checked: boolean) {
   min-width: 3.5rem;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.shortcut-key {
+  font-family: monospace;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.25rem;
+  min-width: 4rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+.shortcut-key:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.shortcut-key.disabled {
+  opacity: 0.4;
+  font-style: italic;
+}
+
+.shortcut-key.capturing {
+  border-color: rgba(100, 180, 255, 0.6);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.shortcut-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 1rem;
+}
+
+.shortcut-clear:hover {
+  opacity: 1;
 }
 
 .banner-categories {

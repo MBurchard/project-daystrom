@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use log::debug;
 use serde::{Deserialize, Deserializer};
 
-// ---- Lenient deserialisation -----------------------------------------------
+// ---- Lenient deserialization -----------------------------------------------
 
 /// Deserialize an `Option<T>` that returns `None` for type mismatches instead of failing.
 fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
@@ -60,6 +60,9 @@ pub struct GameSettings {
     /// Toast banner suppression.
     #[serde(default)]
     pub banners: GameBannerSettings,
+    /// Keyboard shortcut overrides. Key = action name, value = bound key (empty = disabled).
+    #[serde(default)]
+    pub shortcuts: std::collections::BTreeMap<String, String>,
 }
 
 // ---- Global state ----------------------------------------------------------
@@ -109,17 +112,28 @@ pub fn get_ship_names_visible() -> u32 {
     state().lock().unwrap().ui.ship_names_visible.unwrap_or(1800)
 }
 
+/// Key binding for the main action (engage, mine, warp).
+///
+/// Returns `Some("Space")` by default. Returns `None` when explicitly disabled (empty string).
+pub fn trigger_main_action() -> Option<String> {
+    match state().lock().unwrap().shortcuts.get("trigger_main_action").map(|s| s.as_str()) {
+        Some("") => None,
+        Some(key) => Some(key.to_string()),
+        None => Some("Space".to_string()),
+    }
+}
+
 /// Replace all settings with a full snapshot from Daystrom (`settings.sync`).
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
-    // Scoped block: release the Mutex before side-effect hooks,
-    // which call getters and would deadlock on the same lock.
+    // Scoped block: release the Mutex before side effect hooks, which call getters and would deadlock on the same lock.
     { *state().lock().unwrap() = settings; }
     crate::hooks::ui_scale::apply_current_scale();
     crate::hooks::chat_frame::on_settings_synced();
     crate::hooks::job_queue::on_settings_synced();
     crate::hooks::toast_banner::on_settings_changed();
     crate::hooks::system_zoom::on_settings_changed();
+    crate::hooks::hotkeys::on_shortcuts_changed();
 }
 
 /// Patch individual settings from an incremental update (`settings.update`).
@@ -132,8 +146,7 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             let new_scale = value.as_u64().map(|v| v as u32);
             debug!(target: "Settings", "Update: game.ui.scale = {new_scale:?}");
             s.ui.scale = new_scale;
-            // Release the Mutex before apply_current_scale(),
-            // which calls get_scale() and would deadlock on the same lock.
+            // Release the Mutex before apply_current_scale(), which calls get_scale() and would deadlock.
             drop(s);
             crate::hooks::ui_scale::apply_current_scale();
         }
@@ -176,6 +189,14 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             s.ui.ship_names_visible = new_val;
             drop(s);
             crate::hooks::system_zoom::on_settings_changed();
+        }
+        "game.shortcuts" => {
+            let new_val: std::collections::BTreeMap<String, String> =
+                serde_json::from_value(value.clone()).unwrap_or_default();
+            debug!(target: "Settings", "Update: game.shortcuts = {new_val:?}");
+            s.shortcuts = new_val;
+            drop(s);
+            crate::hooks::hotkeys::on_shortcuts_changed();
         }
         other => {
             debug!(target: "Settings", "Unknown setting: {other}");

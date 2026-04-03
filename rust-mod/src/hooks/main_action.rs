@@ -1,6 +1,6 @@
-//! Spacebar default-action hook.
+//! Main action hook.
 //!
-//! Checks per frame (from the shared `ScreenManager.Update()` hook) whether SPACE was pressed.
+//! Called from the shared `ScreenManager.Update()` hook when the configured main action key is pressed.
 //! If a viewer widget is active, executes the primary action: Engage (ships), Mine (nodes), or Warp (star systems).
 
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
@@ -24,6 +24,12 @@ static OFFSET_VIS_STATE: AtomicUsize = AtomicUsize::new(0);
 /// `PreScanTargetWidget._scanEngageButtonsWidget`.
 static OFFSET_SCAN_ENGAGE: AtomicUsize = AtomicUsize::new(0);
 
+/// `PreScanTargetWidget._addToQueueButtonWidget`.
+static OFFSET_QUEUE_BUTTON: AtomicUsize = AtomicUsize::new(0);
+
+/// `ScanEngageButtonsWidget._engageButton` (GenericButtonWidget).
+static OFFSET_ENGAGE_BUTTON: AtomicUsize = AtomicUsize::new(0);
+
 /// `VisibilityState.Visible` enum value.
 const VIS_VISIBLE: i32 = 4;
 
@@ -44,18 +50,26 @@ static ORIG_VIEWER_DESTROY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut())
 /// Function pointer for `ScanEngageButtonsWidget.OnEngageButtonClicked()`.
 static ON_ENGAGE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Function pointer for `PreScanTargetWidget.OnAddToQueueClickedEventHandler()`.
+static ON_QUEUE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Function pointer for `GenericButtonWidget.get_Interactable() -> bool`.
+static GET_INTERACTABLE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
 /// Function pointer for `MiningObjectViewerWidget.MineClicked()`.
 static MINE_CLICKED_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Function pointer for `StarNodeObjectViewerWidget.InitiateWarp()`.
 static INITIATE_WARP_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Whether the first spacebar action has been logged.
+/// Whether the first main action has been logged.
 static LOGGED_FIRST_ACTION: AtomicBool = AtomicBool::new(false);
 
 // ---- Type aliases ---------------------------------------------------------
 
 type ActionFn = unsafe extern "C" fn(*mut Il2CppObject);
+type IsActiveFn = unsafe extern "C" fn(*mut Il2CppObject) -> bool;
+type GetInteractableFn = unsafe extern "C" fn(*mut Il2CppObject) -> bool;
 type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 
 // ---- Shared OnDestroy hook ------------------------------------------------
@@ -99,7 +113,7 @@ unsafe fn is_viewer_visible(instance: *const ()) -> bool {
 
 // ---- Action execution -----------------------------------------------------
 
-/// Called from `hotkeys::hook_update()` when Space is pressed and no input field is focused.
+/// Called from `hotkeys::hook_update()` when the main action key is pressed and no input field is focused.
 ///
 /// Checks viewers in priority order and executes the primary action:
 /// 1. PreScan (engage target)
@@ -132,24 +146,95 @@ pub fn check() -> bool {
     false
 }
 
-/// Read `_scanEngageButtonsWidget` from the PreScanTargetWidget and call `OnEngageButtonClicked()` on it.
+/// Attempt engage or queue on the PreScanTargetWidget.
+///
+/// Checks the engage button first (normal attack). If invisible, checks the queue button.
+/// Queue is only triggered if the button is both active and interactable (not full).
 fn try_engage(prescan: *mut ()) -> bool {
+    // Try normal engage: check if the engage button inside ScanEngageButtonsWidget is active.
+    if try_normal_engage(prescan) {
+        return true;
+    }
+    // Engage button not available, try queue attack.
+    try_queue_attack(prescan)
+}
+
+/// Try normal engage via `ScanEngageButtonsWidget.OnEngageButtonClicked()`.
+///
+/// Reads `_scanEngageButtonsWidget` → `_engageButton` and checks if the button is active (visible).
+fn try_normal_engage(prescan: *mut ()) -> bool {
     let fn_ptr = ON_ENGAGE_FN.load(Relaxed);
     if fn_ptr.is_null() {
         return false;
     }
-    let engage_offset = OFFSET_SCAN_ENGAGE.load(Relaxed);
-    if engage_offset == 0 {
+    let scan_offset = OFFSET_SCAN_ENGAGE.load(Relaxed);
+    if scan_offset == 0 {
         return false;
     }
-    let widget = unsafe { tracker::read_ptr(prescan, engage_offset) };
-    if widget.is_null() {
+    let scan_widget = unsafe { tracker::read_ptr(prescan, scan_offset) };
+    if scan_widget.is_null() {
         return false;
     }
+
+    // Check if the engage button itself is active (visible).
+    let btn_offset = OFFSET_ENGAGE_BUTTON.load(Relaxed);
+    if btn_offset != 0 {
+        let btn = unsafe { tracker::read_ptr(scan_widget, btn_offset) };
+        if !btn.is_null() && !is_widget_active(btn) {
+            return false; // Engage button exists but is not visible.
+        }
+    }
+
     log_first("engaging target");
     let on_engage: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
-    unsafe { on_engage(widget as *mut Il2CppObject) };
+    unsafe { on_engage(scan_widget as *mut Il2CppObject) };
     true
+}
+
+/// Try queue attack via `PreScanTargetWidget.OnAddToQueueClickedEventHandler()`.
+///
+/// Checks if the queue button is active (visible) and interactable (queue not full).
+fn try_queue_attack(prescan: *mut ()) -> bool {
+    let fn_ptr = ON_QUEUE_FN.load(Relaxed);
+    if fn_ptr.is_null() {
+        return false;
+    }
+    let btn_offset = OFFSET_QUEUE_BUTTON.load(Relaxed);
+    if btn_offset == 0 {
+        return false;
+    }
+    let btn = unsafe { tracker::read_ptr(prescan as *const (), btn_offset) };
+    if btn.is_null() || !is_widget_active(btn) {
+        return false; // Queue button not visible.
+    }
+    if !is_button_interactable(btn) {
+        return false; // Queue full.
+    }
+
+    log_first("queueing attack");
+    let on_queue: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
+    unsafe { on_queue(prescan as *mut Il2CppObject) };
+    true
+}
+
+/// Check if a widget's GameObject is active (visible) via `UIBehaviour.IsActive()`.
+fn is_widget_active(widget: *const ()) -> bool {
+    let is_active_ptr = super::hotkeys::IS_ACTIVE_FN.load(Relaxed);
+    if is_active_ptr.is_null() {
+        return true; // Optimistic if unresolved.
+    }
+    let is_active: IsActiveFn = unsafe { std::mem::transmute(is_active_ptr) };
+    unsafe { is_active(widget as *mut Il2CppObject) }
+}
+
+/// Check if a GenericButtonWidget is interactable via `get_Interactable()`.
+fn is_button_interactable(widget: *const ()) -> bool {
+    let fn_ptr = GET_INTERACTABLE_FN.load(Relaxed);
+    if fn_ptr.is_null() {
+        return true; // Optimistic if unresolved.
+    }
+    let get_interactable: GetInteractableFn = unsafe { std::mem::transmute(fn_ptr) };
+    unsafe { get_interactable(widget as *mut Il2CppObject) }
 }
 
 /// Call `MineClicked()` on the MiningObjectViewerWidget.
@@ -176,16 +261,16 @@ fn try_warp(starnode: *mut ()) -> bool {
     true
 }
 
-/// Log the first spacebar action (once per session).
+/// Log the first main action (once per session).
 fn log_first(action: &str) {
     if !LOGGED_FIRST_ACTION.swap(true, Relaxed) {
-        debug!(target: "Hotkeys", "SPACE: {action}");
+        debug!(target: "Hotkeys", "Main action: {action}");
     }
 }
 
 // ---- Installation ---------------------------------------------------------
 
-/// Install all spacebar-related hooks.
+/// Install all main action related hooks.
 ///
 /// Resolves viewer classes, hooks Awake/OnDestroy for instance tracking, and resolves action methods.
 /// Called from `hotkeys::install()`.
@@ -223,6 +308,20 @@ pub fn install(api: &Il2CppApi) {
             warn!(target: "Hotkeys", "Could not resolve _scanEngageButtonsWidget");
         }
 
+        if let Some(offset) = resolver::resolve_field_offset(api, c, "_addToQueueButtonWidget") {
+            OFFSET_QUEUE_BUTTON.store(offset, Relaxed);
+            debug!(target: "Hotkeys", "PreScanTargetWidget._addToQueueButtonWidget offset: {offset:#x}");
+        } else {
+            warn!(target: "Hotkeys", "Could not resolve _addToQueueButtonWidget");
+        }
+
+        if let Some(p) = tracker::resolve_fn(api, c, "OnAddToQueueClickedEventHandler", 0) {
+            ON_QUEUE_FN.store(p as *mut (), Relaxed);
+            debug!(target: "Hotkeys", "OnAddToQueueClickedEventHandler resolved");
+        } else {
+            warn!(target: "Hotkeys", "OnAddToQueueClickedEventHandler not found");
+        }
+
         prescan::install(api, c, "PreScan");
     }
 
@@ -236,6 +335,23 @@ pub fn install(api: &Il2CppApi) {
             debug!(target: "Hotkeys", "OnEngageButtonClicked resolved");
         } else {
             warn!(target: "Hotkeys", "OnEngageButtonClicked not found");
+        }
+
+        if let Some(offset) = resolver::resolve_field_offset(api, c, "_engageButton") {
+            OFFSET_ENGAGE_BUTTON.store(offset, Relaxed);
+            debug!(target: "Hotkeys", "ScanEngageButtonsWidget._engageButton offset: {offset:#x}");
+        }
+    }
+
+    // GenericButtonWidget.get_Interactable (needed for queue button state check).
+    if let Some(c) = resolver::resolve_class(
+        api, "Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget",
+    ) {
+        if let Some(p) = tracker::resolve_fn(api, c, "get_Interactable", 0) {
+            GET_INTERACTABLE_FN.store(p as *mut (), Relaxed);
+            debug!(target: "Hotkeys", "GenericButtonWidget.get_Interactable resolved");
+        } else {
+            warn!(target: "Hotkeys", "GenericButtonWidget.get_Interactable not found");
         }
     }
 
@@ -304,6 +420,16 @@ mod tests {
     }
 
     #[test]
+    fn try_normal_engage_returns_false_without_fn() {
+        assert!(!try_normal_engage(std::ptr::null_mut()));
+    }
+
+    #[test]
+    fn try_queue_attack_returns_false_without_fn() {
+        assert!(!try_queue_attack(std::ptr::null_mut()));
+    }
+
+    #[test]
     fn try_mine_returns_false_without_fn() {
         assert!(!try_mine(std::ptr::null_mut()));
     }
@@ -311,5 +437,17 @@ mod tests {
     #[test]
     fn try_warp_returns_false_without_fn() {
         assert!(!try_warp(std::ptr::null_mut()));
+    }
+
+    #[test]
+    fn is_widget_active_optimistic_when_unresolved() {
+        // IS_ACTIVE_FN is null by default in tests, should return true (optimistic).
+        assert!(is_widget_active(std::ptr::null()));
+    }
+
+    #[test]
+    fn is_button_interactable_optimistic_when_unresolved() {
+        // GET_INTERACTABLE_FN is null by default in tests, should return true (optimistic).
+        assert!(is_button_interactable(std::ptr::null()));
     }
 }

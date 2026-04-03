@@ -1,14 +1,13 @@
 //! Persistent profile storage for Multi-Account support.
 //!
-//! Intercepts all PlayerPrefs access and stores values in a TOML file
-//! (e.g. `106_Nabor.toml`) inside the Daystrom app data directory. All keys
-//! are routed to the store; the Registry/plist is only consulted when a value
-//! has not been captured yet (`None`). Once captured, the store is the single
-//! source of truth.
+//! Intercepts all PlayerPrefs access and stores values in a TOML file (e.g. `106_Nabor.toml`) inside the Daystrom
+//! app data directory.
+//! All keys are routed to the store, the Registry/plist is only consulted when a value has not been captured yet
+//! (`None`). Once captured, the store is the single source of truth.
 //!
 //! The filename is derived from `server_instance_id` and `social_username`.
-//! On first start (import from Registry), data is collected in RAM until both
-//! values are known, then the file is written.
+//! On the first start (import from Registry), data is collected in RAM until both values are known, then the file is
+//! written.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -47,9 +46,8 @@ struct ProfileData {
 
 /// The `[profil]` section: account identity and display info.
 ///
-/// All fields are `Option` so we can distinguish "never set" (`None`) from
-/// "set to empty" (`Some("")`). `None` means the hook should fall through to
-/// the Registry to capture the real value.
+/// All fields are `Option` so we can distinguish "never set" (`None`) from "set to empty" (`Some("")`). `None` means
+/// the hook should fall through to the Registry to capture the real value.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ProfilSection {
     #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
@@ -140,18 +138,15 @@ impl AuthSection {
 
 // ---- Known defaults -------------------------------------------------------
 
-/// A default value for a PlayerPrefs key that must always be available,
-/// even before the user ID is known (Phase 1).
+/// A default value for a PlayerPrefs key that must always be available, even before the user ID is known (Phase 1).
 ///
-/// String keys don't need entries here because the blocked path in the
-/// hook layer returns "" for any unknown string key, matching Unity's
-/// PlayerPrefs.GetString behaviour.
+/// String keys don't need entries here because the blocked path in the hook layer returns "" for any unknown string
+/// key, matching Unity's PlayerPrefs.GetString behaviour.
 enum KnownDefault {
     Int(i32),
 }
 
-/// Keys with known defaults. These are never blocked in Phase 1 and fall
-/// back to their default when not yet stored.
+/// Keys with known defaults. These are never blocked in Phase 1 and fall back to their default when not yet stored.
 const KNOWN_DEFAULTS: &[(&str, KnownDefault)] = &[
     ("isFirstLaunch", KnownDefault::Int(1)),
     ("Login/AccountServiceApiVersion", KnownDefault::Int(2)),
@@ -181,8 +176,8 @@ fn seed_known_defaults(state: &mut StoreState) {
 
 /// Determines which TOML section a PlayerPrefs key belongs to.
 ///
-/// Every key is routed somewhere. `[profil]` and `[auth]` have named fields,
-/// everything else falls through to `[misc]` as a key-value map.
+/// Every key is routed somewhere. `[profil]` and `[auth]` have named fields, everything else falls through to
+/// `[misc]` as a key-value map.
 enum KeyRoute<'a> {
     /// `[profil]` section, with the field name.
     Profil(&'a str),
@@ -195,7 +190,7 @@ enum KeyRoute<'a> {
     Chat,
     /// `[misc]` section, stored under the original key.
     Misc,
-    /// `[cache]` section, stored under the original key. Serialised last.
+    /// `[cache]` section, stored under the original key. Serialized last.
     Cache,
 }
 
@@ -235,7 +230,7 @@ fn route_key(key: &str) -> KeyRoute<'_> {
         // [cache]
         "DownloadCacheHistoryV2" => KeyRoute::Cache,
         // [player] for dual-key pattern keys (queried with and without uid)
-        "selected_language" => KeyRoute::Player,
+        "selected_language" | "keybindings" => KeyRoute::Player,
         _ if key.starts_with("options/")
             || key.starts_with("mission/")
             || key.starts_with("QualityManager/")
@@ -261,7 +256,7 @@ enum ProfileMode {
     Import,
     /// Known profile (e.g. `106_Nabor`): load from TOML, no Registry.
     Known(String),
-    /// New account: everything is None, no Registry, no TOML until name is known.
+    /// New account: everything is None, no Registry, no TOML until the name is known.
     NewAccount,
 }
 
@@ -278,10 +273,8 @@ struct StoreState {
 impl StoreState {
     /// Whether a key can be correctly routed right now.
     ///
-    /// Phase 1 (no `user_id`): only keys with an explicit match in
-    /// `route_key()` are routable, plus keys in `KNOWN_DEFAULTS`. Keys
-    /// that fall through to the `Misc` catch-all might be uid-prefixed
-    /// and we cannot tell yet.
+    /// Phase 1 (no `user_id`): only keys with an explicit match in `route_key()` are routable, plus keys in
+    /// `KNOWN_DEFAULTS`. Keys that fall through to the `Misc` catch-all might be uid-prefixed and we cannot tell yet.
     /// Phase 2 (`user_id` known): everything is routable.
     fn can_route(&self, key: &str) -> bool {
         if self.data.profil.user_id.is_some() {
@@ -292,8 +285,8 @@ impl StoreState {
 
     /// Check if a key is a user-ID-prefixed chat key (e.g. `{uid}chatHist`).
     ///
-    /// These keys use the user ID directly concatenated with the suffix (no colon
-    /// separator), unlike the other user-prefixed keys.
+    /// These keys use the user ID directly concatenated with the suffix (no colon separator), unlike the other
+    /// user-prefixed keys.
     fn is_chat_key(&self, key: &str) -> bool {
         let Some(uid) = self.data.profil.user_id.as_deref() else { return false };
         if uid.is_empty() { return false; }
@@ -302,9 +295,8 @@ impl StoreState {
 
     /// Strip the user-ID prefix from a PlayerPrefs key, if present.
     ///
-    /// Keys like `i9170ba...:factions_federation_pips_hide_time` have the user ID
-    /// (from `[profil].user_id`) as prefix. Returns the part after the `:` if the
-    /// prefix matches, or `None` if it doesn't.
+    /// Keys like `i9170ba...:factions_federation_pips_hide_time` have the user ID (from `[profil].user_id`) as a
+    /// prefix. Returns the part after the `:` if the prefix matches, or `None` if it doesn't.
     fn strip_user_prefix<'a>(&self, key: &'a str) -> Option<&'a str> {
         let uid = self.data.profil.user_id.as_deref()?;
         if uid.is_empty() {
@@ -455,7 +447,7 @@ impl StoreState {
             KeyRoute::Auth(field) => {
                 let Some(current) = self.auth_field_mut(field) else {
                     // Int-only field written as String (e.g. allow_association = "").
-                    return true; // known, nothing to store
+                    return true; // known nothing to store
                 };
                 let new_val = Some(value.to_string());
                 if *current == new_val {
@@ -722,7 +714,7 @@ impl StoreState {
         self.data.profil.social_username.is_some() && self.data.profil.server_instance_id.is_some()
     }
 
-    /// Check whether a flush is due. Returns the serialised content and filename if so.
+    /// Check whether a flush is due. Returns the serialized content and filename if so.
     ///
     /// The actual disk write happens OUTSIDE the mutex to avoid blocking.
     fn take_pending_flush(&mut self) -> Option<(String, String)> {
@@ -747,7 +739,7 @@ impl StoreState {
             self.current_stem = Some(new_stem.clone());
         }
 
-        // First flush means the account is established. Clear the
+        // The first flush means the account is established. Clear the
         // first-launch flag so subsequent starts skip the new-player flow.
         if self.data.auth.is_first_launch == Some(1) {
             self.data.auth.is_first_launch = Some(0);
@@ -761,14 +753,14 @@ impl StoreState {
                 Some((content, filename))
             }
             Err(e) => {
-                warn!(target: "ProfileStore", "Failed to serialise profile: {e}");
+                warn!(target: "ProfileStore", "Failed to serialize profile: {e}");
                 None
             }
         }
     }
 }
 
-/// Global store instance, initialised lazily on first access.
+/// Global store instance, initialized lazily on first access.
 static STORE: Mutex<Option<StoreState>> = Mutex::new(None);
 
 // ---- Profile path + filename ----------------------------------------------
@@ -799,7 +791,7 @@ fn rename_profile_file(old_stem: &str, new_stem: &str) {
 
 /// Build a profile stem (filename without `.toml`) from server ID and player name.
 ///
-/// Sanitises the name to ASCII-alphanumeric + underscore for safe filenames.
+/// Sanitizes the name to ASCII-alphanumeric and underscore for safe filenames.
 fn profile_stem(server_id: i32, name: &str) -> String {
     let safe_name: String = name
         .chars()
@@ -836,7 +828,7 @@ fn find_existing_profile() -> Option<(PathBuf, ProfileData)> {
 
 // ---- Initialisation -------------------------------------------------------
 
-/// Get or initialise the store.
+/// Get or initialize the store.
 fn with_store<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut StoreState) -> R,
@@ -860,7 +852,8 @@ where
                         toml::from_str::<ProfileData>(&content).ok()
                     })
                 }).unwrap_or_default();
-                let key_count = data.misc.len() + data.chat.len() + data.cache.len() + data.factions.len() + data.player.len();
+                let key_count = data.misc.len() + data.chat.len() + data.cache.len()
+                    + data.factions.len() + data.player.len();
                 let current_stem = Some(stem.clone());
                 info!(target: "ProfileStore", "Loaded profile '{stem}' ({key_count} keys)");
                 StoreState {
@@ -886,7 +879,8 @@ where
             ProfileMode::Import => {
                 // Try to load an existing profile, otherwise start fresh
                 if let Some((path, mut data)) = find_existing_profile() {
-                    let key_count = data.misc.len() + data.chat.len() + data.cache.len() + data.factions.len() + data.player.len();
+                    let key_count = data.misc.len() + data.chat.len() + data.cache.len()
+                        + data.factions.len() + data.player.len();
                     data.profil.profile_type = Some("primary".to_string());
                     info!(target: "ProfileStore", "Loaded profile from {} ({key_count} keys)", path.display());
                     StoreState {
@@ -916,7 +910,7 @@ where
 
 // ---- Disk I/O (outside mutex) ---------------------------------------------
 
-/// Write serialised content to disk. Called OUTSIDE the mutex.
+/// Write serialized content to disk. Called OUTSIDE the mutex.
 fn flush_content(content: &str, filename: &str) {
     let Some(dir) = profile_dir() else { return };
     let _ = fs::create_dir_all(&dir);
@@ -1020,17 +1014,17 @@ pub fn delete(key: &str) {
 
 /// Whether a key is routed through the profile store.
 ///
-/// In Phase 1 (no `user_id`), only keys with explicit routing rules are
-/// intercepted. Keys that would fall through to `[misc]` pass transparently
-/// to the original PlayerPrefs methods until `user_id` is known.
+/// In Phase 1 (no `user_id`), only keys with explicit routing rules are intercepted.
+/// Keys that would fall through to `[misc]` pass transparently to the original PlayerPrefs methods until `user_id`
+/// is known.
 pub fn is_routed(key: &str) -> bool {
     with_store(|state| state.can_route(key)).unwrap_or(false)
 }
 
 /// Whether the store should block Registry fallthrough for unknown values.
 ///
-/// In `NewAccount` and `Known` modes, unknown values must NOT fall through to
-/// the Registry. Only in `Import` mode or for `primary` profiles do we allow it.
+/// In `NewAccount` and `Known` modes, unknown values must NOT fall through to the Registry.
+/// Only in `Import` mode or for `primary` profiles do we allow it.
 pub fn should_block_registry() -> bool {
     with_store(|state| {
         if state.mode == ProfileMode::Import {
@@ -1306,15 +1300,15 @@ mod tests {
     // -- Serialisation --
 
     #[test]
-    fn serialise_roundtrip() {
+    fn serialize_roundtrip() {
         let mut state = state_with_uid("id123");
         state.put("social_username", "TestUser");
         state.put("DownloadCacheHistoryV2", "cache data");
         state.put("id123:factions_federation_pips_hide_time", "42");
         state.put("id123:factions_klingon_pips_hide_time", "7");
 
-        let serialised = toml::to_string_pretty(&state.data).unwrap();
-        let parsed: ProfileData = toml::from_str(&serialised).unwrap();
+        let serialized = toml::to_string_pretty(&state.data).unwrap();
+        let parsed: ProfileData = toml::from_str(&serialized).unwrap();
 
         assert_eq!(parsed.profil.user_id, Some("id123".to_string()));
         assert_eq!(parsed.profil.social_username, Some("TestUser".to_string()));
