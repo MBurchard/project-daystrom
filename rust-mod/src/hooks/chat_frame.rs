@@ -158,10 +158,8 @@ extern "C" fn hook_msg_received(this: *mut Il2CppObject, message: *mut Il2CppObj
         unsafe { original(this, message) };
     }
 
-    if !RESTORED.load(Relaxed) {
-        if let Ok(mut guard) = LAST_MSG_RECEIVED.lock() {
-            *guard = Some(Instant::now());
-        }
+    if !RESTORED.load(Relaxed) && let Ok(mut guard) = LAST_MSG_RECEIVED.lock() {
+        *guard = Some(Instant::now());
     }
 }
 
