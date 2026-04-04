@@ -22,7 +22,7 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
   - Custom PlayerPrefs interceptor redirects game settings into per-profile storage
   - Switching accounts is a single click in the launcher, profiles are portable across platforms
 - **Game enhancements** powered by the Rust mod
-  - Keyboard hotkeys: ESC to collect rewards, SPACE to engage, mine, or warp
+  - Configurable keyboard shortcuts with game-binding conflict detection
   - Adjustable UI scale (50-200%), applied live to the running game
   - Auto-open chat sidebar on game start
   - Auto-expand job queue panel on game start
@@ -49,9 +49,8 @@ After installation, launch Project Daystrom and click the play button to start t
 ## Acknowledgements
 
 This project was originally inspired by the [STFC Community Mod](https://github.com/netniV/stfc-mod) by
-[netniV](https://github.com/netniV), [tashcan](https://github.com/tashcan), and contributors. The legacy C++ mod
-code is kept in `stfc-mod/` as reference. Daystrom has since moved to its own Rust-based mod with a custom hook
-engine and profile system.
+[netniV](https://github.com/netniV), [tashcan](https://github.com/tashcan), and contributors. Daystrom has since
+moved to its own Rust-based mod with a custom hook engine and profile system.
 
 ## Built with
 
@@ -76,7 +75,6 @@ project-daystrom/
 │   ├── src/hooks/          #   IL2CPP hook implementations
 │   ├── src/il2cpp/         #   IL2CPP runtime bindings
 │   └── Cargo.toml          #   Crate config
-├── stfc-mod/               # STFC Community Mod (legacy, kept as reference)
 ├── app/                    # Project Daystrom app (Tauri 2 + Vue 3)
 │   ├── modules/
 │   │   ├── app/            #   Vue 3 frontend
@@ -103,11 +101,6 @@ project-daystrom/
 - **Visual Studio Build Tools 2022** (or VS Community) — workload "Desktop development with C++"
   including a **Windows SDK** (not installed by default!)
 - Rust: standard installation via [rustup-init.exe](https://rustup.rs/) (option 1 selects MSVC toolchain)
-
-### Legacy C++ mod (optional)
-
-Building the original Community Mod in `stfc-mod/` additionally requires
-[XMake](https://xmake.io/) and [CMake](https://cmake.org/).
 
 ## Setup
 

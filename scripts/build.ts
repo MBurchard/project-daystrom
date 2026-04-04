@@ -23,17 +23,12 @@ const log = useLog('Build');
 
 const ROOT = resolve(import.meta.dirname, '..');
 const APP_DIR = join(ROOT, 'app');
-const MOD_DIR = join(ROOT, 'stfc-mod');
 const RUST_MOD_DIR = join(ROOT, 'rust-mod');
 const MOD_OUTPUT_DIR = join(APP_DIR, 'resources', 'mod');
 
-type ModVariant = 'cpp' | 'rust';
-const ACTIVE_MOD: ModVariant = 'rust';
 const MANIFEST_PATH = join(APP_DIR, 'modules', 'backend', 'Cargo.toml');
 const TS_RS_EXPORT_DIR = join(APP_DIR, 'modules', 'app', 'src', 'generated');
 const TAURI_APP_PATH = join(APP_DIR, 'modules', 'backend');
-
-const MOD_LIBRARY_NAME = 'stfc-mod';
 
 /** Tauri resource directories that receive copies of app/resources/mod/. */
 const TAURI_MOD_DIRS = [
@@ -42,10 +37,6 @@ const TAURI_MOD_DIRS = [
 ];
 
 interface PlatformConfig {
-  target: string;
-  library: string;
-  xmakePlatform: string;
-  xmakeArch: string;
   /** File name of the mod library after copying to app/resources/mod/. */
   outputLibrary: string;
   /** Path to the Rust-built library inside rust-mod/target/release/. */
@@ -54,19 +45,11 @@ interface PlatformConfig {
 
 const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
   darwin: {
-    target: 'stfc-community-patch',
-    library: 'build/macosx/arm64/release/libstfc-community-patch.dylib',
-    xmakePlatform: 'macosx',
-    xmakeArch: 'arm64',
-    outputLibrary: `lib${MOD_LIBRARY_NAME}.dylib`,
+    outputLibrary: 'libstfc-mod.dylib',
     rustLibrary: 'target/release/libstfc_mod.dylib',
   },
   win32: {
-    target: 'stfc-community-patch',
-    library: 'build/windows/x64/release/stfc-community-patch.dll',
-    xmakePlatform: 'windows',
-    xmakeArch: 'x64',
-    outputLibrary: `${MOD_LIBRARY_NAME}.dll`,
+    outputLibrary: 'stfc-mod.dll',
     rustLibrary: 'target/release/stfc_mod.dll',
   },
 };
@@ -266,25 +249,6 @@ function cleanModDirs(): void {
 }
 
 /**
- * Build the C++ mod via xmake and copy the library to app/resources/mod/.
- */
-function buildCppMod(config: PlatformConfig): void {
-  log.info(`Configuring xmake for ${config.xmakePlatform} ${config.xmakeArch}...`);
-  execSync(
-    `xmake f -p ${config.xmakePlatform} -a ${config.xmakeArch} -m release -y`,
-    {cwd: MOD_DIR, stdio: 'inherit'},
-  );
-
-  log.info(`Building ${config.target}...`);
-  execSync(`xmake build -y ${config.target}`, {cwd: MOD_DIR, stdio: 'inherit'});
-
-  const src = join(MOD_DIR, config.library);
-  const dest = join(MOD_OUTPUT_DIR, config.outputLibrary);
-  cpSync(src, dest);
-  log.info(`Copied ${dest}`);
-}
-
-/**
  * Build the Rust mod via cargo and copy the library to app/resources/mod/.
  */
 function buildRustMod(config: PlatformConfig): void {
@@ -303,8 +267,6 @@ function buildRustMod(config: PlatformConfig): void {
 
 /**
  * Build the mod library and copy it to app/resources/mod/.
- *
- * Dispatches to the C++ (xmake) or Rust (cargo) build based on the `ACTIVE_MOD` constant.
  */
 function buildMod(): void {
   const config = PLATFORM_CONFIG[process.platform];
@@ -315,12 +277,7 @@ function buildMod(): void {
 
   cleanModDirs();
   mkdirSync(MOD_OUTPUT_DIR, {recursive: true});
-
-  if (ACTIVE_MOD === 'rust') {
-    buildRustMod(config);
-  } else {
-    buildCppMod(config);
-  }
+  buildRustMod(config);
 }
 
 /**
@@ -350,7 +307,7 @@ function buildModMacUniversal(): void {
 
   const arm64Lib = join(RUST_MOD_DIR, 'target', 'aarch64-apple-darwin', 'release', 'libstfc_mod.dylib');
   const x86Lib = join(RUST_MOD_DIR, 'target', 'x86_64-apple-darwin', 'release', 'libstfc_mod.dylib');
-  const outputLib = `lib${MOD_LIBRARY_NAME}.dylib`;
+  const outputLib = 'libstfc-mod.dylib';
 
   for (const dir of [MOD_OUTPUT_DIR, ...TAURI_MOD_DIRS]) {
     mkdirSync(dir, {recursive: true});
