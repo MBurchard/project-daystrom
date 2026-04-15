@@ -24,11 +24,12 @@ Spiels eingreift.
   - Kontowechsel per Klick im Launcher, Profile sind plattformübergreifend portabel
 - **Spielverbesserungen** durch den Rust-Mod
   - Konfigurierbare Tastenkürzel mit Konflikterkennung gegen Spiel-Keybindings
-  - Einstellbare UI-Skalierung (50-200%), wird live auf das laufende Spiel angewendet
+  - Einstellbare UI-Skalierung (50–200 %) wird live auf das laufende Spiel angewendet
   - Automatisches Öffnen der Chat-Sidebar beim Spielstart
   - Automatisches Aufklappen des Auftragsqueue-Panels beim Spielstart
   - Konfigurierbarer Systemansicht-Zoom und Schiffsnamen-Sichtbarkeitsreichweite
-  - Toast-Banner-Unterdrückung mit typ-basiertem Opt-out (Kampf, Station, Armada, etc.)
+  - Lootbox-Öffnungsanimation überspringen (standardmäßig aktiviert)
+  - Toast-Banner-Unterdrückung mit typ-basiertem Opt-out (Kampf, Station, Armada etc.)
   - Automatische Erkennung von Spiel-Updates über die Scopely-Update-API
 - **Native plattformübergreifende App** (Tauri 2 + Vue 3)
   - Einheitlicher Launcher: Entitlement-Patching auf macOS, DLL-Proxy-Injection auf Windows
@@ -75,7 +76,7 @@ project-daystrom/
 ├── rust-mod/               # Daystrom Game-Mod (Rust, cdylib)
 │   ├── src/hook/           #   Hook-Engine (Inline-Hooks, ARM64 + x86_64)
 │   ├── src/hooks/          #   IL2CPP-Hook-Implementierungen
-│   ├── src/il2cpp/         #   IL2CPP-Laufzeitumgebungs-Bindings
+│   ├── src/il2cpp/         #   IL2CPP-Laufzeitumgebung-Bindings
 │   └── Cargo.toml          #   Crate-Konfiguration
 ├── app/                    # Project Daystrom App (Tauri 2 + Vue 3)
 │   ├── modules/
@@ -111,7 +112,7 @@ nvm use
 pnpm install
 ```
 
-Alle Befehle werden vom **Workspace-Root** aus ausgeführt, sofern nicht anders angegeben.
+Alle Befehle werden vom **Workspace-Root** ausgeführt, sofern nicht anders angegeben.
 
 ## Mod bauen
 
@@ -189,9 +190,8 @@ certutil -dump daystrom.pfx
 ### GitHub Secrets konfigurieren
 
 Die PFX-Datei als Base64 kodieren und in die Zwischenablage kopieren.\
-Hinweis: PowerShell löst relative Pfade vom Home-Verzeichnis des Benutzers auf, nicht vom aktuellen
-Arbeitsverzeichnis.\
-Um Überraschungen zu vermeiden, einen absoluten Pfad verwenden.\
+Hinweis: PowerShell löst relative Pfade vom Home-Verzeichnis des Benutzers auf, nicht vom aktuellen Arbeitsverzeichnis.
+Daher immer einen absoluten Pfad verwenden.\
 
 ```powershell
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("<path-to-pfx>")) | Set-Clipboard
@@ -199,8 +199,8 @@ Um Überraschungen zu vermeiden, einen absoluten Pfad verwenden.\
 
 Dann diese Repository-Secrets in GitHub setzen:
 
-| Secret                 | Wert                                  |
-|------------------------|---------------------------------------|
+| Secret                 | Wert                                 |
+|------------------------|--------------------------------------|
 | `WINDOWS_PFX_BASE64`   | Base64-kodierte PFX (Zwischenablage) |
 | `WINDOWS_PFX_PASSWORD` | Das Passwort vom Export              |
 
@@ -229,8 +229,8 @@ modular gehalten, damit einzelne Plugins unabhängig entwickelt und veröffentli
 
 ### Umgebungsvariablen
 
-| Variable            | Standard | Beschreibung                                             |
-|---------------------|----------|----------------------------------------------------------|
+| Variable            | Standard | Beschreibung                                              |
+|---------------------|----------|-----------------------------------------------------------|
 | `DAYSTROM_DEVTOOLS` | `1`      | Auf `0` setzen, um DevTools in Debug-Builds zu verstecken |
 
 ## Lizenz
