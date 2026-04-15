@@ -12,6 +12,7 @@ pub mod il2cpp_init;
 pub(crate) mod job_queue;
 mod player_prefs;
 mod main_action;
+mod interstitial;
 mod shop_reveal;
 pub(crate) mod system_zoom;
 pub(crate) mod toast_banner;
@@ -83,6 +84,7 @@ pub fn install_all_hooks() {
     toast_banner::install(api);
     system_zoom::install(api);
     shop_reveal::install(api);
+    interstitial::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }
