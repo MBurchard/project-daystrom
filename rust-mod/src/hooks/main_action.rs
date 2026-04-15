@@ -41,6 +41,24 @@ const VIS_SHOW: i32 = 1;
 instance_tracker!(prescan);
 instance_tracker!(mining);
 instance_tracker!(starnode);
+instance_tracker!(nav_controller);
+
+// ---- PreScan station tracking (manual, class-dispatched) ------------------
+
+/// Tracked instance of `PreScanStationTargetWidget` (player bases).
+///
+/// Separate from the `prescan` tracker because both widget types share the same inherited `Awake()`.
+/// Without splitting, clicking a station overwrites the prescan tracker and breaks Space for ships.
+static STATION_INSTANCE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Resolved the IL2CPP class pointer for `PreScanStationTargetWidget` (used for runtime dispatch in Awake hook).
+static STATION_CLASS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original trampoline for `PreScanTargetWidget.Awake()` (shared by both widget types).
+static ORIG_PRESCAN_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Original trampoline for `PreScanTargetWidget.OnDestroy()` (shared by both widget types).
+static ORIG_PRESCAN_DESTROY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 // ---- State ----------------------------------------------------------------
 
@@ -62,6 +80,9 @@ static MINE_CLICKED_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// Function pointer for `StarNodeObjectViewerWidget.InitiateWarp()`.
 static INITIATE_WARP_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Function pointer for `NavigationInteractionUIViewController.OnSetCourseButtonClick()`.
+static ON_SET_COURSE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
 /// Whether the first main action has been logged.
 static LOGGED_FIRST_ACTION: AtomicBool = AtomicBool::new(false);
 
@@ -72,6 +93,45 @@ type IsActiveFn = unsafe extern "C" fn(*mut Il2CppObject) -> bool;
 type GetInteractableFn = unsafe extern "C" fn(*mut Il2CppObject) -> bool;
 type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 
+// ---- PreScan Awake/OnDestroy hooks (class-dispatched) ---------------------
+
+/// `Awake` hook for `PreScanTargetWidget` (catches both base and station subclass).
+///
+/// Reads the IL2CPP class pointer from the object header and dispatches to the correct tracker.
+/// `PreScanStationTargetWidget` goes to [`STATION_INSTANCE`], everything else to [`prescan`].
+extern "C" fn hook_prescan_awake(this: *mut Il2CppObject) {
+    let class = unsafe { tracker::read_ptr(this as *const (), 0) };
+    let station_class = STATION_CLASS.load(Relaxed);
+    if !station_class.is_null() && class == station_class {
+        STATION_INSTANCE.store(this as *mut (), Relaxed);
+    } else {
+        // Delegate to the macro-generated hook (stores in prescan::INSTANCE).
+        // ORIG_AWAKE inside the macro is null, so it only stores, no double-call.
+        prescan::hook_awake(this);
+    }
+
+    let orig = ORIG_PRESCAN_AWAKE.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+}
+
+/// OnDestroy hook for `PreScanTargetWidget` (catches both base and station subclass).
+///
+/// Clears both trackers via compare-exchange (only the matching one changes).
+extern "C" fn hook_prescan_destroy(this: *mut Il2CppObject) {
+    let ptr = this as *mut ();
+    prescan::clear_if_match(ptr);
+    let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
+
+    let orig = ORIG_PRESCAN_DESTROY.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+}
+
 // ---- Shared OnDestroy hook ------------------------------------------------
 
 /// Shared OnDestroy hook for all ObjectViewerBaseWidget subclasses.
@@ -79,9 +139,11 @@ type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 /// Some viewer subclasses (e.g. Mining, StarNode) share the same inherited OnDestroy, so hooking it per-class
 /// causes double-hook errors. This single hook checks all trackers and clears any match.
 extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
-    prescan::clear_if_match(this as *mut ());
-    mining::clear_if_match(this as *mut ());
-    starnode::clear_if_match(this as *mut ());
+    let ptr = this as *mut ();
+    prescan::clear_if_match(ptr);
+    let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
+    mining::clear_if_match(ptr);
+    starnode::clear_if_match(ptr);
 
     let orig_ptr = ORIG_VIEWER_DESTROY.load(Relaxed);
     if !orig_ptr.is_null() {
@@ -116,9 +178,10 @@ unsafe fn is_viewer_visible(instance: *const ()) -> bool {
 /// Called from `hotkeys::hook_update()` when the main action key is pressed and no input field is focused.
 ///
 /// Checks viewers in priority order and executes the primary action:
-/// 1. PreScan (engage target)
+/// 1. PreScan (engage target / station)
 /// 2. Mining (mine node)
 /// 3. StarNode (initiate warp)
+/// 4. Fallback: set course (sends fleet to selected target)
 ///
 /// Returns `true` if an action was executed (the key should be consumed).
 pub fn check() -> bool {
@@ -126,6 +189,15 @@ pub fn check() -> bool {
     if !p.is_null()
         && unsafe { is_viewer_visible(p) }
         && try_engage(p)
+    {
+        return true;
+    }
+
+    // Station prescan (player bases) uses the same engage logic (inherited fields).
+    let st = STATION_INSTANCE.load(Relaxed);
+    if !st.is_null()
+        && unsafe { is_viewer_visible(st) }
+        && try_engage(st)
     {
         return true;
     }
@@ -143,7 +215,9 @@ pub fn check() -> bool {
         return try_warp(s);
     }
 
-    false
+    // Fallback: no viewer open, but a navigation controller exists. Trigger "Set Course" which sends
+    // the selected fleet to the targeted location (works across systems).
+    try_set_course()
 }
 
 /// Attempt engage or queue on the PreScanTargetWidget.
@@ -261,6 +335,25 @@ fn try_warp(starnode: *mut ()) -> bool {
     true
 }
 
+/// Trigger `OnSetCourseButtonClick()` on the `NavigationInteractionUIViewController`.
+///
+/// This is the fallback when no viewer widget is open. It sends the selected fleet to the targeted
+/// location, which works even when the target is in a different system.
+fn try_set_course() -> bool {
+    let fn_ptr = ON_SET_COURSE_FN.load(Relaxed);
+    if fn_ptr.is_null() {
+        return false;
+    }
+    let nav = nav_controller::get();
+    if nav.is_null() {
+        return false;
+    }
+    log_first("setting course");
+    let set_course: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
+    unsafe { set_course(nav as *mut Il2CppObject) };
+    true
+}
+
 /// Log the first main action (once per session).
 fn log_first(action: &str) {
     if !LOGGED_FIRST_ACTION.swap(true, Relaxed) {
@@ -322,7 +415,37 @@ pub fn install(api: &Il2CppApi) {
             warn!(target: "Hotkeys", "OnAddToQueueClickedEventHandler not found");
         }
 
-        prescan::install(api, c, "PreScan");
+        // Hook Awake/OnDestroy manually with class-dispatching hooks instead of prescan::install().
+        // PreScanStationTargetWidget (player bases) inherits these methods, so a single hook pair
+        // catches both widget types. The hooks dispatch to separate trackers based on the IL2CPP class.
+        if let Some(awake_ptr) = tracker::resolve_fn(api, c, "Awake", 0) {
+            match engine::install_hook("PreScanAwake", awake_ptr, hook_prescan_awake as *const ()) {
+                Ok(orig) => {
+                    ORIG_PRESCAN_AWAKE.store(orig as *mut (), Relaxed);
+                    debug!(target: "HookEngine", "PreScan Awake hook installed (class-dispatched)");
+                }
+                Err(e) => warn!(target: "HookEngine", "Failed to hook PreScan Awake: {e}"),
+            }
+        }
+        if let Some(destroy_ptr) = tracker::resolve_fn(api, c, "OnDestroy", 0) {
+            match engine::install_hook("PreScanDestroy", destroy_ptr, hook_prescan_destroy as *const ()) {
+                Ok(orig) => {
+                    ORIG_PRESCAN_DESTROY.store(orig as *mut (), Relaxed);
+                    debug!(target: "HookEngine", "PreScan OnDestroy hook installed (class-dispatched)");
+                }
+                Err(e) => warn!(target: "HookEngine", "Failed to hook PreScan OnDestroy: {e}"),
+            }
+        }
+    }
+
+    // Resolve PreScanStationTargetWidget class pointer for runtime dispatch in the Awake hook.
+    if let Some(c) = resolver::resolve_class(
+        api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanStationTargetWidget",
+    ) {
+        STATION_CLASS.store(c as *mut (), Relaxed);
+        debug!(target: "Hotkeys", "PreScanStationTargetWidget class resolved for dispatch");
+    } else {
+        warn!(target: "Hotkeys", "PreScanStationTargetWidget class not found, station dispatch disabled");
     }
 
     // ScanEngageButtonsWidget.OnEngageButtonClicked (no tracking needed, reached via
@@ -379,6 +502,19 @@ pub fn install(api: &Il2CppApi) {
             debug!(target: "Hotkeys", "InitiateWarp resolved");
         } else {
             warn!(target: "Hotkeys", "InitiateWarp not found");
+        }
+    }
+
+    // NavigationInteractionUIViewController: fallback "Set Course" when no viewer is open.
+    if let Some(c) = resolver::resolve_class(
+        api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationInteractionUIViewController",
+    ) {
+        nav_controller::install(api, c, "NavController");
+        if let Some(p) = tracker::resolve_fn(api, c, "OnSetCourseButtonClick", 0) {
+            ON_SET_COURSE_FN.store(p as *mut (), Relaxed);
+            debug!(target: "Hotkeys", "OnSetCourseButtonClick resolved");
+        } else {
+            warn!(target: "Hotkeys", "OnSetCourseButtonClick not found");
         }
     }
 }
