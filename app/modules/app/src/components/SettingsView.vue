@@ -54,6 +54,17 @@ function onSkipRevealSequenceChange(event: Event) {
   save();
 }
 
+/**
+ * Toggle the "Skip First Popup" checkbox and send to backend.
+ *
+ * @param event - Native change event from the checkbox.
+ */
+function onSkipFirstPopupChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.ui.skip_first_popup = target.checked;
+  save();
+}
+
 /** Effective UI scale, defaulting to 100% when not set. */
 const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
 
@@ -279,6 +290,14 @@ function onBannerTypeToggle(name: string, checked: boolean) {
             type="checkbox"
             :checked="settings.ui.skip_reveal_sequence ?? true"
             @change="onSkipRevealSequenceChange">
+      </div>
+
+      <div class="setting-row">
+        <label for="skip-first-popup">Skip First Popup</label>
+        <input id="skip-first-popup"
+            type="checkbox"
+            :checked="settings.ui.skip_first_popup ?? true"
+            @change="onSkipFirstPopupChange">
       </div>
     </section>
 
