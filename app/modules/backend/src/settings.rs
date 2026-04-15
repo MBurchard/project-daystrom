@@ -45,6 +45,8 @@ pub enum SettingsEvent {
     SystemZoom(Option<u32>),
     /// The ship names visibility distance changed (None = reset to default).
     ShipNamesVisible(Option<u32>),
+    /// The "skip reveal sequence" toggle changed (None = reset to default).
+    SkipRevealSequence(Option<bool>),
     /// Keyboard shortcut overrides changed.
     Shortcuts(BTreeMap<String, String>),
 }
@@ -60,6 +62,7 @@ impl SettingsEvent {
             Self::BannersDisabledTypes(_) => "game.banners.disabled_types",
             Self::SystemZoom(_) => "game.ui.system_zoom",
             Self::ShipNamesVisible(_) => "game.ui.ship_names_visible",
+            Self::SkipRevealSequence(_) => "game.ui.skip_reveal_sequence",
             Self::Shortcuts(_) => "game.shortcuts",
         }
     }
@@ -74,6 +77,7 @@ impl SettingsEvent {
             Self::BannersDisabledTypes(v) => serde_json::json!(v),
             Self::SystemZoom(v) => serde_json::json!(v),
             Self::ShipNamesVisible(v) => serde_json::json!(v),
+            Self::SkipRevealSequence(v) => serde_json::json!(v),
             Self::Shortcuts(v) => serde_json::json!(v),
         }
     }
@@ -171,6 +175,9 @@ pub struct GameUiSettings {
     /// Whether to auto-expand the job queue panel from compact to full view.
     #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
     pub auto_expand_job_queue: Option<bool>,
+    /// Whether to skip the shop reveal sequence animation when opening loot boxes.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub skip_reveal_sequence: Option<bool>,
 }
 
 /// Toast banner suppression settings.
@@ -250,6 +257,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
             ship_names_visible: None,
             auto_open_sidebar: None,
             auto_expand_job_queue: None,
+            skip_reveal_sequence: None,
         },
         banners: GameBannerSettings {
             disable_all: None,
@@ -498,6 +506,9 @@ pub fn set_game_settings(settings: GameSettings) {
         if s.game.ui.ship_names_visible != old.ui.ship_names_visible {
             events.push(SettingsEvent::ShipNamesVisible(s.game.ui.ship_names_visible));
         }
+        if s.game.ui.skip_reveal_sequence != old.ui.skip_reveal_sequence {
+            events.push(SettingsEvent::SkipRevealSequence(s.game.ui.skip_reveal_sequence));
+        }
         if s.game.shortcuts != old.shortcuts {
             events.push(SettingsEvent::Shortcuts(s.game.shortcuts.clone()));
         }
@@ -518,6 +529,7 @@ pub fn set_game_settings(settings: GameSettings) {
                 SettingsEvent::BannersDisabledTypes(v) => log_debug!("Disabled banner types: {v:?}"),
                 SettingsEvent::SystemZoom(v) => log_debug!("System zoom set to {v:?}"),
                 SettingsEvent::ShipNamesVisible(v) => log_debug!("Ship names visible set to {v:?}"),
+                SettingsEvent::SkipRevealSequence(v) => log_debug!("Skip reveal sequence set to {v:?}"),
                 SettingsEvent::Shortcuts(v) => log_debug!("Shortcuts changed: {v:?}"),
             }
         }

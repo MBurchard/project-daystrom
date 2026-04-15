@@ -38,6 +38,9 @@ pub struct GameUiSettings {
     /// Whether to auto-expand the job queue panel from compact to full view.
     #[serde(default, deserialize_with = "lenient_option")]
     pub auto_expand_job_queue: Option<bool>,
+    /// Whether to skip the shop reveal sequence animation when opening loot boxes.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub skip_reveal_sequence: Option<bool>,
 }
 
 /// Toast banner suppression settings.
@@ -90,6 +93,11 @@ pub fn auto_open_sidebar() -> bool {
 /// Whether the job queue panel should be auto-expanded from compact to full view.
 pub fn auto_expand_job_queue() -> bool {
     state().lock().unwrap().ui.auto_expand_job_queue.unwrap_or(false)
+}
+
+/// Whether to skip the shop reveal sequence animation.
+pub fn skip_reveal_sequence() -> bool {
+    state().lock().unwrap().ui.skip_reveal_sequence.unwrap_or(true)
 }
 
 /// Whether all toast banner notifications should be suppressed.
@@ -159,6 +167,11 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             let new_val = value.as_bool();
             debug!(target: "Settings", "Update: game.ui.auto_expand_job_queue = {new_val:?}");
             s.ui.auto_expand_job_queue = new_val;
+        }
+        "game.ui.skip_reveal_sequence" => {
+            let new_val = value.as_bool();
+            debug!(target: "Settings", "Update: game.ui.skip_reveal_sequence = {new_val:?}");
+            s.ui.skip_reveal_sequence = new_val;
         }
         "game.banners.disable_all" => {
             let new_val = value.as_bool();
@@ -344,6 +357,27 @@ mod tests {
 
         apply_update("game.ui.ship_names_visible", &serde_json::json!(2500));
         assert_eq!(state().lock().unwrap().ui.ship_names_visible, Some(2500));
+
+        reset();
+    }
+
+    #[test]
+    fn skip_reveal_sequence_defaults_to_true() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        assert!(skip_reveal_sequence());
+
+        reset();
+    }
+
+    #[test]
+    fn apply_update_patches_skip_reveal_sequence() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        apply_update("game.ui.skip_reveal_sequence", &serde_json::json!(true));
+        assert_eq!(state().lock().unwrap().ui.skip_reveal_sequence, Some(true));
 
         reset();
     }

@@ -43,6 +43,17 @@ function onAutoExpandJobQueueChange(event: Event) {
   save();
 }
 
+/**
+ * Toggle the "Skip Reveal Sequence" checkbox and send to backend.
+ *
+ * @param event - Native change event from the checkbox.
+ */
+function onSkipRevealSequenceChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.ui.skip_reveal_sequence = target.checked;
+  save();
+}
+
 /** Effective UI scale, defaulting to 100% when not set. */
 const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
 
@@ -76,14 +87,14 @@ function onShipNamesVisibleInput(event: Event) {
 
 // ---- Shortcut handlers ------------------------------------------------------
 
-/** Known shortcut actions with display labels and default bindings (as event.code values). */
+/** Known shortcut actions with display labels and default bindings (as `event.code` values). */
 const shortcutActions = [
   {key: 'trigger_main_action', label: 'Trigger Main Action', defaultCode: 'Space'},
 ];
 
 /**
  * Display labels for key codes, populated by key capture events.
- * Maps event.code (e.g. "Slash") to event.key (e.g. "-" on German layout).
+ * Maps `event.code` (e.g. "Slash") to event.key (e.g. "-" on German layout).
  */
 const keyDisplayLabels: Record<string, string> = {Space: 'Space'};
 
@@ -132,7 +143,7 @@ function startCapture(key: string) {
 }
 
 /**
- * Handle a captured keypress. Stores event.code (physical key) and caches event.key (display label).
+ * Handle a captured keypress. Stores `event.code` (physical key) and caches event.key (display label).
  *
  * @param event - The keyboard event.
  */
@@ -260,6 +271,14 @@ function onBannerTypeToggle(name: string, checked: boolean) {
             type="checkbox"
             :checked="settings.ui.auto_expand_job_queue ?? false"
             @change="onAutoExpandJobQueueChange">
+      </div>
+
+      <div class="setting-row">
+        <label for="skip-reveal-sequence">Skip Loot Box Animation</label>
+        <input id="skip-reveal-sequence"
+            type="checkbox"
+            :checked="settings.ui.skip_reveal_sequence ?? true"
+            @change="onSkipRevealSequenceChange">
       </div>
     </section>
 

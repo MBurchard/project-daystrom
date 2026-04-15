@@ -23,10 +23,11 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
   - Switching accounts is a single click in the launcher, profiles are portable across platforms
 - **Game enhancements** powered by the Rust mod
   - Configurable keyboard shortcuts with game-binding conflict detection
-  - Adjustable UI scale (50-200%), applied live to the running game
+  - Adjustable UI scale (50–200%), applied live to the running game
   - Auto-open chat sidebar on game start
-  - Auto-expand job queue panel on game start
+  - Auto-expand the job queue panel on game start
   - Configurable system view zoom distance and ship name visibility range
+  - Skip loot box reveal animation (enabled by default)
   - Toast banner suppression with per-type opt-out (combat, station, armada, etc.)
   - Automatic game update detection via the Scopely update API
 - **Native cross-platform app** (Tauri 2 + Vue 3)
@@ -54,7 +55,7 @@ moved to its own Rust-based mod with a custom hook engine and profile system.
 
 ## Built with
 
-- [Tauri 2](https://tauri.app/) (Rust backend + native shell)
+- [Tauri 2](https://tauri.app/) (Rust backend and native shell)
 - [Vue 3](https://vuejs.org/) + [Vite](https://vite.dev/) (frontend)
 - [@mburchard/bit-log](https://www.npmjs.com/package/@mburchard/bit-log) (structured logging)
 - Custom IL2CPP hook engine in Rust (ARM64 + x86_64)
