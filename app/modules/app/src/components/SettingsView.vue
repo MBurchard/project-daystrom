@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {useSettings} from '@app/composables/useSettings';
-import {computed, ref} from 'vue';
+import {computed, onBeforeUnmount, ref} from 'vue';
 
 import bannerCategories from './toast-banner-categories.json';
 
@@ -132,6 +132,13 @@ function isShortcutDisabled(key: string): boolean {
 /** The action key currently waiting for a keypress, or null if not capturing. */
 const capturingKey = ref<string | null>(null);
 
+/** Remove shortcut capture listeners and reset the current capture state. */
+function stopShortcutCapture() {
+  capturingKey.value = null;
+  window.removeEventListener('keydown', onCaptureKey);
+  window.removeEventListener('mousedown', onCaptureMouse);
+}
+
 /**
  * Disable a shortcut by setting it to an empty string.
  *
@@ -144,13 +151,37 @@ function clearShortcut(key: string) {
 }
 
 /**
- * Start capturing a keypress for a shortcut action.
+ * Complete a capture with the given code and display label.
+ *
+ * @param code - The physical key/button identifier (e.g. "Space", "Mouse3").
+ * @param label - The display label shown in the UI.
+ */
+function finishCapture(code: string, label: string) {
+  const key = capturingKey.value;
+  stopShortcutCapture();
+  if (!key) {
+    return;
+  }
+
+  keyDisplayLabels[code] = label;
+  const shortcuts = settings.value.shortcuts ??= {};
+  shortcuts[key] = code;
+  save();
+}
+
+/**
+ * Start capturing a keypress or mouse button for a shortcut action.
+ *
+ * Listens for both keyboard and mouse events. Mouse buttons 0-2 (left, right, middle) are
+ * ignored because the game needs them. Buttons 3+ (side/extra) are accepted.
  *
  * @param key - The action identifier.
  */
 function startCapture(key: string) {
+  stopShortcutCapture();
   capturingKey.value = key;
-  window.addEventListener('keydown', onCaptureKey, {once: true});
+  window.addEventListener('keydown', onCaptureKey);
+  window.addEventListener('mousedown', onCaptureMouse);
 }
 
 /**
@@ -161,23 +192,34 @@ function startCapture(key: string) {
 function onCaptureKey(event: KeyboardEvent) {
   event.preventDefault();
   event.stopPropagation();
-  const key = capturingKey.value;
-  capturingKey.value = null;
-  if (!key) {
-    return;
-  }
 
   if (event.code === 'Escape') {
+    stopShortcutCapture();
     return;
   }
 
-  // Cache the display label for this physical key.
-  keyDisplayLabels[event.code] = event.code === 'Space' ? 'Space' : event.key;
-
-  const shortcuts = settings.value.shortcuts ??= {};
-  shortcuts[key] = event.code;
-  save();
+  const label = event.code === 'Space' ? 'Space' : event.key;
+  finishCapture(event.code, label);
 }
+
+/**
+ * Handle a captured mouse button. Only accepts buttons 3+ (side/extra buttons on gaming mice).
+ * Buttons 0-2 (left, right, middle) are ignored because the game needs them.
+ *
+ * @param event - The mouse event.
+ */
+function onCaptureMouse(event: MouseEvent) {
+  if (event.button < 3) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+
+  const code = `Mouse${event.button}`;
+  finishCapture(code, code);
+}
+
+onBeforeUnmount(stopShortcutCapture);
 
 // ---- Toast banner handlers --------------------------------------------------
 
