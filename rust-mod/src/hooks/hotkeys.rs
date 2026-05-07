@@ -636,6 +636,14 @@ fn event_code_to_keycode(code: &str) -> i32 {
             let n: u32 = s[1..].parse().unwrap();
             if (1..=15).contains(&n) { 281 + (n as i32 - 1) } else { 0 } // Unity F1=282..F15=296
         }
+        // Mouse buttons: Mouse3-6 = side/extra buttons (Mouse0-2 are left/right/middle, reserved).
+        // Unity KeyCode: Mouse0=323, Mouse1=324, ..., Mouse6=329.
+        s if s.starts_with("Mouse") && s.len() <= 6 => {
+            match s[5..].parse::<u32>() {
+                Ok(n @ 3..=6) => 323 + n as i32,
+                _ => 0, // Mouse0-2 blocked (game needs them), out of range ignored
+            }
+        }
         _ => 0,
     }
 }
