@@ -27,7 +27,10 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
   - Auto-open chat sidebar on game start
   - Auto-expand the job queue panel on game start
   - Configurable system view zoom distance and ship name visibility range
+  - Auto-open cargo view for hostiles, armadas, stations, and player ships
   - Skip loot box reveal animation (enabled by default)
+  - Skip the first popup after game start (enabled by default)
+  - Main Action shortcut with support for keyboard keys and extra mouse buttons
   - Toast banner suppression with per-type opt-out (combat, station, armada, etc.)
   - Automatic game update detection via the Scopely update API
 - **Native cross-platform app** (Tauri 2 + Vue 3)
