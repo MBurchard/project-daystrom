@@ -57,6 +57,44 @@ pub struct GameBannerSettings {
     pub disabled_types: Option<Vec<String>>,
 }
 
+/// Cargo auto-open settings for the target viewer.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct GameCargoViewSettings {
+    /// Whether to auto-open cargo after selecting a target.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub enabled: Option<bool>,
+    /// Whether hostile targets should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub show_for_hostiles: Option<bool>,
+    /// Whether armada targets should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub show_for_armadas: Option<bool>,
+    /// Whether player stations should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub show_for_stations: Option<bool>,
+    /// Whether player ships should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub show_for_players: Option<bool>,
+}
+
+impl Default for GameCargoViewSettings {
+    fn default() -> Self {
+        Self::default_values()
+    }
+}
+
+impl GameCargoViewSettings {
+    const fn default_values() -> Self {
+        Self {
+            enabled: Some(false),
+            show_for_hostiles: Some(true),
+            show_for_armadas: Some(true),
+            show_for_stations: Some(true),
+            show_for_players: Some(false),
+        }
+    }
+}
+
 /// Game settings received from Daystrom.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct GameSettings {
@@ -66,6 +104,9 @@ pub struct GameSettings {
     /// Toast banner suppression.
     #[serde(default)]
     pub banners: GameBannerSettings,
+    /// Cargo auto-open behavior.
+    #[serde(default)]
+    pub cargo_view: GameCargoViewSettings,
     /// Keyboard shortcut overrides. Key = action name, value = bound key (empty = disabled).
     #[serde(default)]
     pub shortcuts: std::collections::BTreeMap<String, String>,
@@ -116,6 +157,31 @@ pub fn disable_all_banners() -> bool {
 /// List of specific banner type names to suppress.
 pub fn disabled_banner_types() -> Vec<String> {
     state().lock().unwrap().banners.disabled_types.clone().unwrap_or_default()
+}
+
+/// Whether cargo should auto-open after selecting a target.
+pub fn cargo_view_enabled() -> bool {
+    state().lock().unwrap().cargo_view.enabled.unwrap_or(false)
+}
+
+/// Whether hostile targets should auto-open cargo.
+pub fn show_cargo_for_hostiles() -> bool {
+    state().lock().unwrap().cargo_view.show_for_hostiles.unwrap_or(true)
+}
+
+/// Whether armada targets should auto-open cargo.
+pub fn show_cargo_for_armadas() -> bool {
+    state().lock().unwrap().cargo_view.show_for_armadas.unwrap_or(true)
+}
+
+/// Whether player stations should auto-open cargo.
+pub fn show_cargo_for_stations() -> bool {
+    state().lock().unwrap().cargo_view.show_for_stations.unwrap_or(true)
+}
+
+/// Whether player ships should auto-open cargo.
+pub fn show_cargo_for_players() -> bool {
+    state().lock().unwrap().cargo_view.show_for_players.unwrap_or(false)
 }
 
 /// System view zoom distance (1000-3000, default 1000).
@@ -223,6 +289,13 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             s.shortcuts = new_val;
             drop(s);
             crate::hooks::hotkeys::on_shortcuts_changed();
+        }
+        "game.cargo_view" => {
+            let new_val = serde_json::from_value::<GameCargoViewSettings>(value.clone()).ok();
+            debug!(target: "Settings", "Update: game.cargo_view = {new_val:?}");
+            if let Some(new_val) = new_val {
+                s.cargo_view = new_val;
+            }
         }
         other => {
             debug!(target: "Settings", "Unknown setting: {other}");
@@ -412,6 +485,45 @@ mod tests {
 
         apply_update("game.ui.skip_first_popup", &serde_json::json!(false));
         assert_eq!(state().lock().unwrap().ui.skip_first_popup, Some(false));
+
+        reset();
+    }
+
+    #[test]
+    fn cargo_view_defaults() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        assert!(!cargo_view_enabled());
+        assert!(show_cargo_for_hostiles());
+        assert!(show_cargo_for_armadas());
+        assert!(show_cargo_for_stations());
+        assert!(!show_cargo_for_players());
+
+        reset();
+    }
+
+    #[test]
+    fn apply_update_patches_cargo_view() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        apply_update(
+            "game.cargo_view",
+            &serde_json::json!({
+                "enabled": true,
+                "show_for_hostiles": false,
+                "show_for_armadas": true,
+                "show_for_stations": false,
+                "show_for_players": true
+            }),
+        );
+
+        assert!(cargo_view_enabled());
+        assert!(!show_cargo_for_hostiles());
+        assert!(show_cargo_for_armadas());
+        assert!(!show_cargo_for_stations());
+        assert!(show_cargo_for_players());
 
         reset();
     }

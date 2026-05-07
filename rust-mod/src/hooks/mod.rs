@@ -7,6 +7,7 @@ use log::{debug, info};
 pub(crate) mod tracker;
 
 pub(crate) mod chat_frame;
+mod cargo_view;
 pub(crate) mod hotkeys;
 pub mod il2cpp_init;
 pub(crate) mod job_queue;
@@ -79,6 +80,7 @@ pub fn install_all_hooks() {
     player_prefs::install(api);
     ui_scale::install(api);
     hotkeys::install(api);
+    cargo_view::install(api);
     chat_frame::install(api);
     job_queue::install(api);
     toast_banner::install(api);

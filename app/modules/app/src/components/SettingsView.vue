@@ -65,6 +65,32 @@ function onSkipFirstPopupChange(event: Event) {
   save();
 }
 
+/**
+ * Toggle the cargo auto-open master switch and send to backend.
+ *
+ * @param event - Native change event from the checkbox.
+ */
+function onCargoViewEnabledChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  settings.value.cargo_view.enabled = target.checked;
+  save();
+}
+
+/**
+ * Toggle one target type in the cargo auto-open settings.
+ *
+ * @param key - Cargo view setting key to patch.
+ * @param event - Native change event from the checkbox.
+ */
+function onCargoViewTargetChange(
+  key: 'show_for_hostiles' | 'show_for_armadas' | 'show_for_stations' | 'show_for_players',
+  event: Event,
+) {
+  const target = event.target as HTMLInputElement;
+  settings.value.cargo_view[key] = target.checked;
+  save();
+}
+
 /** Effective UI scale, defaulting to 100% when not set. */
 const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
 
@@ -132,7 +158,7 @@ function isShortcutDisabled(key: string): boolean {
 /** The action key currently waiting for a keypress, or null if not capturing. */
 const capturingKey = ref<string | null>(null);
 
-/** Remove shortcut capture listeners and reset the current capture state. */
+/** Remove the shortcut capture listeners and reset the current capture state. */
 function stopShortcutCapture() {
   capturingKey.value = null;
   window.removeEventListener('keydown', onCaptureKey);
@@ -344,6 +370,56 @@ function onBannerTypeToggle(name: string, checked: boolean) {
     </section>
 
     <section class="settings-category">
+      <h3>Cargo View</h3>
+
+      <div class="setting-row">
+        <label for="cargo-view-enabled">Auto-open Cargo</label>
+        <input id="cargo-view-enabled"
+            type="checkbox"
+            :checked="settings.cargo_view.enabled ?? false"
+            @change="onCargoViewEnabledChange">
+      </div>
+
+      <div class="cargo-targets" :class="{ disabled: !(settings.cargo_view.enabled ?? false) }">
+        <div class="setting-row">
+          <label for="cargo-view-hostiles">Hostiles</label>
+          <input id="cargo-view-hostiles"
+              type="checkbox"
+              :disabled="!(settings.cargo_view.enabled ?? false)"
+              :checked="settings.cargo_view.show_for_hostiles ?? true"
+              @change="onCargoViewTargetChange('show_for_hostiles', $event)">
+        </div>
+
+        <div class="setting-row">
+          <label for="cargo-view-armadas">Armadas</label>
+          <input id="cargo-view-armadas"
+              type="checkbox"
+              :disabled="!(settings.cargo_view.enabled ?? false)"
+              :checked="settings.cargo_view.show_for_armadas ?? true"
+              @change="onCargoViewTargetChange('show_for_armadas', $event)">
+        </div>
+
+        <div class="setting-row">
+          <label for="cargo-view-stations">Stations</label>
+          <input id="cargo-view-stations"
+              type="checkbox"
+              :disabled="!(settings.cargo_view.enabled ?? false)"
+              :checked="settings.cargo_view.show_for_stations ?? true"
+              @change="onCargoViewTargetChange('show_for_stations', $event)">
+        </div>
+
+        <div class="setting-row">
+          <label for="cargo-view-players">Player Ships</label>
+          <input id="cargo-view-players"
+              type="checkbox"
+              :disabled="!(settings.cargo_view.enabled ?? false)"
+              :checked="settings.cargo_view.show_for_players ?? false"
+              @change="onCargoViewTargetChange('show_for_players', $event)">
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-category">
       <h3>Shortcuts</h3>
 
       <div v-for="action in shortcutActions" :key="action.key" class="setting-row">
@@ -500,6 +576,10 @@ function onBannerTypeToggle(name: string, checked: boolean) {
 
 .shortcut-clear:hover {
   opacity: 1;
+}
+
+.cargo-targets.disabled {
+  opacity: 0.55;
 }
 
 .banner-categories {

@@ -19,7 +19,12 @@ describe('settings commands', () => {
 
   describe('getGameSettings', () => {
     it('invokes the correct command without args', async () => {
-      const expected: GameSettings = {ui: {scale: 120, auto_open_sidebar: false}, banners: {}, shortcuts: {}};
+      const expected: GameSettings = {
+        ui: {scale: 120, auto_open_sidebar: false},
+        banners: {},
+        cargo_view: {},
+        shortcuts: {},
+      };
       mockInvoke.mockResolvedValue(expected);
 
       const {getGameSettings} = await import('../settings');
@@ -35,7 +40,12 @@ describe('settings commands', () => {
       mockInvoke.mockResolvedValue(undefined);
 
       const {setGameSettings} = await import('../settings');
-      const settings: GameSettings = {ui: {scale: 75, auto_open_sidebar: false}, banners: {}, shortcuts: {}};
+      const settings: GameSettings = {
+        ui: {scale: 75, auto_open_sidebar: false},
+        banners: {},
+        cargo_view: {},
+        shortcuts: {},
+      };
       await setGameSettings(settings);
 
       // The key MUST be "settings" to match the Rust parameter name.
@@ -47,7 +57,12 @@ describe('settings commands', () => {
       mockInvoke.mockResolvedValue(undefined);
 
       const {setGameSettings} = await import('../settings');
-      const settings: GameSettings = {ui: {scale: 100, auto_open_sidebar: false}, banners: {}, shortcuts: {}};
+      const settings: GameSettings = {
+        ui: {scale: 100, auto_open_sidebar: false},
+        banners: {},
+        cargo_view: {},
+        shortcuts: {},
+      };
       await setGameSettings(settings);
 
       const args = mockInvoke.mock.calls[0][1] as {settings: GameSettings};
