@@ -51,6 +51,8 @@ pub enum SettingsEvent {
     SkipFirstPopup(Option<bool>),
     /// Keyboard shortcut overrides changed.
     Shortcuts(BTreeMap<String, String>),
+    /// Cargo auto-open settings changed.
+    CargoView(GameCargoViewSettings),
 }
 
 impl SettingsEvent {
@@ -67,6 +69,7 @@ impl SettingsEvent {
             Self::SkipRevealSequence(_) => "game.ui.skip_reveal_sequence",
             Self::SkipFirstPopup(_) => "game.ui.skip_first_popup",
             Self::Shortcuts(_) => "game.shortcuts",
+            Self::CargoView(_) => "game.cargo_view",
         }
     }
 
@@ -83,6 +86,7 @@ impl SettingsEvent {
             Self::SkipRevealSequence(v) => serde_json::json!(v),
             Self::SkipFirstPopup(v) => serde_json::json!(v),
             Self::Shortcuts(v) => serde_json::json!(v),
+            Self::CargoView(v) => serde_json::json!(v),
         }
     }
 }
@@ -199,6 +203,45 @@ pub struct GameBannerSettings {
     pub disabled_types: Option<Vec<String>>,
 }
 
+/// Cargo auto-open settings for the target viewer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GameCargoViewSettings {
+    /// Whether to auto-open cargo after selecting a target.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Whether hostile targets should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub show_for_hostiles: Option<bool>,
+    /// Whether armada targets should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub show_for_armadas: Option<bool>,
+    /// Whether player stations should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub show_for_stations: Option<bool>,
+    /// Whether player ships should auto-open cargo.
+    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    pub show_for_players: Option<bool>,
+}
+
+impl Default for GameCargoViewSettings {
+    fn default() -> Self {
+        Self::default_values()
+    }
+}
+
+impl GameCargoViewSettings {
+    const fn default_values() -> Self {
+        Self {
+            enabled: Some(false),
+            show_for_hostiles: Some(true),
+            show_for_armadas: Some(true),
+            show_for_stations: Some(true),
+            show_for_players: Some(false),
+        }
+    }
+}
+
 /// Game-related settings that are sent to the mod.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -209,6 +252,9 @@ pub struct GameSettings {
     /// Toast banner suppression.
     #[serde(default)]
     pub banners: GameBannerSettings,
+    /// Cargo auto-open behavior.
+    #[serde(default)]
+    pub cargo_view: GameCargoViewSettings,
     /// Keyboard shortcut overrides. Key = action name, value = bound key (empty = disabled).
     /// Absent keys use their default binding.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -271,6 +317,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
             disable_all: None,
             disabled_types: None,
         },
+        cargo_view: GameCargoViewSettings::default_values(),
         shortcuts: BTreeMap::new(),
     },
     log_levels: LogLevelScopes {
@@ -523,6 +570,9 @@ pub fn set_game_settings(settings: GameSettings) {
         if s.game.shortcuts != old.shortcuts {
             events.push(SettingsEvent::Shortcuts(s.game.shortcuts.clone()));
         }
+        if s.game.cargo_view != old.cargo_view {
+            events.push(SettingsEvent::CargoView(s.game.cargo_view.clone()));
+        }
         events
     };
 
@@ -543,6 +593,7 @@ pub fn set_game_settings(settings: GameSettings) {
                 SettingsEvent::SkipRevealSequence(v) => log_debug!("Skip reveal sequence set to {v:?}"),
                 SettingsEvent::SkipFirstPopup(v) => log_debug!("Skip first popup set to {v:?}"),
                 SettingsEvent::Shortcuts(v) => log_debug!("Shortcuts changed: {v:?}"),
+                SettingsEvent::CargoView(v) => log_debug!("Cargo view settings changed: {v:?}"),
             }
         }
     }
@@ -712,7 +763,7 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("minimize_to_tray = 5"));
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
         reset_path_override();
     }
@@ -729,7 +780,7 @@ mod tests {
 
         assert!(path.exists());
 
-        // Clean up
+        // Clean-up
         reset_path_override();
     }
 
@@ -749,7 +800,7 @@ mod tests {
         let loaded = load_from(&path);
         assert_eq!(loaded, original);
 
-        // Clean up
+        // Clean-up
         *SETTINGS.lock().unwrap() = AppSettings::default();
         reset_path_override();
     }
@@ -784,7 +835,7 @@ mod tests {
 
         assert_eq!(minimize_hint_count(), 7, "load() should read from temp file");
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
         reset_path_override();
     }
@@ -796,7 +847,7 @@ mod tests {
 
         assert_eq!(minimize_hint_count(), 42);
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
     }
 
@@ -820,7 +871,7 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("minimize_to_tray = 4"));
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
         reset_path_override();
     }
@@ -847,7 +898,7 @@ mod tests {
         // Drain the save thread spawned by the first increment before resetting the path override.
         flush_saves();
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().ui.hints.minimize_to_tray = 0;
         reset_path_override();
     }
@@ -893,7 +944,7 @@ mod tests {
         assert!(content.contains("scale = 75"));
         assert_eq!(get_game_settings().ui.scale, Some(75));
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().game = GameSettings::default();
         reset_path_override();
     }
@@ -910,7 +961,7 @@ mod tests {
         flush_saves();
         assert!(!_path.exists(), "no write expected when nothing changed");
 
-        // Clean up
+        // Clean-up
         reset_path_override();
     }
 
@@ -956,7 +1007,7 @@ mod tests {
             (Some(100), Some(200), Some(800), Some(600), Some(false)),
         );
 
-        // Wait for debounced save thread to complete before cleanup.
+        // Wait for debounced save thread to complete before clean-up.
         flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
@@ -979,7 +1030,7 @@ mod tests {
             (Some(100), Some(200), Some(800), Some(600)),
         );
 
-        // Wait for debounced save thread to complete before cleanup.
+        // Wait for debounced save thread to complete before clean-up.
         flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
@@ -997,7 +1048,7 @@ mod tests {
         let ws = get_window_settings().unwrap();
         assert_eq!((ws.width, ws.height), (Some(800), Some(600)));
 
-        // Wait for debounced save thread to complete before cleanup.
+        // Wait for debounced save thread to complete before clean-up.
         flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
@@ -1021,7 +1072,7 @@ mod tests {
         });
         assert!(!changed);
 
-        // Wait for debounced save thread to complete before cleanup.
+        // Wait for debounced save thread to complete before clean-up.
         flush_saves();
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
@@ -1047,7 +1098,7 @@ mod tests {
             (Some(476), Some(412), Some(1329), Some(915)),
         );
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().ui.window = None;
         reset_path_override();
     }
@@ -1070,7 +1121,7 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("scale = 90"));
 
-        // Clean up
+        // Clean-up
         SETTINGS.lock().unwrap().game = GameSettings::default();
         reset_path_override();
     }
@@ -1115,5 +1166,34 @@ mod tests {
 
         let serialized = toml::to_string_pretty(&parsed).unwrap();
         assert!(serialized.contains("ship_names_visible = 2500"));
+    }
+
+    #[test]
+    fn cargo_view_defaults() {
+        let settings = GameCargoViewSettings::default();
+        assert_eq!(settings.enabled, Some(false));
+        assert_eq!(settings.show_for_hostiles, Some(true));
+        assert_eq!(settings.show_for_armadas, Some(true));
+        assert_eq!(settings.show_for_stations, Some(true));
+        assert_eq!(settings.show_for_players, Some(false));
+    }
+
+    #[test]
+    fn cargo_view_serde_round_trip() {
+        let toml_str = "\
+            [game.cargo_view]\n\
+            enabled = true\n\
+            show_for_hostiles = false\n\
+            show_for_armadas = true\n\
+            show_for_stations = true\n\
+            show_for_players = false\n";
+        let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.game.cargo_view.enabled, Some(true));
+        assert_eq!(parsed.game.cargo_view.show_for_hostiles, Some(false));
+
+        let serialized = toml::to_string_pretty(&parsed).unwrap();
+        assert!(serialized.contains("[game.cargo_view]"));
+        assert!(serialized.contains("enabled = true"));
+        assert!(serialized.contains("show_for_hostiles = false"));
     }
 }
