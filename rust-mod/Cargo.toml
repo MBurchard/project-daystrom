@@ -13,7 +13,7 @@ max_level_trace = [ "log/max_level_trace" ]
 
 [dependencies]
 chrono = "0.4"
-ctor = "0.8.0"
+ctor = "1"
 dirs = "6"
 futures-util = { version = "0.3", default-features = false, features = [ "sink" ] }
 libc = "0.2"
@@ -30,4 +30,4 @@ tokio = { version = "1", features = [
   "io-util",
 ] }
 tokio-tungstenite = "0.29.0"
-toml = "1.0"
+toml = "1"

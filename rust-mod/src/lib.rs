@@ -39,7 +39,7 @@ pub(crate) const TAURI_IDENTIFIER: &str = env!("TAURI_IDENTIFIER");
 /// The actual game hooks are installed later, inside the `il2cpp_init` callback, once the
 /// IL2CPP runtime is ready.
 #[cfg(not(test))]
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     if !is_game_process() {
         return;
