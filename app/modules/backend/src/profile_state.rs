@@ -109,10 +109,10 @@ pub fn scan_profiles() -> Vec<ProfileInfo> {
         };
         if let Some(mut info) = parse_profile_filename(stem) {
             // Read the profile type from the TOML contents
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(parsed) = toml::from_str::<TomlProfil>(&content) {
-                    info.primary = parsed.profil.profile_type.as_deref() == Some("primary");
-                }
+            if let Ok(content) = fs::read_to_string(&path)
+                && let Ok(parsed) = toml::from_str::<TomlProfil>(&content)
+            {
+                info.primary = parsed.profil.profile_type.as_deref() == Some("primary");
             }
             profiles.push(info);
         }

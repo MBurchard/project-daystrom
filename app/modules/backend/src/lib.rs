@@ -296,10 +296,9 @@ pub fn run() {
                     // Only react to Moved, not Resized, to avoid showing before the position is applied.
                     if matches!(event, tauri::WindowEvent::Moved(..))
                         && SHOW_AFTER_REPOSITION.swap(false, Relaxed)
+                        && let Some(wv) = window.app_handle().get_webview_window(window.label())
                     {
-                        if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
-                            show_window(&wv);
-                        }
+                        show_window(&wv);
                     }
                     // Windows fallback: detect minimizing via Resized (macOS uses native hook).
                     #[cfg(not(target_os = "macos"))]
@@ -310,19 +309,17 @@ pub fn run() {
                         return;
                     }
                     // Persist window geometry as logical pixels (debounced via settings::save).
-                    if !window.is_minimized().unwrap_or(false) {
-                        if let (Ok(pos), Ok(size)) =
-                            (window.outer_position(), window.inner_size())
-                        {
-                            let scale = window.scale_factor().unwrap_or(1.0);
-                            settings::save_window_state(
-                                (pos.x as f64 / scale).round() as i32,
-                                (pos.y as f64 / scale).round() as i32,
-                                (size.width as f64 / scale).round() as u32,
-                                (size.height as f64 / scale).round() as u32,
-                                window.is_maximized().unwrap_or(false),
-                            );
-                        }
+                    if !window.is_minimized().unwrap_or(false)
+                        && let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size())
+                    {
+                        let scale = window.scale_factor().unwrap_or(1.0);
+                        settings::save_window_state(
+                            (pos.x as f64 / scale).round() as i32,
+                            (pos.y as f64 / scale).round() as i32,
+                            (size.width as f64 / scale).round() as u32,
+                            (size.height as f64 / scale).round() as u32,
+                            window.is_maximized().unwrap_or(false),
+                        );
                     }
                 }
                 tauri::WindowEvent::Destroyed => {

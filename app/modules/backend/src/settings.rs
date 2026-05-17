@@ -403,11 +403,9 @@ fn save() {
         std::thread::sleep(SAVE_DEBOUNCE);
         SAVE_PENDING.store(false, Ordering::SeqCst);
         let settings = SETTINGS.lock().unwrap().clone();
-        if let Some(dir) = path.parent() {
-            if let Err(e) = fs::create_dir_all(dir) {
-                log_error!("Failed to create settings directory: {e}");
-                return;
-            }
+        if let Some(dir) = path.parent() && let Err(e) = fs::create_dir_all(dir) {
+            log_error!("Failed to create settings directory: {e}");
+            return;
         }
         match toml::to_string_pretty(&settings) {
             Ok(content) => {
