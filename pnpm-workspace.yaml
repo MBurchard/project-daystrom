@@ -5,5 +5,5 @@ packages:
   - app
   - scripts
 
-onlyBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true

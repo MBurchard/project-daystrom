@@ -16,7 +16,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -87,11 +87,9 @@ pub fn start(app: tauri::AppHandle) {
 ///
 /// Called during app shutdown so stale port files don't confuse the mod.
 pub fn cleanup() {
-    if let Some(path) = PORT_FILE.get() {
-        if path.exists() {
-            let _ = fs::remove_file(path);
-            log_debug!("Removed port file {}", path.display());
-        }
+    if let Some(path) = PORT_FILE.get().filter(|path| path.exists()) {
+        let _ = fs::remove_file(path);
+        log_debug!("Removed port file {}", path.display());
     }
 }
 
@@ -124,11 +122,9 @@ fn data_dir() -> Option<PathBuf> {
 /// Write the port number to the discovery file.
 fn write_port_file(port: u16) -> Result<PathBuf, String> {
     let dir = data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create data directory: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data directory: {e}"))?;
     let path = dir.join("ws.port");
-    fs::write(&path, port.to_string())
-        .map_err(|e| format!("Failed to write port file: {e}"))?;
+    fs::write(&path, port.to_string()).map_err(|e| format!("Failed to write port file: {e}"))?;
     Ok(path)
 }
 
@@ -369,14 +365,11 @@ mod tests {
         tx.send(serde_json::to_string(&msg).unwrap()).unwrap();
 
         // Client should receive it
-        let received = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            source.next(),
-        )
-        .await
-        .expect("timeout waiting for message")
-        .unwrap()
-        .unwrap();
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), source.next())
+            .await
+            .expect("timeout waiting for message")
+            .unwrap()
+            .unwrap();
 
         if let Message::Text(text) = received {
             let parsed: WsMessage = serde_json::from_str(&text).unwrap();
@@ -415,18 +408,13 @@ mod tests {
             msg_type: "game.event".to_string(),
             payload: serde_json::json!({"resources": {"parsteel": 1000}}),
         };
-        sink.send(Message::text(serde_json::to_string(&msg).unwrap()))
-            .await
-            .unwrap();
+        sink.send(Message::text(serde_json::to_string(&msg).unwrap())).await.unwrap();
 
         // Verify the server received it
-        let received = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            result_rx,
-        )
-        .await
-        .expect("timeout")
-        .unwrap();
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), result_rx)
+            .await
+            .expect("timeout")
+            .unwrap();
 
         let parsed: WsMessage = serde_json::from_str(&received).unwrap();
         assert_eq!(parsed.msg_type, "game.event");

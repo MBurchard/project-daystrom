@@ -232,14 +232,12 @@ fn run_loop(app: tauri::AppHandle) {
         let running = crate::process_origin::running_profiles();
         let profiles = crate::profile_state::get().profiles;
         for stem in &running {
-            if !profiles.iter().any(|p| p.stem == *stem) {
-                if let Some(server_str) = stem.split('_').next() {
-                    if let Ok(server_id) = server_str.parse::<i32>() {
-                        if let Some(p) = profiles.iter().find(|p| p.server == server_id) {
-                            crate::process_origin::update_stem(stem, &p.stem);
-                        }
-                    }
-                }
+            if !profiles.iter().any(|p| p.stem == *stem)
+                && let Some(server_str) = stem.split('_').next()
+                && let Ok(server_id) = server_str.parse::<i32>()
+                && let Some(p) = profiles.iter().find(|p| p.server == server_id)
+            {
+                crate::process_origin::update_stem(stem, &p.stem);
             }
         }
         let running = crate::process_origin::running_profiles();

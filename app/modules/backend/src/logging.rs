@@ -285,10 +285,10 @@ fn cleanup_old_archives(dir: &Path, today: time::Date) {
             continue;
         };
 
-        if (today - file_date).whole_days() > MAX_LOG_AGE_DAYS {
-            if let Err(e) = fs::remove_file(entry.path()) {
-                eprintln!("Log rotation: failed to delete old log {name}: {e}");
-            }
+        if (today - file_date).whole_days() > MAX_LOG_AGE_DAYS
+            && let Err(e) = fs::remove_file(entry.path())
+        {
+            eprintln!("Log rotation: failed to delete old log {name}: {e}");
         }
     }
 }
