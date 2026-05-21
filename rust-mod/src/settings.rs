@@ -12,9 +12,7 @@ use serde::{Deserialize, Deserializer};
 // ---- Lenient deserialization -----------------------------------------------
 
 /// Deserialize an `Option<T>` that returns `None` for type mismatches instead of failing.
-fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<T>, D::Error> {
+fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
     Ok(T::deserialize(deserializer).ok())
 }
 
@@ -209,7 +207,9 @@ pub fn trigger_main_action() -> Option<String> {
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
     // Scoped block: release the Mutex before side effect hooks, which call getters and would deadlock on the same lock.
-    { *state().lock().unwrap() = settings; }
+    {
+        *state().lock().unwrap() = settings;
+    }
     crate::hooks::ui_scale::apply_current_scale();
     crate::hooks::chat_frame::on_settings_synced();
     crate::hooks::job_queue::on_settings_synced();
@@ -260,9 +260,9 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             crate::hooks::toast_banner::on_settings_changed();
         }
         "game.banners.disabled_types" => {
-            let new_val = value.as_array().map(|arr| {
-                arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-            });
+            let new_val = value
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
             debug!(target: "Settings", "Update: game.banners.disabled_types = {new_val:?}");
             s.banners.disabled_types = new_val;
             drop(s);

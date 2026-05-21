@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
-use tauri::{Listener, Manager};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Listener, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 mod commands;
@@ -72,13 +72,11 @@ pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
         return;
     }
     let status = game_state::get();
-    let Some(message) = quit_blocked_message(
-        status.launcher_started_by_us,
-        status.game_started_by_us,
-    ) else {
+    let Some(message) = quit_blocked_message(status.launcher_started_by_us, status.game_started_by_us) else {
         return;
     };
-    window.dialog()
+    window
+        .dialog()
         .message(message)
         .title("Still Running")
         .kind(MessageDialogKind::Info)
@@ -121,9 +119,12 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
     match hint_level(count) {
         HintLevel::Dialog => {
             let w = window.clone();
-            window.dialog()
-                .message("Project Daystrom will continue running in the background.\n\
-                          Click the tray icon to reopen the window.")
+            window
+                .dialog()
+                .message(
+                    "Project Daystrom will continue running in the background.\n\
+                          Click the tray icon to reopen the window.",
+                )
                 .title("Minimised to Tray")
                 .kind(MessageDialogKind::Info)
                 .show(move |_| {
@@ -135,7 +136,9 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
             log_debug!("[EVENT] Hiding window to tray (count={count})");
             let _ = window.hide();
             use tauri_plugin_notification::NotificationExt;
-            let _ = window.app_handle().notification()
+            let _ = window
+                .app_handle()
+                .notification()
                 .builder()
                 .title("Minimised to Tray")
                 .body("Project Daystrom is still running. Click the tray icon to reopen.")
@@ -176,15 +179,11 @@ pub fn run() {
                 let mut needs_reposition = false;
                 if let Some(ws) = settings::get_window_settings() {
                     if let (Some(x), Some(y)) = (ws.x, ws.y) {
-                        let _ = window.set_position(
-                            tauri::LogicalPosition::new(x as f64, y as f64),
-                        );
+                        let _ = window.set_position(tauri::LogicalPosition::new(x as f64, y as f64));
                         needs_reposition = true;
                     }
                     if let (Some(w), Some(h)) = (ws.width, ws.height) {
-                        let _ = window.set_size(
-                            tauri::LogicalSize::new(w as f64, h as f64),
-                        );
+                        let _ = window.set_size(tauri::LogicalSize::new(w as f64, h as f64));
                     }
                     if ws.maximized.unwrap_or(false) {
                         let _ = window.maximize();
@@ -330,23 +329,21 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            match event {
-                tauri::RunEvent::ExitRequested { api, code, .. } => {
-                    if code == Some(0) {
-                        log_debug!("[EVENT] ExitRequested (code: {code:?}), shutting down");
-                        return;
-                    }
-                    log_debug!("[EVENT] ExitRequested (code: {code:?}), staying in tray");
-                    api.prevent_exit();
+        .run(|_app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
+                if code == Some(0) {
+                    log_debug!("[EVENT] ExitRequested (code: {code:?}), shutting down");
+                    return;
                 }
-                tauri::RunEvent::Exit => {
-                    log_debug!("[EVENT] Exit (app is shutting down)");
-                    settings::flush_saves();
-                    websocket::cleanup();
-                }
-                _ => {}
+                log_debug!("[EVENT] ExitRequested (code: {code:?}), staying in tray");
+                api.prevent_exit();
             }
+            tauri::RunEvent::Exit => {
+                log_debug!("[EVENT] Exit (app is shutting down)");
+                settings::flush_saves();
+                websocket::cleanup();
+            }
+            _ => {}
         });
 }
 

@@ -73,11 +73,7 @@ pub fn update(app: &tauri::AppHandle, updater: impl FnOnce(&mut ProfileState)) {
         let mut state = STATE.lock().unwrap();
         let old = state.clone();
         updater(&mut state);
-        if *state != old {
-            Some(state.clone())
-        } else {
-            None
-        }
+        if *state != old { Some(state.clone()) } else { None }
     };
 
     if let Some(payload) = changed {
@@ -120,7 +116,8 @@ pub fn scan_profiles() -> Vec<ProfileInfo> {
 
     // Primary first, then by server and name
     profiles.sort_by(|a, b| {
-        b.primary.cmp(&a.primary)
+        b.primary
+            .cmp(&a.primary)
             .then(a.server.cmp(&b.server))
             .then(a.name.cmp(&b.name))
     });

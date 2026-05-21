@@ -134,9 +134,8 @@ fn try_expand() {
 /// Hooks `JobQueuePanelViewController.RegenerateLists` (expand trigger) and resolves
 /// `OnContractExpandButtonClickEventHandler` as a callable function.
 pub fn install(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.HUD", "JobQueuePanelViewController",
-    ) else {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "JobQueuePanelViewController")
+    else {
         log::warn!(target: "JobQueue", "JobQueuePanelViewController not found");
         return;
     };
@@ -153,9 +152,7 @@ pub fn install(api: &Il2CppApi) {
     // rebuilds its job list. Unlike OnEnable (inherited from the generic ViewController<T>),
     // this resolves to a concrete method pointer and is safe to hook.
     if let Some(ptr) = tracker::resolve_fn(api, class, "RegenerateLists", 0) {
-        match crate::hook::engine::install_hook(
-            "JobQueue.RegenerateLists", ptr, hook_regenerate_lists as *const (),
-        ) {
+        match crate::hook::engine::install_hook("JobQueue.RegenerateLists", ptr, hook_regenerate_lists as *const ()) {
             Ok(orig) => {
                 ORIG_REGENERATE.store(orig as *mut (), Relaxed);
                 debug!(target: "JobQueue", "RegenerateLists hook installed");

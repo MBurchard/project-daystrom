@@ -1,6 +1,6 @@
 //! Auto-open chat sidebar on game start.
 //!
-//! Uses a debounce on `ChatService.HandleMessageReceived` to detect when the server has finished delivering
+//! Waits for `ChatService.HandleMessageReceived` to settle before detecting that the server has finished delivering
 //! message history. Once no new messages arrive for [`MSG_DEBOUNCE`], the sidebar opens. If no messages arrive
 //! at all, a [`FALLBACK_TIMEOUT`] after `AboutToShow` ensures the sidebar still opens.
 //!
@@ -158,7 +158,9 @@ extern "C" fn hook_msg_received(this: *mut Il2CppObject, message: *mut Il2CppObj
         unsafe { original(this, message) };
     }
 
-    if !RESTORED.load(Relaxed) && let Ok(mut guard) = LAST_MSG_RECEIVED.lock() {
+    if !RESTORED.load(Relaxed)
+        && let Ok(mut guard) = LAST_MSG_RECEIVED.lock()
+    {
         *guard = Some(Instant::now());
     }
 }
@@ -193,10 +195,14 @@ fn try_restore() {
     if FRAME_MGR.load(Relaxed).is_null() {
         return;
     }
-    let debounce_settled = LAST_MSG_RECEIVED.lock().ok()
+    let debounce_settled = LAST_MSG_RECEIVED
+        .lock()
+        .ok()
         .and_then(|guard| *guard)
         .is_some_and(|t| t.elapsed() >= MSG_DEBOUNCE);
-    let fallback_expired = ABOUT_TO_SHOW_TIME.lock().ok()
+    let fallback_expired = ABOUT_TO_SHOW_TIME
+        .lock()
+        .ok()
         .and_then(|guard| *guard)
         .is_some_and(|t| t.elapsed() >= FALLBACK_TIMEOUT);
     if !debounce_settled && !fallback_expired {
@@ -257,13 +263,7 @@ fn get_max_width(mgr: *mut Il2CppObject) -> f32 {
 // ---- Installation ---------------------------------------------------------
 
 /// Helper to resolve a method pointer, install a hook, and store the original.
-fn install_hook(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    name: &str,
-    hook_fn: *const (),
-    original: &AtomicPtr<()>,
-) {
+fn install_hook(api: &Il2CppApi, class: *mut Il2CppClass, name: &str, hook_fn: *const (), original: &AtomicPtr<()>) {
     let Some(ptr) = tracker::resolve_fn(api, class, name, 0) else {
         log::warn!(target: "ChatFrame", "{name} not found");
         return;
@@ -285,17 +285,13 @@ fn install_hook(
 /// to track when server messages arrive.
 pub fn install(api: &Il2CppApi) {
     // ---- UIFrameManager ----
-    let Some(frame_mgr_class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Client.UI", "UIFrameManager",
-    ) else {
+    let Some(frame_mgr_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "UIFrameManager")
+    else {
         log::warn!(target: "ChatFrame", "UIFrameManager not found");
         return;
     };
 
-    install_hook(
-        api, frame_mgr_class, "OnEnable",
-        hook_mgr_enable as *const (), &ORIG_MGR_ENABLE,
-    );
+    install_hook(api, frame_mgr_class, "OnEnable", hook_mgr_enable as *const (), &ORIG_MGR_ENABLE);
 
     // Resolve ResizeSideFrame and GetMaxSideFrameWidth (called during restore, not hooked).
     if let Some(ptr) = tracker::resolve_fn(api, frame_mgr_class, "ResizeSideFrame", 1) {
@@ -308,9 +304,8 @@ pub fn install(api: &Il2CppApi) {
     }
 
     // ---- ChatPreviewController ----
-    let Some(chat_class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController",
-    ) else {
+    let Some(chat_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController")
+    else {
         log::warn!(target: "ChatFrame", "ChatPreviewController not found");
         return;
     };
@@ -323,14 +318,14 @@ pub fn install(api: &Il2CppApi) {
     }
 
     install_hook(
-        api, chat_class, "AboutToShow",
-        hook_chat_about_to_show as *const (), &ORIG_CHAT_SHOW,
+        api,
+        chat_class,
+        "AboutToShow",
+        hook_chat_about_to_show as *const (),
+        &ORIG_CHAT_SHOW,
     );
 
-    install_hook(
-        api, chat_class, "Update",
-        hook_chat_update as *const (), &ORIG_CHAT_UPDATE,
-    );
+    install_hook(api, chat_class, "Update", hook_chat_update as *const (), &ORIG_CHAT_UPDATE);
 
     // Resolve OnSidePanelButtonClicked (called during restore, not hooked).
     if let Some(ptr) = tracker::resolve_fn(api, chat_class, "OnSidePanelButtonClicked", 0) {
@@ -342,16 +337,17 @@ pub fn install(api: &Il2CppApi) {
 
     // ---- ChatService (different assembly) ----
     let Some(chat_service_class) = resolver::resolve_class(
-        api, "Digit.Client.PrimeLib.Runtime", "Digit.PrimePlatform.Services", "ChatService",
+        api,
+        "Digit.Client.PrimeLib.Runtime",
+        "Digit.PrimePlatform.Services",
+        "ChatService",
     ) else {
         log::warn!(target: "ChatFrame", "ChatService not found");
         return;
     };
 
     if let Some(ptr) = tracker::resolve_fn(api, chat_service_class, "HandleMessageReceived", 1) {
-        match crate::hook::engine::install_hook(
-            "HandleMessageReceived", ptr, hook_msg_received as *const (),
-        ) {
+        match crate::hook::engine::install_hook("HandleMessageReceived", ptr, hook_msg_received as *const ()) {
             Ok(orig) => {
                 ORIG_MSG_RECEIVED.store(orig as *mut (), Relaxed);
                 debug!(target: "ChatFrame", "HandleMessageReceived hook installed");

@@ -6,14 +6,14 @@ use log::{debug, info};
 
 pub(crate) mod tracker;
 
-pub(crate) mod chat_frame;
 mod cargo_view;
+pub(crate) mod chat_frame;
 pub(crate) mod hotkeys;
 pub mod il2cpp_init;
-pub(crate) mod job_queue;
-mod player_prefs;
-mod main_action;
 mod interstitial;
+pub(crate) mod job_queue;
+mod main_action;
+mod player_prefs;
 mod shop_reveal;
 pub(crate) mod system_zoom;
 pub(crate) mod toast_banner;

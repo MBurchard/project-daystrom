@@ -59,12 +59,7 @@ pub(crate) fn install_quit_guard() {
             should_terminate as unsafe extern "C-unwind" fn(*const AnyObject, Sel, *const AnyObject) -> usize,
         );
 
-        let success = ffi::class_addMethod(
-            (cls as *const AnyClass).cast_mut(),
-            sel,
-            imp,
-            types,
-        );
+        let success = ffi::class_addMethod((cls as *const AnyClass).cast_mut(), sel, imp, types);
 
         if success.as_bool() {
             log_debug!("Quit guard installed (applicationShouldTerminate: added)");
@@ -78,11 +73,7 @@ pub(crate) fn install_quit_guard() {
 ///
 /// Returns `NSTerminateCancel` when a Daystrom-started process is still running (and shows a warning),
 /// `NSTerminateNow` otherwise.
-unsafe extern "C-unwind" fn should_terminate(
-    _this: *const AnyObject,
-    _cmd: Sel,
-    _sender: *const AnyObject,
-) -> usize {
+unsafe extern "C-unwind" fn should_terminate(_this: *const AnyObject, _cmd: Sel, _sender: *const AnyObject) -> usize {
     if crate::game_state::get().should_block_quit {
         log_debug!("Quit blocked (Daystrom-started process still running)");
         if let Some(handle) = APP_HANDLE.get() {
@@ -126,16 +117,10 @@ pub(crate) fn install_minimize_guard(window: &tauri::WebviewWindow) {
         let types: *const c_char = c"v@:@".as_ptr();
 
         let imp: Imp = std::mem::transmute(
-            intercept_miniaturize
-                as unsafe extern "C-unwind" fn(*const AnyObject, Sel, *const AnyObject),
+            intercept_miniaturize as unsafe extern "C-unwind" fn(*const AnyObject, Sel, *const AnyObject),
         );
 
-        let success = ffi::class_addMethod(
-            (cls as *const AnyClass).cast_mut(),
-            sel,
-            imp,
-            types,
-        );
+        let success = ffi::class_addMethod((cls as *const AnyClass).cast_mut(), sel, imp, types);
 
         if success.as_bool() {
             log_debug!("Minimize guard installed (miniaturize: overridden on {:?})", cls.name());
@@ -150,11 +135,7 @@ pub(crate) fn install_minimize_guard(window: &tauri::WebviewWindow) {
 
 /// ObjC callback: replaces `miniaturize:` to hide to tray instead of performing the Genie
 /// animation.
-unsafe extern "C-unwind" fn intercept_miniaturize(
-    _this: *const AnyObject,
-    _cmd: Sel,
-    _sender: *const AnyObject,
-) {
+unsafe extern "C-unwind" fn intercept_miniaturize(_this: *const AnyObject, _cmd: Sel, _sender: *const AnyObject) {
     log_debug!("Minimize intercepted, hiding to tray");
     if let Some(handle) = APP_HANDLE.get() {
         use tauri::Manager;

@@ -51,11 +51,7 @@ const DEPLOYED_FLEET_TYPE_MARAUDER: i32 = 2;
 const HULL_TYPE_ARMADA_TARGET: i32 = 5;
 
 /// Assemblies to search for PrimeServer model classes.
-const MODEL_ASSEMBLIES: &[&str] = &[
-    "Digit.Client.PrimeLib.Runtime",
-    "Assembly-CSharp",
-    "Assembly-CSharp-firstpass",
-];
+const MODEL_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-CSharp", "Assembly-CSharp-firstpass"];
 
 // ---- Type aliases ----------------------------------------------------------
 
@@ -109,8 +105,7 @@ fn maybe_open_cargo(prescan: *mut Il2CppObject) {
         return;
     }
 
-    let rewards_controller =
-        unsafe { tracker::read_ptr(rewards_button as *const (), rewards_controller_offset) };
+    let rewards_controller = unsafe { tracker::read_ptr(rewards_button as *const (), rewards_controller_offset) };
     if rewards_controller.is_null() {
         return;
     }
@@ -142,8 +137,7 @@ fn classify_target(prescan: *mut Il2CppObject) -> Option<CargoTargetKind> {
         return None;
     }
 
-    let target_fleet =
-        unsafe { tracker::read_ptr(battle_target as *const (), target_fleet_offset) };
+    let target_fleet = unsafe { tracker::read_ptr(battle_target as *const (), target_fleet_offset) };
     if target_fleet.is_null() {
         return Some(CargoTargetKind::Station);
     }
@@ -191,35 +185,18 @@ fn get_hull_type(fleet: *mut Il2CppObject) -> Option<i32> {
 
 /// Install cargo auto-open hooks.
 pub fn install(api: &Il2CppApi) {
-    let Some(prescan_class) = resolver::resolve_class(
-        api,
-        "Assembly-CSharp",
-        "Digit.Prime.Combat",
-        "PreScanTargetWidget",
-    ) else {
+    let Some(prescan_class) =
+        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget")
+    else {
         warn!(target: "CargoView", "PreScanTargetWidget class not found");
         return;
     };
 
-    resolve_offset(
-        api,
-        prescan_class,
-        "_battleTargetData",
-        &OFFSET_BATTLE_TARGET_DATA,
-    );
-    resolve_offset(
-        api,
-        prescan_class,
-        "_rewardsButtonWidget",
-        &OFFSET_REWARDS_BUTTON_WIDGET,
-    );
+    resolve_offset(api, prescan_class, "_battleTargetData", &OFFSET_BATTLE_TARGET_DATA);
+    resolve_offset(api, prescan_class, "_rewardsButtonWidget", &OFFSET_REWARDS_BUTTON_WIDGET);
 
     if let Some(ptr) = tracker::resolve_fn(api, prescan_class, "ShowWithFleet", 1) {
-        match engine::install_hook(
-            "CargoViewShowWithFleet",
-            ptr,
-            hook_show_with_fleet as *const (),
-        ) {
+        match engine::install_hook("CargoViewShowWithFleet", ptr, hook_show_with_fleet as *const ()) {
             Ok(orig) => {
                 ORIG_SHOW_WITH_FLEET.store(orig as *mut (), Relaxed);
                 debug!(target: "HookEngine", "Cargo view ShowWithFleet hook installed");
@@ -230,35 +207,20 @@ pub fn install(api: &Il2CppApi) {
         warn!(target: "CargoView", "PreScanTargetWidget.ShowWithFleet not found");
     }
 
-    if let Some(class) = resolver::resolve_class(
-        api,
-        "Assembly-CSharp",
-        "Digit.Prime.Combat",
-        "RewardsButtonWidget",
-    ) {
+    if let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "RewardsButtonWidget") {
         resolve_offset(api, class, "_rewardsController", &OFFSET_REWARDS_CONTROLLER);
     } else {
         warn!(target: "CargoView", "RewardsButtonWidget class not found");
     }
 
-    if let Some(class) = resolver::resolve_class(
-        api,
-        "Assembly-CSharp",
-        "Digit.Client.UI",
-        "VisibilityController",
-    ) {
+    if let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController") {
         resolve_fn(api, class, "Show", 1, &VISIBILITY_SHOW_FN);
     } else {
         warn!(target: "CargoView", "VisibilityController class not found");
     }
 
     if let Some(class) = resolve_model_class(api, "BattleTargetData") {
-        resolve_offset(
-            api,
-            class,
-            "TargetFleetDeployedData",
-            &OFFSET_TARGET_FLEET_DEPLOYED_DATA,
-        );
+        resolve_offset(api, class, "TargetFleetDeployedData", &OFFSET_TARGET_FLEET_DEPLOYED_DATA);
     } else {
         warn!(target: "CargoView", "BattleTargetData class not found");
     }
@@ -279,9 +241,7 @@ pub fn install(api: &Il2CppApi) {
 
 fn resolve_model_class(api: &Il2CppApi, class_name: &str) -> Option<*mut Il2CppClass> {
     for assembly in MODEL_ASSEMBLIES {
-        if let Some(class) =
-            resolver::resolve_class(api, assembly, "Digit.PrimeServer.Models", class_name)
-        {
+        if let Some(class) = resolver::resolve_class(api, assembly, "Digit.PrimeServer.Models", class_name) {
             debug!(target: "CargoView", "{class_name} class found in assembly '{assembly}'");
             return Some(class);
         }
@@ -289,12 +249,7 @@ fn resolve_model_class(api: &Il2CppApi, class_name: &str) -> Option<*mut Il2CppC
     None
 }
 
-fn resolve_offset(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    field_name: &str,
-    target: &AtomicUsize,
-) {
+fn resolve_offset(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {
     if let Some(offset) = resolver::resolve_field_offset(api, class, field_name) {
         target.store(offset, Relaxed);
         debug!(target: "CargoView", "{field_name} offset: {offset:#x}");
@@ -303,13 +258,7 @@ fn resolve_offset(
     }
 }
 
-fn resolve_fn(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    method_name: &str,
-    param_count: i32,
-    target: &AtomicPtr<()>,
-) {
+fn resolve_fn(api: &Il2CppApi, class: *mut Il2CppClass, method_name: &str, param_count: i32, target: &AtomicPtr<()>) {
     if let Some(ptr) = tracker::resolve_fn(api, class, method_name, param_count) {
         target.store(ptr as *mut (), Relaxed);
         debug!(target: "CargoView", "{method_name} resolved");

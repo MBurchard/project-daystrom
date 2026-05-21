@@ -41,8 +41,8 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     // Try ±128MB first (all relocations fit in-place), then ±4GB (covers ADRP), then anywhere (instructions that
     // overflow use expanded sequences).
     const MAX_TRAMPOLINE: usize = 96; // worst case: 4×20 (expanded) + 16 (branch-back)
-    const ARM64_NEAR: usize = 0x0800_0000;   // ±128MB
-    const ARM64_FAR: usize = 0x1_0000_0000;  // ±4GB
+    const ARM64_NEAR: usize = 0x0800_0000; // ±128MB
+    const ARM64_FAR: usize = 0x1_0000_0000; // ±4GB
     let trampoline_mem = unsafe {
         alloc_near(target_addr, MAX_TRAMPOLINE, ARM64_NEAR)
             .or_else(|_| alloc_near(target_addr, MAX_TRAMPOLINE, ARM64_FAR))
@@ -111,8 +111,7 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     let mut decoded: Vec<super::x86_64::Insn> = Vec::new();
     let mut total_len = 0;
     while total_len < HOOK_SIZE {
-        let insn = super::x86_64::decode(&code[total_len..])
-            .map_err(|e| format!("decode at +{total_len}: {e}"))?;
+        let insn = super::x86_64::decode(&code[total_len..]).map_err(|e| format!("decode at +{total_len}: {e}"))?;
         total_len += insn.len;
         decoded.push(insn);
     }
@@ -133,19 +132,12 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     let mut dst_offset = 0;
     for insn in &decoded {
         let src = &saved[src_offset..src_offset + insn.len];
-        let dst = unsafe {
-            std::slice::from_raw_parts_mut(
-                (trampoline_mem as *mut u8).add(dst_offset),
-                insn.len,
-            )
-        };
+        let dst = unsafe { std::slice::from_raw_parts_mut((trampoline_mem as *mut u8).add(dst_offset), insn.len) };
         dst.copy_from_slice(src);
 
         // Fix up RIP-relative displacement if present
         if let Some(reloc_off) = insn.reloc_offset {
-            let disp_ptr = unsafe {
-                (trampoline_mem as *mut u8).add(dst_offset + reloc_off) as *mut i32
-            };
+            let disp_ptr = unsafe { (trampoline_mem as *mut u8).add(dst_offset + reloc_off) as *mut i32 };
             let old_disp = unsafe { disp_ptr.read_unaligned() } as i64;
             let old_rip = (target_addr + src_offset + insn.len) as i64;
             let new_rip = (trampoline_addr + dst_offset + insn.len) as i64;
@@ -223,7 +215,6 @@ unsafe fn write_branch(addr: usize, target: usize) {
         (p.add(6) as *mut u64).write(target as u64);
     }
 }
-
 
 // ---- Platform: Unix (macOS + Linux) ----------------------------------------
 
@@ -342,9 +333,7 @@ unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mu
             let alloc_at = (gap_start + GRANULARITY - 1) & !(GRANULARITY - 1);
             if alloc_at + size <= gap_end {
                 let mut addr = alloc_at as u64;
-                let kr = unsafe {
-                    mach_vm_allocate(mach_task_self(), &mut addr, size as u64, 0)
-                };
+                let kr = unsafe { mach_vm_allocate(mach_task_self(), &mut addr, size as u64, 0) };
                 if kr == 0 {
                     return Ok(addr as *mut c_void);
                 }
@@ -359,9 +348,7 @@ unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mu
         scan = region_addr + region_size;
     }
 
-    Err(format!(
-        "could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"
-    ))
+    Err(format!("could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"))
 }
 
 /// Get the system page size.
@@ -375,15 +362,16 @@ fn page_size() -> usize {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn mach_task_self() -> u32;
-    fn mach_vm_allocate(
-        task: u32, address: *mut u64, size: u64, flags: i32,
-    ) -> i32;
-    fn mach_vm_protect(
-        task: u32, address: u64, size: u64, set_maximum: i32, protection: i32,
-    ) -> i32;
+    fn mach_vm_allocate(task: u32, address: *mut u64, size: u64, flags: i32) -> i32;
+    fn mach_vm_protect(task: u32, address: u64, size: u64, set_maximum: i32, protection: i32) -> i32;
     fn mach_vm_region(
-        task: u32, address: *mut u64, size: *mut u64, flavor: i32, info: *mut i32,
-        info_count: *mut u32, object_name: *mut u32,
+        task: u32,
+        address: *mut u64,
+        size: *mut u64,
+        flavor: i32,
+        info: *mut i32,
+        info_count: *mut u32,
+        object_name: *mut u32,
     ) -> i32;
     fn sys_icache_invalidate(start: *mut c_void, size: usize);
 }
@@ -427,9 +415,7 @@ unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mu
         hint += GRANULARITY;
     }
 
-    Err(format!(
-        "could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"
-    ))
+    Err(format!("could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"))
 }
 
 /// Make a memory region writable using `mprotect`.
@@ -440,18 +426,9 @@ unsafe fn make_writable(addr: usize, size: usize) -> Result<(), String> {
     let page_end = (addr + size + page_size - 1) & !(page_size - 1);
     let region_size = page_end - page_start;
 
-    let ret = unsafe {
-        libc::mprotect(
-            page_start as *mut c_void,
-            region_size,
-            libc::PROT_READ | libc::PROT_WRITE,
-        )
-    };
+    let ret = unsafe { libc::mprotect(page_start as *mut c_void, region_size, libc::PROT_READ | libc::PROT_WRITE) };
     if ret != 0 {
-        return Err(format!(
-            "mprotect (writable) failed: {}",
-            std::io::Error::last_os_error()
-        ));
+        return Err(format!("mprotect (writable) failed: {}", std::io::Error::last_os_error()));
     }
     Ok(())
 }
@@ -464,18 +441,9 @@ unsafe fn make_executable(addr: usize, size: usize) -> Result<(), String> {
     let page_end = (addr + size + page_size - 1) & !(page_size - 1);
     let region_size = page_end - page_start;
 
-    let ret = unsafe {
-        libc::mprotect(
-            page_start as *mut c_void,
-            region_size,
-            libc::PROT_READ | libc::PROT_EXEC,
-        )
-    };
+    let ret = unsafe { libc::mprotect(page_start as *mut c_void, region_size, libc::PROT_READ | libc::PROT_EXEC) };
     if ret != 0 {
-        return Err(format!(
-            "mprotect (executable) failed: {}",
-            std::io::Error::last_os_error()
-        ));
+        return Err(format!("mprotect (executable) failed: {}", std::io::Error::last_os_error()));
     }
     Ok(())
 }
@@ -491,10 +459,7 @@ fn flush_icache(_addr: usize, _size: usize) {
             fn __clear_cache(start: *mut c_void, end: *mut c_void);
         }
         unsafe {
-            __clear_cache(
-                _addr as *mut c_void,
-                (_addr + _size) as *mut c_void,
-            );
+            __clear_cache(_addr as *mut c_void, (_addr + _size) as *mut c_void);
         }
     }
 }
@@ -535,9 +500,7 @@ unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mu
 
     unsafe extern "system" {
         fn VirtualQuery(addr: *const c_void, info: *mut MemBasicInfo, len: usize) -> usize;
-        fn VirtualAlloc(
-            addr: *mut c_void, size: usize, alloc_type: u32, protect: u32,
-        ) -> *mut c_void;
+        fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void;
     }
 
     const MEM_FREE: u32 = 0x10000;
@@ -552,10 +515,7 @@ unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mu
     // Helper: try to allocate within a free region
     let try_alloc = |region_base: usize, region_size: usize| -> *mut c_void {
         let alloc_at = (region_base + GRANULARITY - 1) & !(GRANULARITY - 1);
-        if alloc_at + size <= region_base + region_size
-            && alloc_at >= min_addr
-            && alloc_at + size <= max_addr
-        {
+        if alloc_at + size <= region_base + region_size && alloc_at >= min_addr && alloc_at + size <= max_addr {
             unsafe { VirtualAlloc(alloc_at as *mut c_void, size, MEM_COMMIT_RESERVE, PAGE_EXECUTE_READWRITE) }
         } else {
             std::ptr::null_mut()
@@ -602,9 +562,7 @@ unsafe fn alloc_near(target: usize, size: usize, max_range: usize) -> Result<*mu
         scan = base + region_size.max(GRANULARITY);
     }
 
-    Err(format!(
-        "could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"
-    ))
+    Err(format!("could not allocate {size} bytes within ±{max_range:#x} of {target:#x}"))
 }
 
 #[cfg(target_os = "windows")]

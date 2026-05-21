@@ -57,6 +57,12 @@ const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
 // -- commands ---------------------------------------------------------------
 
 const COMMANDS: Record<string, () => void> = {
+  lint,
+  'lint:fix': lintFix,
+  'lint:app': lintApp,
+  'lint:app:fix': lintAppFix,
+  'lint:mod': lintMod,
+  'lint:mod:fix': lintModFix,
   typecheck,
   'typecheck:frontend': typecheckFrontend,
   'typecheck:backend': typecheckBackend,
@@ -113,6 +119,116 @@ function cargo(args: string): void {
   });
 }
 
+/**
+ * Run a cargo command in the Rust mod crate.
+ * @param args - cargo sub-command and flags, e.g. "clippy"
+ */
+function cargoMod(args: string): void {
+  execSync(`cargo ${args}`, {cwd: RUST_MOD_DIR, stdio: 'inherit'});
+}
+
+/**
+ * Run eslint from the repository root.
+ * @param args - eslint flags, e.g. "--fix"
+ */
+function eslint(args = ''): void {
+  execSync(`pnpm exec eslint . ${args}`.trim(), {cwd: ROOT, stdio: 'inherit'});
+}
+
+// -- lint -------------------------------------------------------------------
+
+/**
+ * Run eslint for app/tooling TypeScript and Vue files.
+ */
+function lintAppEslint(): void {
+  log.info('Linting app TypeScript and Vue files...');
+  eslint();
+}
+
+/**
+ * Run eslint --fix for app/tooling TypeScript and Vue files.
+ */
+function lintAppEslintFix(): void {
+  log.info('Fixing app TypeScript and Vue lint issues...');
+  eslint('--fix');
+}
+
+/**
+ * Check Rust formatting and run clippy for the backend crate.
+ */
+function lintAppBackend(): void {
+  log.info('Checking backend Rust formatting...');
+  cargo('fmt --check');
+  log.info('Linting backend Rust code...');
+  cargo('clippy');
+}
+
+/**
+ * Format backend Rust code and apply clippy fixes where possible.
+ */
+function lintAppBackendFix(): void {
+  log.info('Formatting backend Rust code...');
+  cargo('fmt');
+  log.info('Fixing backend Rust clippy issues...');
+  cargo('clippy --fix --allow-dirty --allow-staged');
+  log.info('Formatting backend Rust code after clippy fixes...');
+  cargo('fmt');
+}
+
+/**
+ * Check Rust formatting and run clippy for the mod crate.
+ */
+function lintMod(): void {
+  log.info('Checking mod Rust formatting...');
+  cargoMod('fmt --check');
+  log.info('Linting mod Rust code...');
+  cargoMod('clippy');
+}
+
+/**
+ * Format mod Rust code and apply clippy fixes where possible.
+ */
+function lintModFix(): void {
+  log.info('Formatting mod Rust code...');
+  cargoMod('fmt');
+  log.info('Fixing mod Rust clippy issues...');
+  cargoMod('clippy --fix --allow-dirty --allow-staged');
+  log.info('Formatting mod Rust code after clippy fixes...');
+  cargoMod('fmt');
+}
+
+/**
+ * Run all app lint checks (TypeScript/Vue plus backend Rust).
+ */
+function lintApp(): void {
+  lintAppEslint();
+  lintAppBackend();
+}
+
+/**
+ * Run all app lint fixes (TypeScript/Vue plus backend Rust).
+ */
+function lintAppFix(): void {
+  lintAppEslintFix();
+  lintAppBackendFix();
+}
+
+/**
+ * Run all lint checks (mod and app).
+ */
+function lint(): void {
+  lintMod();
+  lintApp();
+}
+
+/**
+ * Run all lint fixes (mod and app).
+ */
+function lintFix(): void {
+  lintModFix();
+  lintAppFix();
+}
+
 // -- typecheck --------------------------------------------------------------
 
 /**
@@ -138,7 +254,7 @@ function typecheckBackend(): void {
  */
 function typecheckMod(): void {
   log.info('Type-checking mod...');
-  execSync('cargo clippy', {cwd: RUST_MOD_DIR, stdio: 'inherit'});
+  cargoMod('clippy');
 }
 
 /**

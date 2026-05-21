@@ -147,17 +147,12 @@ enum KnownDefault {
 }
 
 /// Keys with known defaults. These are never blocked in Phase 1 and fall back to their default when not yet stored.
-const KNOWN_DEFAULTS: &[(&str, KnownDefault)] = &[
-    ("isFirstLaunch", KnownDefault::Int(1)),
-    ("Login/AccountServiceApiVersion", KnownDefault::Int(2)),
-];
+const KNOWN_DEFAULTS: &[(&str, KnownDefault)] =
+    &[("isFirstLaunch", KnownDefault::Int(1)), ("Login/AccountServiceApiVersion", KnownDefault::Int(2))];
 
 /// Look up the known default for a key.
 fn known_default(key: &str) -> Option<&'static KnownDefault> {
-    KNOWN_DEFAULTS
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, v)| v)
+    KNOWN_DEFAULTS.iter().find(|(k, _)| *k == key).map(|(_, v)| v)
 }
 
 /// Seed all known defaults into the store if not already present.
@@ -198,8 +193,7 @@ enum KeyRoute<'a> {
 fn route_key(key: &str) -> KeyRoute<'_> {
     match key {
         // [profil]
-        "ScopelyProfile.UserId" | "Scopely.Attribution.UserId"
-        | "known_accounts" => KeyRoute::Profil("user_id"),
+        "ScopelyProfile.UserId" | "Scopely.Attribution.UserId" | "known_accounts" => KeyRoute::Profil("user_id"),
         "social_username" => KeyRoute::Profil("social_username"),
         "player_level" => KeyRoute::Profil("player_level"),
         "accounts/3/server_instance_id" => KeyRoute::Profil("server_instance_id"),
@@ -235,7 +229,10 @@ fn route_key(key: &str) -> KeyRoute<'_> {
             || key.starts_with("mission/")
             || key.starts_with("QualityManager/")
             || key.starts_with("Scopely.Analytics.")
-            || key.starts_with("Scopely.Attribution.") => KeyRoute::Player,
+            || key.starts_with("Scopely.Attribution.") =>
+        {
+            KeyRoute::Player
+        }
         // [misc] (everything else)
         _ => KeyRoute::Misc,
     }
@@ -289,7 +286,9 @@ impl StoreState {
     /// user-prefixed keys.
     fn is_chat_key(&self, key: &str) -> bool {
         let Some(uid) = self.data.profil.user_id.as_deref() else { return false };
-        if uid.is_empty() { return false; }
+        if uid.is_empty() {
+            return false;
+        }
         key.strip_prefix(uid).is_some_and(|suffix| suffix == "chatHist")
     }
 
@@ -457,9 +456,7 @@ impl StoreState {
                 self.dirty = true;
                 true
             }
-            KeyRoute::Player => {
-                self.put_player_string(key, value)
-            }
+            KeyRoute::Player => self.put_player_string(key, value),
             KeyRoute::Chat => self.put_chat(key, toml::Value::String(value.to_string())),
             KeyRoute::Misc => self.put_misc(key, toml::Value::String(value.to_string())),
             KeyRoute::Cache => self.put_cache(key, toml::Value::String(value.to_string())),
@@ -473,43 +470,57 @@ impl StoreState {
         }
         match route_key(key) {
             KeyRoute::Profil("player_level") => {
-                if self.data.profil.player_level == Some(value) { return false; }
+                if self.data.profil.player_level == Some(value) {
+                    return false;
+                }
                 self.data.profil.player_level = Some(value);
                 self.dirty = true;
                 true
             }
             KeyRoute::Profil("server_instance_id") => {
-                if self.data.profil.server_instance_id == Some(value) { return false; }
+                if self.data.profil.server_instance_id == Some(value) {
+                    return false;
+                }
                 self.data.profil.server_instance_id = Some(value);
                 self.dirty = true;
                 true
             }
             KeyRoute::Auth("current_version") => {
-                if self.data.auth.current_version == Some(value) { return false; }
+                if self.data.auth.current_version == Some(value) {
+                    return false;
+                }
                 self.data.auth.current_version = Some(value);
                 self.dirty = true;
                 true
             }
             KeyRoute::Auth("is_first_launch") => {
-                if self.data.auth.is_first_launch == Some(value) { return false; }
+                if self.data.auth.is_first_launch == Some(value) {
+                    return false;
+                }
                 self.data.auth.is_first_launch = Some(value);
                 self.dirty = true;
                 true
             }
             KeyRoute::Auth("account_service_api_version") => {
-                if self.data.auth.account_service_api_version == Some(value) { return false; }
+                if self.data.auth.account_service_api_version == Some(value) {
+                    return false;
+                }
                 self.data.auth.account_service_api_version = Some(value);
                 self.dirty = true;
                 true
             }
             KeyRoute::Auth("scopely_id_allow_association") => {
-                if self.data.auth.scopely_id_allow_association == Some(value) { return false; }
+                if self.data.auth.scopely_id_allow_association == Some(value) {
+                    return false;
+                }
                 self.data.auth.scopely_id_allow_association = Some(value);
                 self.dirty = true;
                 true
             }
             KeyRoute::Auth("login_allow_association") => {
-                if self.data.auth.login_allow_association == Some(value) { return false; }
+                if self.data.auth.login_allow_association == Some(value) {
+                    return false;
+                }
                 self.data.auth.login_allow_association = Some(value);
                 self.dirty = true;
                 true
@@ -612,9 +623,7 @@ impl StoreState {
         }
 
         match route_key(key) {
-            KeyRoute::Profil(field) => {
-                self.profil_field(field)?.as_deref()
-            }
+            KeyRoute::Profil(field) => self.profil_field(field)?.as_deref(),
             KeyRoute::Auth(field) => {
                 // String fields: return stored value (including Some(""))
                 if let Some(opt) = self.auth_field(field) {
@@ -847,13 +856,16 @@ where
                 // Load the specific profile TOML
                 let filename = format!("{stem}.toml");
                 let path = profile_dir().map(|d| d.join(&filename));
-                let data = path.as_ref().and_then(|p| {
-                    fs::read_to_string(p).ok().and_then(|content| {
-                        toml::from_str::<ProfileData>(&content).ok()
+                let data = path
+                    .as_ref()
+                    .and_then(|p| {
+                        fs::read_to_string(p)
+                            .ok()
+                            .and_then(|content| toml::from_str::<ProfileData>(&content).ok())
                     })
-                }).unwrap_or_default();
-                let key_count = data.misc.len() + data.chat.len() + data.cache.len()
-                    + data.factions.len() + data.player.len();
+                    .unwrap_or_default();
+                let key_count =
+                    data.misc.len() + data.chat.len() + data.cache.len() + data.factions.len() + data.player.len();
                 let current_stem = Some(stem.clone());
                 info!(target: "ProfileStore", "Loaded profile '{stem}' ({key_count} keys)");
                 StoreState {
@@ -879,8 +891,8 @@ where
             ProfileMode::Import => {
                 // Try to load an existing profile, otherwise start fresh
                 if let Some((path, mut data)) = find_existing_profile() {
-                    let key_count = data.misc.len() + data.chat.len() + data.cache.len()
-                        + data.factions.len() + data.player.len();
+                    let key_count =
+                        data.misc.len() + data.chat.len() + data.cache.len() + data.factions.len() + data.player.len();
                     data.profil.profile_type = Some("primary".to_string());
                     info!(target: "ProfileStore", "Loaded profile from {} ({key_count} keys)", path.display());
                     StoreState {
@@ -959,8 +971,7 @@ pub fn record(key: &str, value: &str) -> bool {
 ///
 /// Returns `None` if the value was never set (hook should fall through to Registry).
 pub fn get(key: &str) -> Option<String> {
-    with_store(|state| state.get(key).map(|v| v.to_string()))
-    .flatten()
+    with_store(|state| state.get(key).map(|v| v.to_string())).flatten()
 }
 
 /// Record a PlayerPrefs integer value (from GET_INT or SET_INT).
@@ -978,8 +989,7 @@ pub fn record_int(key: &str, value: i32) -> bool {
 
 /// Look up a stored integer value.
 pub fn get_int(key: &str) -> Option<i32> {
-    with_store(|state| state.get_int(key))
-    .flatten()
+    with_store(|state| state.get_int(key)).flatten()
 }
 
 /// Record a PlayerPrefs float value (from GET_FLOAT or SET_FLOAT).
@@ -997,8 +1007,7 @@ pub fn record_float(key: &str, value: f32) -> bool {
 
 /// Look up a stored float value.
 pub fn get_float(key: &str) -> Option<f32> {
-    with_store(|state| state.get_float(key))
-    .flatten()
+    with_store(|state| state.get_float(key)).flatten()
 }
 
 /// Delete a key from the store.
@@ -1248,10 +1257,7 @@ mod tests {
     fn prefixed_int_goes_to_player() {
         let mut state = state_with_uid("abc123");
         assert!(state.put_int("abc123:initial_experience_completed", 1));
-        assert_eq!(
-            state.data.player["initial_experience_completed"],
-            toml::Value::Integer(1)
-        );
+        assert_eq!(state.data.player["initial_experience_completed"], toml::Value::Integer(1));
     }
 
     #[test]

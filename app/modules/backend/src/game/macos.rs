@@ -5,12 +5,10 @@ use crate::use_log;
 use_log!("GameDetect");
 
 /// Path to the Scopely launcher settings file, relative to the user's home directory.
-const LAUNCHER_SETTINGS_PATH: &str =
-    "Library/Preferences/Star Trek Fleet Command/launcher_settings.ini";
+const LAUNCHER_SETTINGS_PATH: &str = "Library/Preferences/Star Trek Fleet Command/launcher_settings.ini";
 
 /// Path to the game executable, relative to the install directory.
-const EXECUTABLE_REL: &str =
-    "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command";
+const EXECUTABLE_REL: &str = "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command";
 
 /// Locate the STFC installation by reading the Scopely launcher settings INI.
 ///
@@ -40,10 +38,7 @@ pub fn detect() -> Option<(PathBuf, PathBuf)> {
     let executable = install_dir.join(EXECUTABLE_REL);
 
     if !executable.exists() {
-        log_warn!(
-            "Install directory found but executable missing: {}",
-            executable.display()
-        );
+        log_warn!("Install directory found but executable missing: {}", executable.display());
         return None;
     }
 

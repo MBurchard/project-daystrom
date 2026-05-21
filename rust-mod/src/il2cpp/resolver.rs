@@ -9,12 +9,7 @@ use super::types::*;
 ///
 /// Walks the chain: domain → assembly → image → class. Returns `None` and logs a warning if any step fails.
 /// This is expected when a game update renames or removes a class.
-pub fn resolve_class(
-    api: &Il2CppApi,
-    assembly: &str,
-    namespace: &str,
-    class_name: &str,
-) -> Option<*mut Il2CppClass> {
+pub fn resolve_class(api: &Il2CppApi, assembly: &str, namespace: &str, class_name: &str) -> Option<*mut Il2CppClass> {
     let c_assembly = CString::new(assembly).unwrap_or_else(|_| {
         warn!(target: "IL2CPP", "Invalid assembly name (contains null byte): {assembly}");
         CString::default()
@@ -61,11 +56,7 @@ pub fn resolve_class(
 ///
 /// Returns the offset suitable for pointer arithmetic on object instances.
 /// Returns `None` and logs a warning if the field is not found.
-pub fn resolve_field_offset(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    field_name: &str,
-) -> Option<usize> {
+pub fn resolve_field_offset(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str) -> Option<usize> {
     let c_field = CString::new(field_name).unwrap_or_else(|_| {
         warn!(target: "IL2CPP", "Invalid field name (contains null byte): {field_name}");
         CString::default()

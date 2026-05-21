@@ -36,70 +36,6 @@ fn has_entitlement(xml: &str, key: &str) -> bool {
     xml[pos + needle.len()..].trim_start().starts_with("<true/>")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const FULL_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-    <true/>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
-    <key>com.apple.security.get-task-allow</key>
-    <true/>
-</dict>
-</plist>"#;
-
-    #[test]
-    fn has_entitlement_present_and_true() {
-        assert!(has_entitlement(
-            FULL_PLIST,
-            "com.apple.security.cs.allow-dyld-environment-variables",
-        ));
-    }
-
-    #[test]
-    fn has_entitlement_present_but_false() {
-        let xml = r#"<dict>
-    <key>com.apple.security.get-task-allow</key>
-    <false/>
-</dict>"#;
-        assert!(!has_entitlement(xml, "com.apple.security.get-task-allow"));
-    }
-
-    #[test]
-    fn has_entitlement_missing_key() {
-        assert!(!has_entitlement(FULL_PLIST, "com.apple.security.app-sandbox"));
-    }
-
-    #[test]
-    fn has_entitlement_empty_xml() {
-        assert!(!has_entitlement("", "com.apple.security.get-task-allow"));
-    }
-
-    #[test]
-    fn has_entitlement_key_without_value() {
-        let xml = "<dict><key>com.apple.security.get-task-allow</key></dict>";
-        assert!(!has_entitlement(xml, "com.apple.security.get-task-allow"));
-    }
-
-    #[test]
-    fn has_entitlement_tolerates_whitespace_variants() {
-        // Value on same line as key
-        let xml = "<key>com.apple.security.get-task-allow</key><true/>";
-        assert!(has_entitlement(xml, "com.apple.security.get-task-allow"));
-
-        // Extra whitespace / newlines between key and value
-        let xml = "<key>com.apple.security.get-task-allow</key>\n\t\t<true/>";
-        assert!(has_entitlement(xml, "com.apple.security.get-task-allow"));
-    }
-}
-
 /// Query the code signature of `executable` and check which of the four
 /// required mod-injection entitlements are present.
 pub fn check(executable: &Path) -> EntitlementStatus {
@@ -245,18 +181,10 @@ pub fn patch(executable: &Path) -> Result<(), String> {
 
     let plist_path = std::env::temp_dir().join("daystrom-entitlements.plist");
 
-    fs::write(&plist_path, ENTITLEMENTS_PLIST)
-        .map_err(|e| format!("Failed to write entitlements plist: {e}"))?;
+    fs::write(&plist_path, ENTITLEMENTS_PLIST).map_err(|e| format!("Failed to write entitlements plist: {e}"))?;
 
     let output = Command::new("codesign")
-        .args([
-            "--force",
-            "--sign",
-            "-",
-            "--options",
-            "runtime",
-            "--entitlements",
-        ])
+        .args(["--force", "--sign", "-", "--options", "runtime", "--entitlements"])
         .arg(&plist_path)
         .arg(executable)
         .output()
@@ -277,10 +205,76 @@ pub fn patch(executable: &Path) -> Result<(), String> {
         log_info!("Entitlements patched successfully");
         Ok(())
     } else {
-        let names: Vec<_> = status.missing.iter()
+        let names: Vec<_> = status
+            .missing
+            .iter()
             .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
             .collect();
         log_error!("Entitlements still missing after patch: {}", names.join(", "));
         Err("Entitlement patching incomplete (see log for details)".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FULL_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>"#;
+
+    #[test]
+    fn has_entitlement_present_and_true() {
+        assert!(has_entitlement(
+            FULL_PLIST,
+            "com.apple.security.cs.allow-dyld-environment-variables",
+        ));
+    }
+
+    #[test]
+    fn has_entitlement_present_but_false() {
+        let xml = r#"<dict>
+    <key>com.apple.security.get-task-allow</key>
+    <false/>
+</dict>"#;
+        assert!(!has_entitlement(xml, "com.apple.security.get-task-allow"));
+    }
+
+    #[test]
+    fn has_entitlement_missing_key() {
+        assert!(!has_entitlement(FULL_PLIST, "com.apple.security.app-sandbox"));
+    }
+
+    #[test]
+    fn has_entitlement_empty_xml() {
+        assert!(!has_entitlement("", "com.apple.security.get-task-allow"));
+    }
+
+    #[test]
+    fn has_entitlement_key_without_value() {
+        let xml = "<dict><key>com.apple.security.get-task-allow</key></dict>";
+        assert!(!has_entitlement(xml, "com.apple.security.get-task-allow"));
+    }
+
+    #[test]
+    fn has_entitlement_tolerates_whitespace_variants() {
+        // Value on same line as key
+        let xml = "<key>com.apple.security.get-task-allow</key><true/>";
+        assert!(has_entitlement(xml, "com.apple.security.get-task-allow"));
+
+        // Extra whitespace / newlines between key and value
+        let xml = "<key>com.apple.security.get-task-allow</key>\n\t\t<true/>";
+        assert!(has_entitlement(xml, "com.apple.security.get-task-allow"));
     }
 }

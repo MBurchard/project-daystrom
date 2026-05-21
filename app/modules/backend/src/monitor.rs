@@ -241,8 +241,7 @@ fn run_loop(app: tauri::AppHandle) {
             }
         }
         let running = crate::process_origin::running_profiles();
-        let external = game && running.is_empty()
-            && !crate::process_origin::is_game_started();
+        let external = game && running.is_empty() && !crate::process_origin::is_game_started();
         crate::profile_state::update(&app, |s| {
             s.running_profiles = running;
             s.external_game_running = external;
@@ -273,10 +272,10 @@ mod tests {
 
     #[test]
     fn game_exits_clears_flag_and_refreshes() {
-        assert_eq!(evaluate(true, false, false, false, false), vec![
-            MonitorAction::ClearGameStarted,
-            MonitorAction::RefreshGameStatus,
-        ]);
+        assert_eq!(
+            evaluate(true, false, false, false, false),
+            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus,]
+        );
     }
 
     #[test]
@@ -286,27 +285,28 @@ mod tests {
 
     #[test]
     fn launcher_exits_clears_flag_and_refreshes() {
-        assert_eq!(evaluate(false, true, false, false, false), vec![
-            MonitorAction::ClearLauncherStarted,
-            MonitorAction::RefreshGameStatus,
-        ]);
+        assert_eq!(
+            evaluate(false, true, false, false, false),
+            vec![MonitorAction::ClearLauncherStarted, MonitorAction::RefreshGameStatus,]
+        );
     }
 
     #[test]
     fn both_exit_simultaneously() {
-        assert_eq!(evaluate(true, true, false, false, false), vec![
-            MonitorAction::ClearGameStarted,
-            MonitorAction::RefreshGameStatus,
-            MonitorAction::ClearLauncherStarted,
-            MonitorAction::RefreshGameStatus,
-        ]);
+        assert_eq!(
+            evaluate(true, true, false, false, false),
+            vec![
+                MonitorAction::ClearGameStarted,
+                MonitorAction::RefreshGameStatus,
+                MonitorAction::ClearLauncherStarted,
+                MonitorAction::RefreshGameStatus,
+            ]
+        );
     }
 
     #[test]
     fn launcher_running_and_api_recheck_due() {
-        assert_eq!(evaluate(false, true, false, true, true), vec![
-            MonitorAction::RecheckUpdateApi,
-        ]);
+        assert_eq!(evaluate(false, true, false, true, true), vec![MonitorAction::RecheckUpdateApi,]);
     }
 
     #[test]
@@ -322,9 +322,10 @@ mod tests {
 
     #[test]
     fn launcher_just_started_with_recheck_due() {
-        assert_eq!(evaluate(false, false, false, true, true), vec![
-            MonitorAction::RecheckUpdateApi,
-        ]);
+        assert_eq!(
+            evaluate(false, false, false, true, true),
+            vec![MonitorAction::RecheckUpdateApi,]
+        );
     }
 
     // -- MonitorState (stateful tick sequences) --
@@ -363,10 +364,10 @@ mod tests {
 
         // Tick 3: game exits
         let actions = state.tick(false, false);
-        assert_eq!(actions, vec![
-            MonitorAction::ClearGameStarted,
-            MonitorAction::RefreshGameStatus,
-        ]);
+        assert_eq!(
+            actions,
+            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus,]
+        );
 
         // Tick 4: still off, no change
         let actions = state.tick(false, false);
@@ -384,10 +385,10 @@ mod tests {
         assert!(actions.is_empty());
 
         let actions = state.tick(false, false);
-        assert_eq!(actions, vec![
-            MonitorAction::ClearLauncherStarted,
-            MonitorAction::RefreshGameStatus,
-        ]);
+        assert_eq!(
+            actions,
+            vec![MonitorAction::ClearLauncherStarted, MonitorAction::RefreshGameStatus,]
+        );
     }
 
     #[test]
@@ -404,17 +405,17 @@ mod tests {
 
         // Launcher exits, game still running
         let actions = state.tick(true, false);
-        assert_eq!(actions, vec![
-            MonitorAction::ClearLauncherStarted,
-            MonitorAction::RefreshGameStatus,
-        ]);
+        assert_eq!(
+            actions,
+            vec![MonitorAction::ClearLauncherStarted, MonitorAction::RefreshGameStatus,]
+        );
 
         // Game exits
         let actions = state.tick(false, false);
-        assert_eq!(actions, vec![
-            MonitorAction::ClearGameStarted,
-            MonitorAction::RefreshGameStatus,
-        ]);
+        assert_eq!(
+            actions,
+            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus,]
+        );
     }
 
     #[test]

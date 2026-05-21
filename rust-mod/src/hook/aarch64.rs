@@ -84,12 +84,7 @@ pub enum RelocResult {
 ///
 /// Tries the compact in-place relocation first. If the displacement exceeds the instruction's
 /// immediate range, it generates a longer sequence that uses absolute addressing.
-pub fn relocate_or_expand(
-    insn: u32,
-    reloc: &Reloc,
-    old_pc: u64,
-    new_pc: u64,
-) -> Result<RelocResult, String> {
+pub fn relocate_or_expand(insn: u32, reloc: &Reloc, old_pc: u64, new_pc: u64) -> Result<RelocResult, String> {
     match relocate(insn, reloc, old_pc, new_pc) {
         Ok(relocated) => Ok(RelocResult::Single(relocated)),
         Err(_) => {
@@ -168,7 +163,7 @@ fn expand_imm19(insn: u32, old_pc: u64, new_pc: u64) -> Result<Vec<u32>, String>
         // LDR literal: load address into X16, then LDR Rd, [X16], then B past the literal.
         let rd = insn & 0x1F;
         let opc = (insn >> 30) & 0x3; // 00=32-bit, 01=64-bit, 10=SIMD
-        let v = (insn >> 26) & 0x1;   // 0=GPR, 1=SIMD/FP
+        let v = (insn >> 26) & 0x1; // 0=GPR, 1=SIMD/FP
 
         // LDR X16, #12  (load the absolute data address)
         let ldr_x16 = 0x5800_0070_u32; // LDR X16, [PC, #12]
@@ -214,10 +209,10 @@ fn movz_movk_sequence(rd: u32, value: u64) -> Vec<u32> {
     let hw2 = ((value >> 32) & 0xFFFF) as u32;
     let hw3 = ((value >> 48) & 0xFFFF) as u32;
     vec![
-        0xD280_0000 | (hw0 << 5) | rd,             // MOVZ Xd, #hw0
-        0xF2A0_0000 | (hw1 << 5) | rd,             // MOVK Xd, #hw1, LSL #16
-        0xF2C0_0000 | (hw2 << 5) | rd,             // MOVK Xd, #hw2, LSL #32
-        0xF2E0_0000 | (hw3 << 5) | rd,             // MOVK Xd, #hw3, LSL #48
+        0xD280_0000 | (hw0 << 5) | rd, // MOVZ Xd, #hw0
+        0xF2A0_0000 | (hw1 << 5) | rd, // MOVK Xd, #hw1, LSL #16
+        0xF2C0_0000 | (hw2 << 5) | rd, // MOVK Xd, #hw2, LSL #32
+        0xF2E0_0000 | (hw3 << 5) | rd, // MOVK Xd, #hw3, LSL #48
     ]
 }
 
@@ -265,7 +260,7 @@ fn split_u64(value: u64) -> [u32; 2] {
 /// Encoding: `immlo` at bits 30:29, `immhi` at bits 23:5.
 fn extract_imm21(insn: u32) -> i32 {
     let immhi = (insn >> 5) & 0x7FFFF; // bits 23:5
-    let immlo = (insn >> 29) & 0x3;    // bits 30:29
+    let immlo = (insn >> 29) & 0x3; // bits 30:29
     let imm21 = (immhi << 2) | immlo;
     // Sign-extend from 21 bits
     ((imm21 as i32) << 11) >> 11
@@ -289,9 +284,7 @@ fn relocate_adrp(insn: u32, old_pc: u64, new_pc: u64) -> Result<u32, String> {
     let new_imm21 = new_offset >> 12;
 
     if !(-0x10_0000_i64..=0xF_FFFF).contains(&new_imm21) {
-        return Err(format!(
-            "ADRP relocation overflow: delta {new_offset:#x} exceeds ±4GB"
-        ));
+        return Err(format!("ADRP relocation overflow: delta {new_offset:#x} exceeds ±4GB"));
     }
     Ok(encode_imm21(insn, new_imm21 as i32))
 }
@@ -305,9 +298,7 @@ fn relocate_adr(insn: u32, old_pc: u64, new_pc: u64) -> Result<u32, String> {
     let new_offset = abs_target.wrapping_sub(new_pc) as i64;
 
     if !(-0x10_0000_i64..=0xF_FFFF).contains(&new_offset) {
-        return Err(format!(
-            "ADR relocation overflow: delta {new_offset:#x} exceeds ±1MB"
-        ));
+        return Err(format!("ADR relocation overflow: delta {new_offset:#x} exceeds ±1MB"));
     }
     Ok(encode_imm21(insn, new_offset as i32))
 }
@@ -324,9 +315,7 @@ fn relocate_branch26(insn: u32, old_pc: u64, new_pc: u64) -> Result<u32, String>
     let new_imm26 = new_offset >> 2;
 
     if !(-0x200_0000_i64..=0x1FF_FFFF).contains(&new_imm26) {
-        return Err(format!(
-            "B/BL relocation overflow: delta {new_offset:#x} exceeds ±128MB"
-        ));
+        return Err(format!("B/BL relocation overflow: delta {new_offset:#x} exceeds ±128MB"));
     }
     Ok((insn & 0xFC00_0000) | (new_imm26 as u32 & 0x03FF_FFFF))
 }
@@ -343,9 +332,7 @@ fn relocate_imm19(insn: u32, old_pc: u64, new_pc: u64) -> Result<u32, String> {
     let new_imm19 = new_offset >> 2;
 
     if !(-0x4_0000_i64..=0x3FFFF).contains(&new_imm19) {
-        return Err(format!(
-            "imm19 relocation overflow: delta {new_offset:#x} exceeds ±1MB"
-        ));
+        return Err(format!("imm19 relocation overflow: delta {new_offset:#x} exceeds ±1MB"));
     }
     Ok((insn & 0xFF00_001F) | ((new_imm19 as u32 & 0x7FFFF) << 5))
 }
@@ -362,9 +349,7 @@ fn relocate_imm14(insn: u32, old_pc: u64, new_pc: u64) -> Result<u32, String> {
     let new_imm14 = new_offset >> 2;
 
     if !(-0x2000_i64..=0x1FFF).contains(&new_imm14) {
-        return Err(format!(
-            "imm14 relocation overflow: delta {new_offset:#x} exceeds ±32KB"
-        ));
+        return Err(format!("imm14 relocation overflow: delta {new_offset:#x} exceeds ±32KB"));
     }
     Ok((insn & 0xFFF8_001F) | ((new_imm14 as u32 & 0x3FFF) << 5))
 }
@@ -565,7 +550,9 @@ mod tests {
         // B #0x100 at PC=0x1000, trampoline 1GB away (relocation overflows).
         let insn = 0x1400_0000 | 64; // B #256
         let result = relocate_or_expand(insn, &Reloc::Branch26, 0x1000, 0x4000_0000);
-        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        let RelocResult::Expanded(words) = result.unwrap() else {
+            panic!("expected Expanded")
+        };
         assert_eq!(words.len(), 4); // LDR X16 + BR X16 + 8-byte addr
         assert_eq!(words[0], 0x5800_0050); // LDR X16, #8
         assert_eq!(words[1], 0xD61F_0200); // BR X16
@@ -579,7 +566,9 @@ mod tests {
         // BL #0x100 at PC=0x2000, trampoline 1GB away.
         let insn = 0x9400_0000 | 64; // BL #256
         let result = relocate_or_expand(insn, &Reloc::Branch26, 0x2000, 0x4000_0000);
-        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        let RelocResult::Expanded(words) = result.unwrap() else {
+            panic!("expected Expanded")
+        };
         assert_eq!(words.len(), 5); // ADR X30 + LDR X16 + BR X16 + 8-byte addr
         assert_eq!(words[1], 0x5800_0070); // LDR X16, #12
         assert_eq!(words[2], 0xD61F_0200); // BR X16
@@ -597,7 +586,9 @@ mod tests {
         // ADR X5, #100 at PC=0x1000, trampoline 2MB away (>1MB, overflows).
         let insn = encode_imm21(0x1000_0000 | 5, 100);
         let result = relocate_or_expand(insn, &Reloc::Adr, 0x1000, 0x20_0000);
-        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        let RelocResult::Expanded(words) = result.unwrap() else {
+            panic!("expected Expanded")
+        };
         assert_eq!(words.len(), 4); // MOVZ + 3x MOVK
         // Target = 0x1000 + 100 = 0x1064
         // MOVZ X5, #0x1064 → check Rd = 5
@@ -613,7 +604,9 @@ mod tests {
         // Trampoline 8GB away (overflows ±4GB).
         let insn = encode_imm21(0x9000_0000 | 8, 1);
         let result = relocate_or_expand(insn, &Reloc::Adrp, 0x1000, 0x2_0000_0000);
-        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        let RelocResult::Expanded(words) = result.unwrap() else {
+            panic!("expected Expanded")
+        };
         assert_eq!(words.len(), 4);
         assert_eq!(words[0] & 0x1F, 8); // Rd = X8
         // Reconstruct absolute page from MOVZ/MOVK
@@ -630,7 +623,9 @@ mod tests {
         // CBZ X0, #0x40 at PC=0x1000, trampoline 2MB away.
         let insn = 0xB400_0000 | (16 << 5); // CBZ X0, #64 (imm19=16)
         let result = relocate_or_expand(insn, &Reloc::Imm19, 0x1000, 0x20_0000);
-        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        let RelocResult::Expanded(words) = result.unwrap() else {
+            panic!("expected Expanded")
+        };
         assert_eq!(words.len(), 5);
         // First word should be CBNZ (inverted CBZ), targeting skip
         assert_eq!(words[0] & 0x7F00_0000, 0x3500_0000, "should be CBNZ");
@@ -645,7 +640,9 @@ mod tests {
         // TBZ X0, #0, #0x20 at PC=0x1000, trampoline 1MB away.
         let insn = 0x3600_0000 | (8 << 5); // TBZ X0, #0, #32
         let result = relocate_or_expand(insn, &Reloc::Imm14, 0x1000, 0x10_0000);
-        let RelocResult::Expanded(words) = result.unwrap() else { panic!("expected Expanded") };
+        let RelocResult::Expanded(words) = result.unwrap() else {
+            panic!("expected Expanded")
+        };
         assert_eq!(words.len(), 5);
         // First word should be TBNZ (inverted TBZ)
         assert_eq!(words[0] & 0x7F00_0000, 0x3700_0000, "should be TBNZ");

@@ -16,14 +16,8 @@ use crate::il2cpp::types::*;
 ///
 /// Thin wrapper around `resolver::resolve_method` that extracts the `method_pointer` field.
 /// Returns `None` if the method cannot be found.
-pub fn resolve_fn(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    method_name: &str,
-    param_count: i32,
-) -> Option<*const ()> {
-    resolver::resolve_method(api, class, method_name, param_count)
-        .map(|m| unsafe { (*m).method_pointer })
+pub fn resolve_fn(api: &Il2CppApi, class: *mut Il2CppClass, method_name: &str, param_count: i32) -> Option<*const ()> {
+    resolver::resolve_method(api, class, method_name, param_count).map(|m| unsafe { (*m).method_pointer })
 }
 
 // ---- IL2CPP field access --------------------------------------------------
@@ -60,6 +54,25 @@ pub unsafe fn read_f32(base: *const (), offset: usize) -> f32 {
 
 // ---- Lifecycle hook installation ------------------------------------------
 
+fn install_lifecycle_hook(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    label: &str,
+    method: &str,
+    hook: extern "C" fn(*mut Il2CppObject),
+    store_original: impl FnOnce(*const ()),
+) {
+    if let Some(ptr) = resolve_fn(api, class, method, 0) {
+        match engine::install_hook(&format!("{label}{method}"), ptr, hook as *const ()) {
+            Ok(orig) => {
+                store_original(orig);
+                debug!(target: "HookEngine", "{label} {method} hook installed");
+            }
+            Err(e) => warn!(target: "HookEngine", "Failed to hook {label} {method}: {e}"),
+        }
+    }
+}
+
 /// Install Awake and OnDestroy hooks on a class for instance tracking.
 ///
 /// Resolves both methods, installs inline hooks, and passes the original function pointers (trampolines) to the
@@ -74,28 +87,8 @@ pub fn install_lifecycle_hooks(
     store_awake: impl FnOnce(*const ()),
     store_destroy: impl FnOnce(*const ()),
 ) {
-    if let Some(ptr) = resolve_fn(api, class, "Awake", 0) {
-        match engine::install_hook(
-            &format!("{label}Awake"), ptr, awake_hook as *const (),
-        ) {
-            Ok(orig) => {
-                store_awake(orig);
-                debug!(target: "HookEngine", "{label} Awake hook installed");
-            }
-            Err(e) => warn!(target: "HookEngine", "Failed to hook {label} Awake: {e}"),
-        }
-    }
-    if let Some(ptr) = resolve_fn(api, class, "OnDestroy", 0) {
-        match engine::install_hook(
-            &format!("{label}Destroy"), ptr, destroy_hook as *const (),
-        ) {
-            Ok(orig) => {
-                store_destroy(orig);
-                debug!(target: "HookEngine", "{label} OnDestroy hook installed");
-            }
-            Err(e) => warn!(target: "HookEngine", "Failed to hook {label} OnDestroy: {e}"),
-        }
-    }
+    install_lifecycle_hook(api, class, label, "Awake", awake_hook, store_awake);
+    install_lifecycle_hook(api, class, label, "OnDestroy", destroy_hook, store_destroy);
 }
 
 /// Install only the Awake hook on a class (no OnDestroy).
@@ -109,17 +102,7 @@ pub fn install_awake_hook(
     awake_hook: extern "C" fn(*mut Il2CppObject),
     store_awake: impl FnOnce(*const ()),
 ) {
-    if let Some(ptr) = resolve_fn(api, class, "Awake", 0) {
-        match engine::install_hook(
-            &format!("{label}Awake"), ptr, awake_hook as *const (),
-        ) {
-            Ok(orig) => {
-                store_awake(orig);
-                debug!(target: "HookEngine", "{label} Awake hook installed");
-            }
-            Err(e) => warn!(target: "HookEngine", "Failed to hook {label} Awake: {e}"),
-        }
-    }
+    install_lifecycle_hook(api, class, label, "Awake", awake_hook, store_awake);
 }
 
 // ---- Instance tracker macro -----------------------------------------------
@@ -147,8 +130,7 @@ macro_rules! instance_tracker {
         mod $name {
             use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
-            type LifecycleFn =
-                unsafe extern "C" fn(*mut $crate::il2cpp::types::Il2CppObject);
+            type LifecycleFn = unsafe extern "C" fn(*mut $crate::il2cpp::types::Il2CppObject);
 
             static INSTANCE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
             static ORIG_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -160,32 +142,21 @@ macro_rules! instance_tracker {
             }
 
             /// Hook for `Awake()`: stores this instance as the tracked one.
-            pub extern "C" fn hook_awake(
-                this: *mut $crate::il2cpp::types::Il2CppObject,
-            ) {
+            pub extern "C" fn hook_awake(this: *mut $crate::il2cpp::types::Il2CppObject) {
                 INSTANCE.store(this as *mut (), Relaxed);
                 let orig_ptr = ORIG_AWAKE.load(Relaxed);
                 if !orig_ptr.is_null() {
-                    let orig: LifecycleFn =
-                        unsafe { std::mem::transmute(orig_ptr) };
+                    let orig: LifecycleFn = unsafe { std::mem::transmute(orig_ptr) };
                     unsafe { orig(this) };
                 }
             }
 
             /// OnDestroy hook: clears the tracked instance if it matches.
-            pub extern "C" fn hook_destroy(
-                this: *mut $crate::il2cpp::types::Il2CppObject,
-            ) {
-                let _ = INSTANCE.compare_exchange(
-                    this as *mut (),
-                    std::ptr::null_mut(),
-                    Relaxed,
-                    Relaxed,
-                );
+            pub extern "C" fn hook_destroy(this: *mut $crate::il2cpp::types::Il2CppObject) {
+                let _ = INSTANCE.compare_exchange(this as *mut (), std::ptr::null_mut(), Relaxed, Relaxed);
                 let orig_ptr = ORIG_DESTROY.load(Relaxed);
                 if !orig_ptr.is_null() {
-                    let orig: LifecycleFn =
-                        unsafe { std::mem::transmute(orig_ptr) };
+                    let orig: LifecycleFn = unsafe { std::mem::transmute(orig_ptr) };
                     unsafe { orig(this) };
                 }
             }
@@ -195,21 +166,14 @@ macro_rules! instance_tracker {
             /// Used by shared OnDestroy hooks that serve multiple trackers
             /// (e.g. when subclasses share a base class OnDestroy).
             pub fn clear_if_match(ptr: *mut ()) {
-                let _ = INSTANCE.compare_exchange(
-                    ptr,
-                    std::ptr::null_mut(),
-                    Relaxed,
-                    Relaxed,
-                );
+                let _ = INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
             }
 
             /// Set up no-op originals so `hook_awake`/`hook_destroy` can be
             /// called safely in unit tests.
             #[cfg(test)]
             pub fn _test_init() {
-                extern "C" fn noop(
-                    _: *mut $crate::il2cpp::types::Il2CppObject,
-                ) {}
+                extern "C" fn noop(_: *mut $crate::il2cpp::types::Il2CppObject) {}
                 ORIG_AWAKE.store(noop as *mut (), Relaxed);
                 ORIG_DESTROY.store(noop as *mut (), Relaxed);
             }
@@ -241,13 +205,9 @@ macro_rules! instance_tracker {
                 class: *mut $crate::il2cpp::types::Il2CppClass,
                 label: &str,
             ) {
-                $crate::hooks::tracker::install_awake_hook(
-                    api,
-                    class,
-                    label,
-                    hook_awake,
-                    |p| ORIG_AWAKE.store(p as *mut (), Relaxed),
-                );
+                $crate::hooks::tracker::install_awake_hook(api, class, label, hook_awake, |p| {
+                    ORIG_AWAKE.store(p as *mut (), Relaxed)
+                });
             }
         }
     };
@@ -308,10 +268,8 @@ mod tests {
     fn destroy_preserves_different_instance() {
         subject::_test_init();
 
-        let fake_a =
-            0xAAAAusize as *mut crate::il2cpp::types::Il2CppObject;
-        let fake_b =
-            0xBBBBusize as *mut crate::il2cpp::types::Il2CppObject;
+        let fake_a = 0xAAAAusize as *mut crate::il2cpp::types::Il2CppObject;
+        let fake_b = 0xBBBBusize as *mut crate::il2cpp::types::Il2CppObject;
 
         subject::hook_awake(fake_b);
         subject::hook_destroy(fake_a);
