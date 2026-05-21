@@ -15,6 +15,7 @@ use log::{debug, warn};
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -43,11 +44,11 @@ static OFFSET_DEFAULT_ZOOM_RATIO: AtomicUsize = AtomicUsize::new(0);
 /// Original function pointer for `NavigationZoom.SetDepth(NodeDepth)`.
 static ORIG_SET_DEPTH: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved function pointer for `NavigationZoom.OverrideZoomLimits(float, float)`.
-static OVERRIDE_ZOOM_LIMITS_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved method info for `NavigationZoom.OverrideZoomLimits(float, float)`.
+static OVERRIDE_ZOOM_LIMITS_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved function pointer for `NavigationZoom.set_Distance(float)`.
-static SET_DISTANCE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved method info for `NavigationZoom.set_Distance(float)`.
+static SET_DISTANCE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Cached NavigationZoom instance for live settings updates.
 static CACHED_NAV_ZOOM: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
@@ -61,8 +62,6 @@ static LOGGED_FIRST: AtomicBool = AtomicBool::new(false);
 // ---- Type aliases ---------------------------------------------------------
 
 type SetDepthFn = unsafe extern "C" fn(*mut Il2CppObject, i32);
-type OverrideZoomLimitsFn = unsafe extern "C" fn(*mut Il2CppObject, f32, f32);
-type SetDistanceFn = unsafe extern "C" fn(*mut Il2CppObject, f32);
 
 // ---- Diagnostic helpers ---------------------------------------------------
 
@@ -140,8 +139,7 @@ fn apply_zoom_limit(this: *mut Il2CppObject) {
     }
     let minimum = read_field(this, &OFFSET_MINIMUM);
     let smax = calculate_smax();
-    let override_fn: OverrideZoomLimitsFn = unsafe { std::mem::transmute(override_ptr) };
-    unsafe { override_fn(this, minimum, smax) };
+    invoke::void_f32_f32(override_ptr, this, minimum, smax, "NavigationZoom.OverrideZoomLimits");
 }
 
 /// Set the camera distance on a NavigationZoom instance via the game's property setter.
@@ -150,8 +148,7 @@ fn apply_distance(this: *mut Il2CppObject, distance: f32) {
     if ptr.is_null() || this.is_null() {
         return;
     }
-    let set_distance: SetDistanceFn = unsafe { std::mem::transmute(ptr) };
-    unsafe { set_distance(this, distance) };
+    invoke::void_f32(ptr, this, distance, "NavigationZoom.set_Distance");
 }
 
 /// Called when system zoom or ship names settings change via WebSocket.
@@ -238,7 +235,7 @@ fn resolve_field(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, tar
 /// Install system zoom hooks.
 ///
 /// Hooks `SetDepth` to extend the zoom-out limit for system views and resolves `OverrideZoomLimits` as a callable
-/// function.
+/// method.
 pub fn install(api: &Il2CppApi) {
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom")
     else {
@@ -270,8 +267,8 @@ pub fn install(api: &Il2CppApi) {
     );
 
     // Resolve OverrideZoomLimits (called from the SetDepth hook).
-    resolver::resolve_method_pointer_into(api, class, "OverrideZoomLimits", 2, &OVERRIDE_ZOOM_LIMITS_FN);
+    resolver::resolve_method_into(api, class, "OverrideZoomLimits", 2, &OVERRIDE_ZOOM_LIMITS_FN);
 
     // Resolve set_Distance (called for initial zoom and live slider updates, not hooked).
-    resolver::resolve_method_pointer_into(api, class, "set_Distance", 1, &SET_DISTANCE_FN);
+    resolver::resolve_method_into(api, class, "set_Distance", 1, &SET_DISTANCE_FN);
 }

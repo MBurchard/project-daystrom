@@ -14,6 +14,7 @@ use log::debug;
 
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -27,8 +28,8 @@ static OFFSET_LIST_COLLAPSED: AtomicUsize = AtomicUsize::new(0);
 /// Tracked JobQueuePanelViewController instance (set by the RegenerateLists hook).
 static JOB_QUEUE_PANEL: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved function pointer for `OnContractExpandButtonClickEventHandler()`.
-static EXPAND_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved method info for `OnContractExpandButtonClickEventHandler()`.
+static EXPAND_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Original function pointer for `JobQueuePanelViewController.RegenerateLists()`.
 static ORIG_REGENERATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -122,8 +123,11 @@ fn try_expand() {
 
     EXPANDED.store(true, Relaxed);
 
-    let expand: VoidFn = unsafe { std::mem::transmute(expand_ptr) };
-    unsafe { expand(panel) };
+    invoke::void(
+        expand_ptr,
+        panel,
+        "JobQueuePanelViewController.OnContractExpandButtonClickEventHandler",
+    );
     debug!(target: "JobQueue", "Auto-expanded job queue panel");
 }
 
@@ -132,7 +136,7 @@ fn try_expand() {
 /// Install job queue panel hooks.
 ///
 /// Hooks `JobQueuePanelViewController.RegenerateLists` (expand trigger) and resolves
-/// `OnContractExpandButtonClickEventHandler` as a callable function.
+/// `OnContractExpandButtonClickEventHandler` as a guarded callable method.
 pub fn install(api: &Il2CppApi) {
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "JobQueuePanelViewController")
     else {
@@ -157,5 +161,5 @@ pub fn install(api: &Il2CppApi) {
     );
 
     // Resolve OnContractExpandButtonClickEventHandler (called during expand, not hooked).
-    resolver::resolve_method_pointer_into(api, class, "OnContractExpandButtonClickEventHandler", 0, &EXPAND_FN);
+    resolver::resolve_method_into(api, class, "OnContractExpandButtonClickEventHandler", 0, &EXPAND_FN);
 }

@@ -8,6 +8,7 @@ use log::{debug, warn};
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 /// Original function pointer: `UserProfile* GetLocalUserProfile(UserProfileManager* this)`.
@@ -85,7 +86,7 @@ fn resolve_profile_class(api: &Il2CppApi) -> Option<*mut Il2CppClass> {
 
 /// Read player information from a UserProfile object and push changes to the game state.
 ///
-/// Uses IL2CPP runtime_invoke to call the property getters on the returned object. Throttled to
+/// Uses guarded IL2CPP invocation to call the property getters on the returned object. Throttled to
 /// once every 10 seconds to avoid unnecessary reflection calls.
 fn log_player_info(profile: *mut Il2CppObject) {
     // Check throttle first to avoid unnecessary reflection calls
@@ -128,18 +129,10 @@ fn read_string_property(
     method_name: &str,
 ) -> Option<String> {
     let method = resolver::resolve_method(api, class, method_name, 0)?;
-    let mut exception: *mut Il2CppException = std::ptr::null_mut();
-
-    let result = unsafe { (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception) };
-
-    if !exception.is_null() || result.is_null() {
-        return None;
-    }
-
-    unsafe { Il2CppString::to_rust_string(result as *const Il2CppString) }
+    invoke::string(method, obj, method_name)
 }
 
-/// Call a parameterless method that returns an `int` (unboxed from Il2CppObject).
+/// Call a parameterless method that returns an `int`.
 fn read_int_property(
     api: &Il2CppApi,
     class: *mut Il2CppClass,
@@ -147,20 +140,10 @@ fn read_int_property(
     method_name: &str,
 ) -> Option<i32> {
     let method = resolver::resolve_method(api, class, method_name, 0)?;
-    let mut exception: *mut Il2CppException = std::ptr::null_mut();
-
-    let result = unsafe { (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception) };
-
-    if !exception.is_null() || result.is_null() {
-        return None;
-    }
-
-    // Value types are boxed: the value sits right after the Il2CppObject header (2 pointers)
-    let value_ptr = unsafe { (result as *const u8).add(2 * size_of::<usize>()) as *const i32 };
-    Some(unsafe { *value_ptr })
+    invoke::i32(method, obj, method_name)
 }
 
-/// Call a parameterless method that returns an ` ulong ` (unboxed from Il2CppObject).
+/// Call a parameterless method that returns an `ulong`.
 fn read_ulong_property(
     api: &Il2CppApi,
     class: *mut Il2CppClass,
@@ -168,16 +151,7 @@ fn read_ulong_property(
     method_name: &str,
 ) -> Option<u64> {
     let method = resolver::resolve_method(api, class, method_name, 0)?;
-    let mut exception: *mut Il2CppException = std::ptr::null_mut();
-
-    let result = unsafe { (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception) };
-
-    if !exception.is_null() || result.is_null() {
-        return None;
-    }
-
-    let value_ptr = unsafe { (result as *const u8).add(2 * size_of::<usize>()) as *const u64 };
-    Some(unsafe { *value_ptr })
+    invoke::u64(method, obj, method_name)
 }
 
 /// Install the GetLocalUserProfile hook via IL2CPP reflection.

@@ -19,6 +19,7 @@ use crate::hook::engine;
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -58,28 +59,28 @@ static SHORTCUTS_MANAGER: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// Resolved `ShortcutsManager.LoadBindings()` MethodInfo (for `runtime_invoke`).
 static LOAD_BINDINGS_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `ScreenManager.get_IsInputFocused()` (static).
-static IS_INPUT_FOCUSED_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `ScreenManager.get_IsInputFocused()` (static).
+static IS_INPUT_FOCUSED_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `EventSystem.get_current()` (static, returns instance).
-static EVENT_SYSTEM_CURRENT_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `EventSystem.get_current()` (static, returns instance).
+static EVENT_SYSTEM_CURRENT_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `EventSystem.SetSelectedGameObject(GameObject)`.
-static SET_SELECTED_GO_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `EventSystem.SetSelectedGameObject(GameObject)`.
+static SET_SELECTED_GO_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `IsActive() -> bool` (from UIBehaviour, shared by all UI widgets).
-pub(super) static IS_ACTIVE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `IsActive() -> bool` (from UIBehaviour, shared by all UI widgets).
+pub(super) static IS_ACTIVE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 // ---- Reward screen tracking -----------------------------------------------
 
 /// Per-subclass tracking slot for `GenericRewardsScreenViewController` descendants.
 ///
 /// Each slot holds the IL2CPP class pointer (for runtime dispatch in the AboutToShow/Hide hooks),
-/// the currently tracked instance, and the resolved `OnCollectClicked` function pointer.
+/// the currently tracked instance, and the resolved `OnCollectClicked` method info.
 struct RewardTarget {
     class: AtomicPtr<()>,
     instance: AtomicPtr<()>,
-    on_collect: AtomicPtr<()>,
+    on_collect: AtomicPtr<MethodInfo>,
 }
 
 impl RewardTarget {
@@ -109,8 +110,8 @@ static REWARD_TARGETS: [RewardTarget; 4] =
 /// Tracked instance of `MissionsNotificationPopoutWidget`.
 static MISSIONS_POPOUT_INSTANCE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved `OnCollectButtonClicked` function pointer for the missions popout.
-static MISSIONS_POPOUT_ON_COLLECT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved `OnCollectButtonClicked` method info for the missions popout.
+static MISSIONS_POPOUT_ON_COLLECT: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Original trampoline for `MissionsNotificationPopoutWidget.Awake()`.
 static ORIG_MISSIONS_POPOUT_AWAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -141,11 +142,6 @@ static HOOK_INFO: HookInfo = HookInfo::new("Hotkeys");
 type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 type UpdateFn = unsafe extern "C" fn(*mut Il2CppObject);
 type GetKeyDownIntFn = unsafe extern "C" fn(i32) -> bool;
-type IsInputFocusedFn = unsafe extern "C" fn() -> bool;
-type GetCurrentEventSystemFn = unsafe extern "C" fn() -> *mut Il2CppObject;
-type SetSelectedGoFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject);
-type IsActiveFn = unsafe extern "C" fn(*mut Il2CppObject) -> bool;
-type OnCollectFn = unsafe extern "C" fn(*mut Il2CppObject);
 
 // ---- Input helpers --------------------------------------------------------
 
@@ -171,8 +167,7 @@ pub(super) fn is_input_focused() -> bool {
     if ptr.is_null() {
         return false;
     }
-    let is_focused: IsInputFocusedFn = unsafe { std::mem::transmute(ptr) };
-    unsafe { is_focused() }
+    invoke::static_bool(ptr, "ScreenManager.get_IsInputFocused").unwrap_or(false)
 }
 
 /// Deselect the EventSystem's current selection.
@@ -184,8 +179,9 @@ fn deselect_event_system() {
     if current_fn_ptr.is_null() {
         return;
     }
-    let get_current: GetCurrentEventSystemFn = unsafe { std::mem::transmute(current_fn_ptr) };
-    let event_system = unsafe { get_current() };
+    let Some(event_system) = invoke::static_object(current_fn_ptr, "EventSystem.get_current") else {
+        return;
+    };
     if event_system.is_null() {
         return;
     }
@@ -193,8 +189,12 @@ fn deselect_event_system() {
     if set_fn_ptr.is_null() {
         return;
     }
-    let set_selected: SetSelectedGoFn = unsafe { std::mem::transmute(set_fn_ptr) };
-    unsafe { set_selected(event_system, std::ptr::null_mut()) };
+    invoke::void_object(
+        set_fn_ptr,
+        event_system,
+        std::ptr::null_mut(),
+        "EventSystem.SetSelectedGameObject",
+    );
 }
 
 // ---- ShortcutsManager hook ------------------------------------------------
@@ -521,8 +521,7 @@ fn collect_reward_screen() {
         if is_active_ptr.is_null() {
             return true;
         }
-        let is_active: IsActiveFn = unsafe { std::mem::transmute(is_active_ptr) };
-        unsafe { is_active(instance) }
+        invoke_bool_noargs(is_active_ptr, instance, "UIBehaviour.IsActive").unwrap_or(false)
     };
 
     // Reward screen ViewControllers (slots 0-3).
@@ -542,8 +541,7 @@ fn collect_reward_screen() {
         }
 
         debug!(target: "Hotkeys", "ESC: collecting reward screen");
-        let on_collect: OnCollectFn = unsafe { std::mem::transmute(on_collect_ptr) };
-        unsafe { on_collect(instance) };
+        invoke_void_noargs(on_collect_ptr, instance, "RewardsScreenViewController.OnCollectClicked");
         return;
     }
 
@@ -555,11 +553,51 @@ fn collect_reward_screen() {
             let on_collect_ptr = MISSIONS_POPOUT_ON_COLLECT.load(Relaxed);
             if !on_collect_ptr.is_null() {
                 debug!(target: "Hotkeys", "ESC: collecting missions popout");
-                let on_collect: OnCollectFn = unsafe { std::mem::transmute(on_collect_ptr) };
-                unsafe { on_collect(instance) };
+                invoke_void_noargs(
+                    on_collect_ptr,
+                    instance,
+                    "MissionsNotificationPopoutWidget.OnCollectButtonClicked",
+                );
             }
         }
     }
+}
+
+#[cfg(not(test))]
+fn invoke_bool_noargs(method: *const MethodInfo, instance: *mut Il2CppObject, label: &str) -> Option<bool> {
+    invoke::bool(method, instance, label)
+}
+
+#[cfg(test)]
+fn invoke_bool_noargs(method: *const MethodInfo, instance: *mut Il2CppObject, _label: &str) -> Option<bool> {
+    if method.is_null() || instance.is_null() {
+        return None;
+    }
+    let ptr = unsafe { (*method).method_pointer };
+    if ptr.is_null() {
+        return None;
+    }
+    let f: unsafe extern "C" fn(*mut Il2CppObject) -> bool = unsafe { std::mem::transmute(ptr) };
+    Some(unsafe { f(instance) })
+}
+
+#[cfg(not(test))]
+fn invoke_void_noargs(method: *const MethodInfo, instance: *mut Il2CppObject, label: &str) -> bool {
+    invoke::void(method, instance, label)
+}
+
+#[cfg(test)]
+fn invoke_void_noargs(method: *const MethodInfo, instance: *mut Il2CppObject, _label: &str) -> bool {
+    if method.is_null() || instance.is_null() {
+        return false;
+    }
+    let ptr = unsafe { (*method).method_pointer };
+    if ptr.is_null() {
+        return false;
+    }
+    let f: unsafe extern "C" fn(*mut Il2CppObject) = unsafe { std::mem::transmute(ptr) };
+    unsafe { f(instance) };
+    true
 }
 
 // ---- Settings callbacks ---------------------------------------------------
@@ -828,13 +866,13 @@ fn install_input(api: &Il2CppApi) -> bool {
 
     // IsInputFocused is optional; main action and future keys still work without it.
     if let Some(sm_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") {
-        resolver::resolve_method_pointer_into(api, sm_class, "get_IsInputFocused", 0, &IS_INPUT_FOCUSED_FN);
+        resolver::resolve_method_into(api, sm_class, "get_IsInputFocused", 0, &IS_INPUT_FOCUSED_FN);
     }
 
     // EventSystem: deselect UI after handling the main action to prevent Unity's Submit action.
     if let Some(es_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem") {
-        resolver::resolve_method_pointer_into(api, es_class, "get_current", 0, &EVENT_SYSTEM_CURRENT_FN);
-        resolver::resolve_method_pointer_into(api, es_class, "SetSelectedGameObject", 1, &SET_SELECTED_GO_FN);
+        resolver::resolve_method_into(api, es_class, "get_current", 0, &EVENT_SYSTEM_CURRENT_FN);
+        resolver::resolve_method_into(api, es_class, "SetSelectedGameObject", 1, &SET_SELECTED_GO_FN);
         if !EVENT_SYSTEM_CURRENT_FN.load(Relaxed).is_null() && !SET_SELECTED_GO_FN.load(Relaxed).is_null() {
             debug!(target: "Hotkeys", "EventSystem deselect resolved");
         } else {
@@ -872,14 +910,14 @@ fn install_reward_tracking(api: &Il2CppApi) {
         };
         REWARD_TARGETS[slot].class.store(class as *mut (), Relaxed);
 
-        resolver::resolve_method_pointer_into(api, class, "OnCollectClicked", 0, &REWARD_TARGETS[slot].on_collect);
+        resolver::resolve_method_into(api, class, "OnCollectClicked", 0, &REWARD_TARGETS[slot].on_collect);
     }
 
     // Resolve IsActive from UIBehaviour (shared, only need it once from any resolved class).
     for target in &REWARD_TARGETS {
         let class = target.class.load(Relaxed);
         if !class.is_null()
-            && resolver::resolve_method_pointer_into(api, class as *mut Il2CppClass, "IsActive", 0, &IS_ACTIVE_FN)
+            && resolver::resolve_method_into(api, class as *mut Il2CppClass, "IsActive", 0, &IS_ACTIVE_FN)
         {
             break;
         }
@@ -977,7 +1015,7 @@ fn install_widget_collect_tracking(api: &Il2CppApi) {
         return;
     };
 
-    resolver::resolve_method_pointer_into(api, class, "OnCollectButtonClicked", 0, &MISSIONS_POPOUT_ON_COLLECT);
+    resolver::resolve_method_into(api, class, "OnCollectButtonClicked", 0, &MISSIONS_POPOUT_ON_COLLECT);
 
     tracker::install_resolved_hook(
         api,
@@ -1198,10 +1236,20 @@ mod tests {
         // Slot 0 and 2 both have instances and on_collect. Slot 0 should win.
         let inst_0 = 0xDEAD_1000usize as *mut ();
         let inst_2 = 0xDEAD_2000usize as *mut ();
+        let collect_0 = MethodInfo {
+            method_pointer: fake_collect_0 as *const (),
+        };
+        let collect_2 = MethodInfo {
+            method_pointer: fake_collect_2 as *const (),
+        };
         REWARD_TARGETS[0].instance.store(inst_0, Relaxed);
-        REWARD_TARGETS[0].on_collect.store(fake_collect_0 as *mut (), Relaxed);
+        REWARD_TARGETS[0]
+            .on_collect
+            .store(&collect_0 as *const MethodInfo as *mut MethodInfo, Relaxed);
         REWARD_TARGETS[2].instance.store(inst_2, Relaxed);
-        REWARD_TARGETS[2].on_collect.store(fake_collect_2 as *mut (), Relaxed);
+        REWARD_TARGETS[2]
+            .on_collect
+            .store(&collect_2 as *const MethodInfo as *mut MethodInfo, Relaxed);
 
         collect_reward_screen();
         assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), 0);
@@ -1217,8 +1265,13 @@ mod tests {
 
         // Slot 0 empty, slot 2 populated. Slot 2 should be called.
         let inst_2 = 0xDEAD_3000usize as *mut ();
+        let collect_2 = MethodInfo {
+            method_pointer: fake_collect_2 as *const (),
+        };
         REWARD_TARGETS[2].instance.store(inst_2, Relaxed);
-        REWARD_TARGETS[2].on_collect.store(fake_collect_2 as *mut (), Relaxed);
+        REWARD_TARGETS[2]
+            .on_collect
+            .store(&collect_2 as *const MethodInfo as *mut MethodInfo, Relaxed);
 
         collect_reward_screen();
         assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), 2);
@@ -1238,13 +1291,26 @@ mod tests {
 
         // Slot 0 has instance + on_collect, but IsActive returns false.
         // Slot 2 has instance + on_collect and no IsActive gate (should be called).
-        IS_ACTIVE_FN.store(fake_is_active_false as *mut (), Relaxed);
+        let is_active = MethodInfo {
+            method_pointer: fake_is_active_false as *const (),
+        };
+        let collect_0 = MethodInfo {
+            method_pointer: fake_collect_0 as *const (),
+        };
+        let collect_2 = MethodInfo {
+            method_pointer: fake_collect_2 as *const (),
+        };
+        IS_ACTIVE_FN.store(&is_active as *const MethodInfo as *mut MethodInfo, Relaxed);
         let inst_0 = 0xDEAD_4000usize as *mut ();
         let inst_2 = 0xDEAD_5000usize as *mut ();
         REWARD_TARGETS[0].instance.store(inst_0, Relaxed);
-        REWARD_TARGETS[0].on_collect.store(fake_collect_0 as *mut (), Relaxed);
+        REWARD_TARGETS[0]
+            .on_collect
+            .store(&collect_0 as *const MethodInfo as *mut MethodInfo, Relaxed);
         REWARD_TARGETS[2].instance.store(inst_2, Relaxed);
-        REWARD_TARGETS[2].on_collect.store(fake_collect_2 as *mut (), Relaxed);
+        REWARD_TARGETS[2]
+            .on_collect
+            .store(&collect_2 as *const MethodInfo as *mut MethodInfo, Relaxed);
 
         collect_reward_screen();
         // IsActive is global, returns false for ALL instances. Neither should be called.
