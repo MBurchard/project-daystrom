@@ -142,22 +142,3 @@ pub fn resolve_method_into(
     target.store(method as *mut MethodInfo, Relaxed);
     true
 }
-
-/// Resolve a method and cache its raw native method pointer.
-///
-/// Returns `false` when resolution fails. Failure details are logged by `resolve_method`.
-pub fn resolve_method_pointer_into(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    method_name: &str,
-    param_count: i32,
-    target: &AtomicPtr<()>,
-) -> bool {
-    let Some(method) = resolve_method(api, class, method_name, param_count) else {
-        return false;
-    };
-
-    let ptr = unsafe { (*method).method_pointer };
-    target.store(ptr as *mut (), Relaxed);
-    true
-}

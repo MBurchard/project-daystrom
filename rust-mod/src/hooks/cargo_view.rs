@@ -9,6 +9,7 @@ use log::{debug, warn};
 
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -31,17 +32,17 @@ static ORIG_SHOW_WITH_FLEET: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut()
 /// `RewardsButtonWidget._rewardsController`.
 static OFFSET_REWARDS_CONTROLLER: AtomicUsize = AtomicUsize::new(0);
 
-/// Function pointer for `VisibilityController.Show(bool)`.
-static VISIBILITY_SHOW_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `VisibilityController.Show(bool)`.
+static VISIBILITY_SHOW_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `FleetDeployedData.get_FleetType()`.
-static GET_FLEET_TYPE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `FleetDeployedData.get_FleetType()`.
+static GET_FLEET_TYPE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `FleetDeployedData.get_Hull()`.
-static GET_HULL_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `FleetDeployedData.get_Hull()`.
+static GET_HULL_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `HullSpec.get_Type()`.
-static GET_HULL_TYPE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `HullSpec.get_Type()`.
+static GET_HULL_TYPE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 // ---- Game enum values ------------------------------------------------------
 
@@ -55,9 +56,6 @@ const MODEL_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-C
 // ---- Type aliases ----------------------------------------------------------
 
 type ShowWithFleetFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject);
-type ShowVisibilityFn = unsafe extern "C" fn(*mut Il2CppObject, bool);
-type GetI32Fn = unsafe extern "C" fn(*mut Il2CppObject) -> i32;
-type GetObjectFn = unsafe extern "C" fn(*mut Il2CppObject) -> *mut Il2CppObject;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CargoTargetKind {
@@ -110,8 +108,12 @@ fn maybe_open_cargo(prescan: *mut Il2CppObject) {
     }
 
     debug!(target: "CargoView", "Opening cargo view for {kind:?}");
-    let show: ShowVisibilityFn = unsafe { std::mem::transmute(show_ptr) };
-    unsafe { show(rewards_controller as *mut Il2CppObject, true) };
+    invoke::void_bool(
+        show_ptr,
+        rewards_controller as *mut Il2CppObject,
+        true,
+        "VisibilityController.Show",
+    );
 }
 
 fn should_open_for(kind: CargoTargetKind) -> bool {
@@ -155,29 +157,12 @@ fn classify_target(prescan: *mut Il2CppObject) -> Option<CargoTargetKind> {
 }
 
 fn get_fleet_type(fleet: *mut Il2CppObject) -> Option<i32> {
-    let fn_ptr = GET_FLEET_TYPE_FN.load(Relaxed);
-    if fn_ptr.is_null() {
-        return None;
-    }
-    let get_fleet_type: GetI32Fn = unsafe { std::mem::transmute(fn_ptr) };
-    Some(unsafe { get_fleet_type(fleet) })
+    invoke::i32(GET_FLEET_TYPE_FN.load(Relaxed), fleet, "FleetDeployedData.get_FleetType")
 }
 
 fn get_hull_type(fleet: *mut Il2CppObject) -> Option<i32> {
-    let get_hull_ptr = GET_HULL_FN.load(Relaxed);
-    let get_hull_type_ptr = GET_HULL_TYPE_FN.load(Relaxed);
-    if get_hull_ptr.is_null() || get_hull_type_ptr.is_null() {
-        return None;
-    }
-
-    let get_hull: GetObjectFn = unsafe { std::mem::transmute(get_hull_ptr) };
-    let hull = unsafe { get_hull(fleet) };
-    if hull.is_null() {
-        return None;
-    }
-
-    let get_hull_type: GetI32Fn = unsafe { std::mem::transmute(get_hull_type_ptr) };
-    Some(unsafe { get_hull_type(hull) })
+    let hull = invoke::object(GET_HULL_FN.load(Relaxed), fleet, "FleetDeployedData.get_Hull")?;
+    invoke::i32(GET_HULL_TYPE_FN.load(Relaxed), hull, "HullSpec.get_Type")
 }
 
 // ---- Installation ---------------------------------------------------------
@@ -250,6 +235,12 @@ fn resolve_offset(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, ta
     resolver::resolve_field_offset_into(api, class, field_name, target);
 }
 
-fn resolve_fn(api: &Il2CppApi, class: *mut Il2CppClass, method_name: &str, param_count: i32, target: &AtomicPtr<()>) {
-    resolver::resolve_method_pointer_into(api, class, method_name, param_count, target);
+fn resolve_fn(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+    target: &AtomicPtr<MethodInfo>,
+) {
+    resolver::resolve_method_into(api, class, method_name, param_count, target);
 }

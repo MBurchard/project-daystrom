@@ -10,6 +10,7 @@ use log::debug;
 
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -18,8 +19,8 @@ use crate::il2cpp::types::*;
 /// Original function pointer for `InterstitialViewController.AboutToShow()`.
 static ORIGINAL_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Direct function pointer for `InterstitialViewController.CloseWhenReady()`.
-static CLOSE_WHEN_READY_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Method info for `InterstitialViewController.CloseWhenReady()`.
+static CLOSE_WHEN_READY_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Whether the first interstitial has already been seen this session.
 static FIRST_SEEN: AtomicBool = AtomicBool::new(false);
@@ -39,8 +40,7 @@ extern "C" fn hook_about_to_show(this: *mut Il2CppObject) {
         let close_ptr = CLOSE_WHEN_READY_FN.load(Relaxed);
         if !close_ptr.is_null() {
             debug!(target: "Interstitial", "Closing first popup");
-            let close: LifecycleFn = unsafe { std::mem::transmute(close_ptr) };
-            unsafe { close(this) };
+            invoke::void(close_ptr, this, "InterstitialViewController.CloseWhenReady");
             return;
         }
         // Defensive: if CloseWhenReady wasn't resolved, fall through to original.
@@ -57,8 +57,7 @@ extern "C" fn hook_about_to_show(this: *mut Il2CppObject) {
 
 /// Install the interstitial popup hook.
 ///
-/// Hooks `InterstitialViewController.AboutToShow` and resolves `CloseWhenReady` for direct
-/// invocation.
+/// Hooks `InterstitialViewController.AboutToShow` and resolves `CloseWhenReady` for guarded invocation.
 pub fn install(api: &Il2CppApi) {
     let Some(class) =
         resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Interstitial", "InterstitialViewController")
@@ -67,8 +66,8 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    // Resolve CloseWhenReady (0 params) for direct call.
-    if !resolver::resolve_method_pointer_into(api, class, "CloseWhenReady", 0, &CLOSE_WHEN_READY_FN) {
+    // Resolve CloseWhenReady (0 params) for guarded invocation.
+    if !resolver::resolve_method_into(api, class, "CloseWhenReady", 0, &CLOSE_WHEN_READY_FN) {
         return;
     }
 

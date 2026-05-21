@@ -19,7 +19,7 @@ use log::debug;
 
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
-use crate::il2cpp::{resolver, types::*};
+use crate::il2cpp::{invoke, resolver, types::*};
 
 // ---- Constants ------------------------------------------------------------
 
@@ -49,14 +49,14 @@ static FRAME_MGR: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut())
 /// Tracked ChatPreviewController instance (set by the AboutToShow hook).
 static CHAT_PREVIEW: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved function pointer for `ChatPreviewController.OnSidePanelButtonClicked()`.
-static CLICK_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved method info for `ChatPreviewController.OnSidePanelButtonClicked()`.
+static CLICK_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved function pointer for `UIFrameManager.ResizeSideFrame(float)`.
-static RESIZE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved method info for `UIFrameManager.ResizeSideFrame(float)`.
+static RESIZE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved function pointer for `UIFrameManager.GetMaxSideFrameWidth() -> float`.
-static MAX_WIDTH_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved method info for `UIFrameManager.GetMaxSideFrameWidth() -> float`.
+static MAX_WIDTH_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Original function pointer for `UIFrameManager.OnEnable()`.
 static ORIG_MGR_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -86,8 +86,6 @@ static CHAT_SHOW_LOGGED: AtomicBool = AtomicBool::new(false);
 
 type VoidFn = unsafe extern "C" fn(*mut Il2CppObject);
 type MsgFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject);
-type ResizeFn = unsafe extern "C" fn(*mut Il2CppObject, f32);
-type GetFloatFn = unsafe extern "C" fn(*mut Il2CppObject) -> f32;
 
 // ---- Hooks ----------------------------------------------------------------
 
@@ -234,8 +232,7 @@ fn try_restore() {
         ptr.write(TAB_ALLIANCE);
     }
 
-    let click: VoidFn = unsafe { std::mem::transmute(click_ptr) };
-    unsafe { click(chat) };
+    invoke::void(click_ptr, chat, "ChatPreviewController.OnSidePanelButtonClicked");
     debug!(target: "ChatFrame", "Auto-opened chat sidebar (Alliance tab)");
 
     // Resize directly on the captured UIFrameManager instance.
@@ -243,8 +240,7 @@ fn try_restore() {
     let resize_ptr = RESIZE_FN.load(Relaxed);
     if !resize_ptr.is_null() {
         let width = get_max_width(mgr);
-        let resize: ResizeFn = unsafe { std::mem::transmute(resize_ptr) };
-        unsafe { resize(mgr, width) };
+        invoke::void_f32(resize_ptr, mgr, width, "UIFrameManager.ResizeSideFrame");
         debug!(target: "ChatFrame", "Applied sidebar width: {width:.0}");
     }
 }
@@ -255,8 +251,7 @@ fn get_max_width(mgr: *mut Il2CppObject) -> f32 {
     if ptr.is_null() {
         return FALLBACK_WIDTH;
     }
-    let get_max: GetFloatFn = unsafe { std::mem::transmute(ptr) };
-    let width = unsafe { get_max(mgr) };
+    let width = invoke::f32(ptr, mgr, "UIFrameManager.GetMaxSideFrameWidth").unwrap_or(FALLBACK_WIDTH);
     if width > 0.0 { width } else { FALLBACK_WIDTH }
 }
 
@@ -286,8 +281,8 @@ pub fn install(api: &Il2CppApi) {
     install_hook(api, frame_mgr_class, "OnEnable", hook_mgr_enable as *const (), &ORIG_MGR_ENABLE);
 
     // Resolve ResizeSideFrame and GetMaxSideFrameWidth (called during restore, not hooked).
-    resolver::resolve_method_pointer_into(api, frame_mgr_class, "ResizeSideFrame", 1, &RESIZE_FN);
-    resolver::resolve_method_pointer_into(api, frame_mgr_class, "GetMaxSideFrameWidth", 0, &MAX_WIDTH_FN);
+    resolver::resolve_method_into(api, frame_mgr_class, "ResizeSideFrame", 1, &RESIZE_FN);
+    resolver::resolve_method_into(api, frame_mgr_class, "GetMaxSideFrameWidth", 0, &MAX_WIDTH_FN);
 
     // ---- ChatPreviewController ----
     let Some(chat_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController")
@@ -309,7 +304,7 @@ pub fn install(api: &Il2CppApi) {
     install_hook(api, chat_class, "Update", hook_chat_update as *const (), &ORIG_CHAT_UPDATE);
 
     // Resolve OnSidePanelButtonClicked (called during restore, not hooked).
-    resolver::resolve_method_pointer_into(api, chat_class, "OnSidePanelButtonClicked", 0, &CLICK_FN);
+    resolver::resolve_method_into(api, chat_class, "OnSidePanelButtonClicked", 0, &CLICK_FN);
 
     // ---- ChatService (different assembly) ----
     let Some(chat_service_class) = resolver::resolve_class(
