@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
-use crate::hook::engine;
 use crate::hooks::tracker::{self, instance_tracker};
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -65,32 +65,32 @@ static ORIG_PRESCAN_DESTROY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut()
 /// Original OnDestroy trampoline for the shared viewer destroy hook.
 static ORIG_VIEWER_DESTROY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `ScanEngageButtonsWidget.OnEngageButtonClicked()`.
-static ON_ENGAGE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// MethodInfo for `ScanEngageButtonsWidget.OnEngageButtonClicked()`.
+static ON_ENGAGE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `PreScanTargetWidget.OnAddToQueueClickedEventHandler()`.
-static ON_QUEUE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// MethodInfo for `PreScanTargetWidget.OnAddToQueueClickedEventHandler()`.
+static ON_QUEUE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `GenericButtonWidget.get_Interactable() -> bool`.
-static GET_INTERACTABLE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// MethodInfo for `UIBehaviour.IsActive() -> bool`.
+static IS_ACTIVE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `MiningObjectViewerWidget.MineClicked()`.
-static MINE_CLICKED_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// MethodInfo for `GenericButtonWidget.get_Interactable() -> bool`.
+static GET_INTERACTABLE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `StarNodeObjectViewerWidget.InitiateWarp()`.
-static INITIATE_WARP_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// MethodInfo for `MiningObjectViewerWidget.MineClicked()`.
+static MINE_CLICKED_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Function pointer for `NavigationInteractionUIViewController.OnSetCourseButtonClick()`.
-static ON_SET_COURSE_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// MethodInfo for `StarNodeObjectViewerWidget.InitiateWarp()`.
+static INITIATE_WARP_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
+/// MethodInfo for `NavigationInteractionUIViewController.OnSetCourseButtonClick()`.
+static ON_SET_COURSE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Whether the first main action has been logged.
 static LOGGED_FIRST_ACTION: AtomicBool = AtomicBool::new(false);
 
 // ---- Type aliases ---------------------------------------------------------
 
-type ActionFn = unsafe extern "C" fn(*mut Il2CppObject);
-type IsActiveFn = unsafe extern "C" fn(*mut Il2CppObject) -> bool;
-type GetInteractableFn = unsafe extern "C" fn(*mut Il2CppObject) -> bool;
 type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 
 // ---- PreScan Awake/OnDestroy hooks (class-dispatched) ---------------------
@@ -228,8 +228,8 @@ fn try_engage(prescan: *mut ()) -> bool {
 ///
 /// Reads `_scanEngageButtonsWidget` → `_engageButton` and checks if the button is active (visible).
 fn try_normal_engage(prescan: *mut ()) -> bool {
-    let fn_ptr = ON_ENGAGE_FN.load(Relaxed);
-    if fn_ptr.is_null() {
+    let method = ON_ENGAGE_METHOD.load(Relaxed);
+    if method.is_null() {
         return false;
     }
     let scan_offset = OFFSET_SCAN_ENGAGE.load(Relaxed);
@@ -251,17 +251,19 @@ fn try_normal_engage(prescan: *mut ()) -> bool {
     }
 
     log_first("engaging target");
-    let on_engage: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
-    unsafe { on_engage(scan_widget as *mut Il2CppObject) };
-    true
+    invoke::void(
+        method,
+        scan_widget as *mut Il2CppObject,
+        "ScanEngageButtonsWidget.OnEngageButtonClicked",
+    )
 }
 
 /// Try queue attack via `PreScanTargetWidget.OnAddToQueueClickedEventHandler()`.
 ///
 /// Checks if the queue button is active (visible) and interactable (queue not full).
 fn try_queue_attack(prescan: *mut ()) -> bool {
-    let fn_ptr = ON_QUEUE_FN.load(Relaxed);
-    if fn_ptr.is_null() {
+    let method = ON_QUEUE_METHOD.load(Relaxed);
+    if method.is_null() {
         return false;
     }
     let btn_offset = OFFSET_QUEUE_BUTTON.load(Relaxed);
@@ -277,53 +279,49 @@ fn try_queue_attack(prescan: *mut ()) -> bool {
     }
 
     log_first("queueing attack");
-    let on_queue: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
-    unsafe { on_queue(prescan as *mut Il2CppObject) };
-    true
+    invoke::void(
+        method,
+        prescan as *mut Il2CppObject,
+        "PreScanTargetWidget.OnAddToQueueClickedEventHandler",
+    )
 }
 
 /// Check if a widget's GameObject is active (visible) via `UIBehaviour.IsActive()`.
 fn is_widget_active(widget: *const ()) -> bool {
-    let is_active_ptr = super::hotkeys::IS_ACTIVE_FN.load(Relaxed);
-    if is_active_ptr.is_null() {
+    let method = IS_ACTIVE_METHOD.load(Relaxed);
+    if method.is_null() {
         return true; // Optimistic if unresolved.
     }
-    let is_active: IsActiveFn = unsafe { std::mem::transmute(is_active_ptr) };
-    unsafe { is_active(widget as *mut Il2CppObject) }
+    invoke::bool(method, widget as *mut Il2CppObject, "UIBehaviour.IsActive").unwrap_or(false)
 }
 
 /// Check if a GenericButtonWidget is interactable via `get_Interactable()`.
 fn is_button_interactable(widget: *const ()) -> bool {
-    let fn_ptr = GET_INTERACTABLE_FN.load(Relaxed);
-    if fn_ptr.is_null() {
+    let method = GET_INTERACTABLE_METHOD.load(Relaxed);
+    if method.is_null() {
         return true; // Optimistic if unresolved.
     }
-    let get_interactable: GetInteractableFn = unsafe { std::mem::transmute(fn_ptr) };
-    unsafe { get_interactable(widget as *mut Il2CppObject) }
+    invoke::bool(method, widget as *mut Il2CppObject, "GenericButtonWidget.get_Interactable").unwrap_or(false)
 }
 
 /// Call `MineClicked()` on the MiningObjectViewerWidget.
 fn try_mine(mining: *mut ()) -> bool {
-    let fn_ptr = MINE_CLICKED_FN.load(Relaxed);
-    if fn_ptr.is_null() {
+    let method = MINE_CLICKED_METHOD.load(Relaxed);
+    if method.is_null() {
         return false;
     }
     log_first("mining node");
-    let mine: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
-    unsafe { mine(mining as *mut Il2CppObject) };
-    true
+    invoke::void(method, mining as *mut Il2CppObject, "MiningObjectViewerWidget.MineClicked")
 }
 
 /// Call `InitiateWarp()` on the StarNodeObjectViewerWidget.
 fn try_warp(starnode: *mut ()) -> bool {
-    let fn_ptr = INITIATE_WARP_FN.load(Relaxed);
-    if fn_ptr.is_null() {
+    let method = INITIATE_WARP_METHOD.load(Relaxed);
+    if method.is_null() {
         return false;
     }
     log_first("initiating warp");
-    let warp: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
-    unsafe { warp(starnode as *mut Il2CppObject) };
-    true
+    invoke::void(method, starnode as *mut Il2CppObject, "StarNodeObjectViewerWidget.InitiateWarp")
 }
 
 /// Trigger `OnSetCourseButtonClick()` on the `NavigationInteractionUIViewController`.
@@ -331,8 +329,8 @@ fn try_warp(starnode: *mut ()) -> bool {
 /// This is the fallback when no viewer widget is open. It sends the selected fleet to the targeted
 /// location, which works even when the target is in a different system.
 fn try_set_course() -> bool {
-    let fn_ptr = ON_SET_COURSE_FN.load(Relaxed);
-    if fn_ptr.is_null() {
+    let method = ON_SET_COURSE_METHOD.load(Relaxed);
+    if method.is_null() {
         return false;
     }
     let nav = nav_controller::get();
@@ -340,9 +338,11 @@ fn try_set_course() -> bool {
         return false;
     }
     log_first("setting course");
-    let set_course: ActionFn = unsafe { std::mem::transmute(fn_ptr) };
-    unsafe { set_course(nav as *mut Il2CppObject) };
-    true
+    invoke::void(
+        method,
+        nav as *mut Il2CppObject,
+        "NavigationInteractionUIViewController.OnSetCourseButtonClick",
+    )
 }
 
 /// Log the first main action (once per session).
@@ -363,66 +363,35 @@ pub fn install(api: &Il2CppApi) {
     // _visibilityController is inherited from ObjectViewerBaseWidget; resolving on any
     // concrete subclass works because IL2CPP traverses the class hierarchy.
     if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController") {
-        if let Some(offset) = resolver::resolve_field_offset(api, c, "_state") {
-            OFFSET_VIS_STATE.store(offset, Relaxed);
-            debug!(target: "Hotkeys", "VisibilityController._state offset: {offset:#x}");
-        } else {
-            warn!(target: "Hotkeys", "Could not resolve VisibilityController._state");
-        }
+        resolver::resolve_field_offset_into(api, c, "_state", &OFFSET_VIS_STATE);
     }
 
-    // PreScanTargetWidget has its own OnDestroy override, so full installation is safe.
+    // PreScanTargetWidget has its own OnDestroy override, so installing both hooks is safe.
     if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget") {
         // Resolve _visibilityController offset on a concrete viewer subclass.
-        if let Some(offset) = resolver::resolve_field_offset(api, c, "_visibilityController") {
-            OFFSET_VIS_CTRL.store(offset, Relaxed);
-            debug!(target: "Hotkeys", "ObjectViewerBaseWidget._visibilityController offset: {offset:#x}");
-        } else {
-            warn!(target: "Hotkeys", "Could not resolve _visibilityController");
-        }
+        resolver::resolve_field_offset_into(api, c, "_visibilityController", &OFFSET_VIS_CTRL);
 
-        if let Some(offset) = resolver::resolve_field_offset(api, c, "_scanEngageButtonsWidget") {
-            OFFSET_SCAN_ENGAGE.store(offset, Relaxed);
-            debug!(target: "Hotkeys", "PreScanTargetWidget._scanEngageButtonsWidget offset: {offset:#x}");
-        } else {
-            warn!(target: "Hotkeys", "Could not resolve _scanEngageButtonsWidget");
-        }
+        resolver::resolve_field_offset_into(api, c, "_scanEngageButtonsWidget", &OFFSET_SCAN_ENGAGE);
 
-        if let Some(offset) = resolver::resolve_field_offset(api, c, "_addToQueueButtonWidget") {
-            OFFSET_QUEUE_BUTTON.store(offset, Relaxed);
-            debug!(target: "Hotkeys", "PreScanTargetWidget._addToQueueButtonWidget offset: {offset:#x}");
-        } else {
-            warn!(target: "Hotkeys", "Could not resolve _addToQueueButtonWidget");
-        }
+        resolver::resolve_field_offset_into(api, c, "_addToQueueButtonWidget", &OFFSET_QUEUE_BUTTON);
 
-        if let Some(p) = tracker::resolve_fn(api, c, "OnAddToQueueClickedEventHandler", 0) {
-            ON_QUEUE_FN.store(p as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "OnAddToQueueClickedEventHandler resolved");
-        } else {
-            warn!(target: "Hotkeys", "OnAddToQueueClickedEventHandler not found");
-        }
+        resolver::resolve_method_into(api, c, "OnAddToQueueClickedEventHandler", 0, &ON_QUEUE_METHOD);
 
         // Hook Awake/OnDestroy manually with class-dispatching hooks instead of prescan::install().
         // PreScanStationTargetWidget (player bases) inherits these methods, so a single hook pair
         // catches both widget types. The hooks dispatch to separate trackers based on the IL2CPP class.
-        if let Some(awake_ptr) = tracker::resolve_fn(api, c, "Awake", 0) {
-            match engine::install_hook("PreScanAwake", awake_ptr, hook_prescan_awake as *const ()) {
-                Ok(orig) => {
-                    ORIG_PRESCAN_AWAKE.store(orig as *mut (), Relaxed);
-                    debug!(target: "HookEngine", "PreScan Awake hook installed (class-dispatched)");
-                }
-                Err(e) => warn!(target: "HookEngine", "Failed to hook PreScan Awake: {e}"),
-            }
-        }
-        if let Some(destroy_ptr) = tracker::resolve_fn(api, c, "OnDestroy", 0) {
-            match engine::install_hook("PreScanDestroy", destroy_ptr, hook_prescan_destroy as *const ()) {
-                Ok(orig) => {
-                    ORIG_PRESCAN_DESTROY.store(orig as *mut (), Relaxed);
-                    debug!(target: "HookEngine", "PreScan OnDestroy hook installed (class-dispatched)");
-                }
-                Err(e) => warn!(target: "HookEngine", "Failed to hook PreScan OnDestroy: {e}"),
-            }
-        }
+        tracker::install_resolved_hook(api, c, "Awake", 0, "PreScanAwake", hook_prescan_awake as *const (), |orig| {
+            ORIG_PRESCAN_AWAKE.store(orig as *mut (), Relaxed)
+        });
+        tracker::install_resolved_hook(
+            api,
+            c,
+            "OnDestroy",
+            0,
+            "PreScanDestroy",
+            hook_prescan_destroy as *const (),
+            |orig| ORIG_PRESCAN_DESTROY.store(orig as *mut (), Relaxed),
+        );
     }
 
     // Resolve PreScanStationTargetWidget class pointer for runtime dispatch in the Awake hook.
@@ -437,27 +406,16 @@ pub fn install(api: &Il2CppApi) {
     // ScanEngageButtonsWidget.OnEngageButtonClicked (no tracking needed, reached via
     // PreScanTargetWidget._scanEngageButtonsWidget field).
     if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "ScanEngageButtonsWidget") {
-        if let Some(p) = tracker::resolve_fn(api, c, "OnEngageButtonClicked", 0) {
-            ON_ENGAGE_FN.store(p as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "OnEngageButtonClicked resolved");
-        } else {
-            warn!(target: "Hotkeys", "OnEngageButtonClicked not found");
-        }
+        resolver::resolve_method_into(api, c, "OnEngageButtonClicked", 0, &ON_ENGAGE_METHOD);
 
-        if let Some(offset) = resolver::resolve_field_offset(api, c, "_engageButton") {
-            OFFSET_ENGAGE_BUTTON.store(offset, Relaxed);
-            debug!(target: "Hotkeys", "ScanEngageButtonsWidget._engageButton offset: {offset:#x}");
-        }
+        resolver::resolve_method_into(api, c, "IsActive", 0, &IS_ACTIVE_METHOD);
+
+        resolver::resolve_field_offset_into(api, c, "_engageButton", &OFFSET_ENGAGE_BUTTON);
     }
 
     // GenericButtonWidget.get_Interactable (needed for queue button state check).
     if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget") {
-        if let Some(p) = tracker::resolve_fn(api, c, "get_Interactable", 0) {
-            GET_INTERACTABLE_FN.store(p as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "GenericButtonWidget.get_Interactable resolved");
-        } else {
-            warn!(target: "Hotkeys", "GenericButtonWidget.get_Interactable not found");
-        }
+        resolver::resolve_method_into(api, c, "get_Interactable", 0, &GET_INTERACTABLE_METHOD);
     }
 
     // MiningObjectViewerWidget and StarNodeObjectViewerWidget share the base class OnDestroy,
@@ -467,24 +425,14 @@ pub fn install(api: &Il2CppApi) {
     {
         mining::install_awake(api, c, "Mining");
         install_shared_destroy(api, c);
-        if let Some(p) = tracker::resolve_fn(api, c, "MineClicked", 0) {
-            MINE_CLICKED_FN.store(p as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "MineClicked resolved");
-        } else {
-            warn!(target: "Hotkeys", "MineClicked not found");
-        }
+        resolver::resolve_method_into(api, c, "MineClicked", 0, &MINE_CLICKED_METHOD);
     }
 
     if let Some(c) =
         resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "StarNodeObjectViewerWidget")
     {
         starnode::install_awake(api, c, "StarNode");
-        if let Some(p) = tracker::resolve_fn(api, c, "InitiateWarp", 0) {
-            INITIATE_WARP_FN.store(p as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "InitiateWarp resolved");
-        } else {
-            warn!(target: "Hotkeys", "InitiateWarp not found");
-        }
+        resolver::resolve_method_into(api, c, "InitiateWarp", 0, &INITIATE_WARP_METHOD);
     }
 
     // NavigationInteractionUIViewController: fallback "Set Course" when no viewer is open.
@@ -495,12 +443,7 @@ pub fn install(api: &Il2CppApi) {
         "NavigationInteractionUIViewController",
     ) {
         nav_controller::install(api, c, "NavController");
-        if let Some(p) = tracker::resolve_fn(api, c, "OnSetCourseButtonClick", 0) {
-            ON_SET_COURSE_FN.store(p as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "OnSetCourseButtonClick resolved");
-        } else {
-            warn!(target: "Hotkeys", "OnSetCourseButtonClick not found");
-        }
+        resolver::resolve_method_into(api, c, "OnSetCourseButtonClick", 0, &ON_SET_COURSE_METHOD);
     }
 }
 
@@ -512,16 +455,15 @@ fn install_shared_destroy(api: &Il2CppApi, class: *mut Il2CppClass) {
     if !ORIG_VIEWER_DESTROY.load(Relaxed).is_null() {
         return; // Already installed.
     }
-    let Some(ptr) = tracker::resolve_fn(api, class, "OnDestroy", 0) else {
-        return;
-    };
-    match engine::install_hook("ViewerDestroy", ptr, hook_viewer_destroy as *const ()) {
-        Ok(orig) => {
-            ORIG_VIEWER_DESTROY.store(orig as *mut (), Relaxed);
-            debug!(target: "HookEngine", "Shared viewer OnDestroy hook installed");
-        }
-        Err(e) => warn!(target: "HookEngine", "Failed to hook viewer OnDestroy: {e}"),
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "OnDestroy",
+        0,
+        "ViewerDestroy",
+        hook_viewer_destroy as *const (),
+        |orig| ORIG_VIEWER_DESTROY.store(orig as *mut (), Relaxed),
+    );
 }
 
 // ---- Tests ----------------------------------------------------------------
@@ -562,13 +504,13 @@ mod tests {
 
     #[test]
     fn is_widget_active_optimistic_when_unresolved() {
-        // IS_ACTIVE_FN is null by default in tests, should return true (optimistic).
+        // IS_ACTIVE_METHOD is null by default in tests, should return true (optimistic).
         assert!(is_widget_active(std::ptr::null()));
     }
 
     #[test]
     fn is_button_interactable_optimistic_when_unresolved() {
-        // GET_INTERACTABLE_FN is null by default in tests, should return true (optimistic).
+        // GET_INTERACTABLE_METHOD is null by default in tests, should return true (optimistic).
         assert!(is_button_interactable(std::ptr::null()));
     }
 }

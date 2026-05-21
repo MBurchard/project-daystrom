@@ -1,10 +1,10 @@
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering::Relaxed};
 
-use log::{debug, error, warn};
+use log::{debug, warn};
 
-use crate::hook::engine;
 use crate::hook::safety::HookInfo;
+use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -170,42 +170,21 @@ pub fn install(api: &Il2CppApi) {
     };
 
     // Resolve field offsets dynamically via IL2CPP reflection.
-    if let Some(offset) = resolver::resolve_field_offset(api, sm_class, "m_canvasRootScaler") {
-        OFFSET_ROOT_SCALER.store(offset, Relaxed);
-        debug!(target: "UiScale", "ScreenManager.m_canvasRootScaler offset: {offset:#x}");
-    } else {
-        warn!(target: "UiScale", "Could not resolve ScreenManager.m_canvasRootScaler");
-    }
+    resolver::resolve_field_offset_into(api, sm_class, "m_canvasRootScaler", &OFFSET_ROOT_SCALER);
 
     if let Some(cs_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.UI", "CanvasScaler") {
-        if let Some(offset) = resolver::resolve_field_offset(api, cs_class, "m_ScaleFactor") {
-            OFFSET_SCALE_FACTOR.store(offset, Relaxed);
-            debug!(target: "UiScale", "CanvasScaler.m_ScaleFactor offset: {offset:#x}");
-        } else {
-            warn!(target: "UiScale", "Could not resolve CanvasScaler.m_ScaleFactor");
-        }
+        resolver::resolve_field_offset_into(api, cs_class, "m_ScaleFactor", &OFFSET_SCALE_FACTOR);
     } else {
         warn!(target: "UiScale", "CanvasScaler class not found");
     }
 
-    let Some(update_method) = resolver::resolve_method(api, sm_class, "UpdateCanvasRootScaleFactor", 0) else {
-        return;
-    };
-    let update_target = unsafe { (*update_method).method_pointer };
-
-    match engine::install_hook("UiScale", update_target, hook_update as *const ()) {
-        Ok(original) => {
-            ORIGINAL_FN.store(original as *mut (), Relaxed);
-            debug!(
-                target: "HookEngine",
-                "UiScale hook installed (ScreenManager.UpdateCanvasRootScaleFactor)"
-            );
-        }
-        Err(e) => {
-            error!(
-                target: "HookEngine",
-                "Failed to hook UpdateCanvasRootScaleFactor (UiScale): {e}"
-            );
-        }
-    }
+    tracker::install_resolved_hook(
+        api,
+        sm_class,
+        "UpdateCanvasRootScaleFactor",
+        0,
+        "UiScale",
+        hook_update as *const (),
+        |original| ORIGINAL_FN.store(original as *mut (), Relaxed),
+    );
 }

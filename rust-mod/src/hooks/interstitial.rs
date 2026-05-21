@@ -68,23 +68,18 @@ pub fn install(api: &Il2CppApi) {
     };
 
     // Resolve CloseWhenReady (0 params) for direct call.
-    let Some(close_ptr) = tracker::resolve_fn(api, class, "CloseWhenReady", 0) else {
-        log::warn!(target: "Interstitial", "CloseWhenReady not found");
+    if !resolver::resolve_method_pointer_into(api, class, "CloseWhenReady", 0, &CLOSE_WHEN_READY_FN) {
         return;
-    };
-    CLOSE_WHEN_READY_FN.store(close_ptr as *mut (), Relaxed);
+    }
 
     // Hook AboutToShow (0 params).
-    let Some(show_ptr) = tracker::resolve_fn(api, class, "AboutToShow", 0) else {
-        log::warn!(target: "Interstitial", "AboutToShow not found");
-        return;
-    };
-
-    match crate::hook::engine::install_hook("Interstitial", show_ptr, hook_about_to_show as *const ()) {
-        Ok(orig) => {
-            ORIGINAL_FN.store(orig as *mut (), Relaxed);
-            debug!(target: "Interstitial", "AboutToShow hook installed");
-        }
-        Err(e) => log::warn!(target: "Interstitial", "Failed to hook AboutToShow: {e}"),
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "AboutToShow",
+        0,
+        "Interstitial",
+        hook_about_to_show as *const (),
+        |orig| ORIGINAL_FN.store(orig as *mut (), Relaxed),
+    );
 }

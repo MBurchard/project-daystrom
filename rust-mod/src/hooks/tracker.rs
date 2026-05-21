@@ -3,7 +3,7 @@
 //! Provides building blocks for hooking Unity lifecycle methods and resolving IL2CPP method pointers.
 //! The `instance_tracker!` macro generates self-contained modules for Awake/OnDestroy instance tracking.
 
-use log::{debug, warn};
+use log::warn;
 
 use crate::hook::engine;
 use crate::il2cpp::api::Il2CppApi;
@@ -18,6 +18,77 @@ use crate::il2cpp::types::*;
 /// Returns `None` if the method cannot be found.
 pub fn resolve_fn(api: &Il2CppApi, class: *mut Il2CppClass, method_name: &str, param_count: i32) -> Option<*const ()> {
     resolver::resolve_method(api, class, method_name, param_count).map(|m| unsafe { (*m).method_pointer })
+}
+
+// ---- Resolved hook installation -------------------------------------------
+
+type HookInstaller = fn(&str, *const (), *const ()) -> Result<*const (), engine::HookError>;
+
+struct ResolvedHookInstall<'a, StoreOriginal> {
+    api: &'a Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &'a str,
+    param_count: i32,
+    hook_name: &'a str,
+    replacement: *const (),
+    original: StoreOriginal,
+    install: HookInstaller,
+}
+
+fn install_resolved_hook_with<StoreOriginal: FnOnce(*const ())>(
+    request: ResolvedHookInstall<'_, StoreOriginal>,
+) -> bool {
+    let ResolvedHookInstall {
+        api,
+        class,
+        method_name,
+        param_count,
+        hook_name,
+        replacement,
+        original,
+        install,
+    } = request;
+
+    let Some(method) = resolver::resolve_method(api, class, method_name, param_count) else {
+        return false;
+    };
+
+    let target = unsafe { (*method).method_pointer };
+    match install(hook_name, target, replacement) {
+        Ok(orig) => {
+            original(orig);
+            true
+        }
+        Err(e) => {
+            warn!(target: "HookEngine", "Failed to hook {hook_name}: {e}");
+            false
+        }
+    }
+}
+
+/// Resolve an IL2CPP method, install an inline hook, and store the original trampoline.
+///
+/// Returns `false` when method resolution or hook installation fails. Resolution failures are logged by
+/// `resolver::resolve_method`; hook installation failures are logged here.
+pub fn install_resolved_hook(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+    hook_name: &str,
+    replacement: *const (),
+    original: impl FnOnce(*const ()),
+) -> bool {
+    install_resolved_hook_with(ResolvedHookInstall {
+        api,
+        class,
+        method_name,
+        param_count,
+        hook_name,
+        replacement,
+        original,
+        install: engine::install_hook,
+    })
 }
 
 // ---- IL2CPP field access --------------------------------------------------
@@ -54,25 +125,6 @@ pub unsafe fn read_f32(base: *const (), offset: usize) -> f32 {
 
 // ---- Lifecycle hook installation ------------------------------------------
 
-fn install_lifecycle_hook(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    label: &str,
-    method: &str,
-    hook: extern "C" fn(*mut Il2CppObject),
-    store_original: impl FnOnce(*const ()),
-) {
-    if let Some(ptr) = resolve_fn(api, class, method, 0) {
-        match engine::install_hook(&format!("{label}{method}"), ptr, hook as *const ()) {
-            Ok(orig) => {
-                store_original(orig);
-                debug!(target: "HookEngine", "{label} {method} hook installed");
-            }
-            Err(e) => warn!(target: "HookEngine", "Failed to hook {label} {method}: {e}"),
-        }
-    }
-}
-
 /// Install Awake and OnDestroy hooks on a class for instance tracking.
 ///
 /// Resolves both methods, installs inline hooks, and passes the original function pointers (trampolines) to the
@@ -87,8 +139,24 @@ pub fn install_lifecycle_hooks(
     store_awake: impl FnOnce(*const ()),
     store_destroy: impl FnOnce(*const ()),
 ) {
-    install_lifecycle_hook(api, class, label, "Awake", awake_hook, store_awake);
-    install_lifecycle_hook(api, class, label, "OnDestroy", destroy_hook, store_destroy);
+    install_resolved_hook(
+        api,
+        class,
+        "Awake",
+        0,
+        &format!("{label}Awake"),
+        awake_hook as *const (),
+        store_awake,
+    );
+    install_resolved_hook(
+        api,
+        class,
+        "OnDestroy",
+        0,
+        &format!("{label}Destroy"),
+        destroy_hook as *const (),
+        store_destroy,
+    );
 }
 
 /// Install only the Awake hook on a class (no OnDestroy).
@@ -102,7 +170,15 @@ pub fn install_awake_hook(
     awake_hook: extern "C" fn(*mut Il2CppObject),
     store_awake: impl FnOnce(*const ()),
 ) {
-    install_lifecycle_hook(api, class, label, "Awake", awake_hook, store_awake);
+    install_resolved_hook(
+        api,
+        class,
+        "Awake",
+        0,
+        &format!("{label}Awake"),
+        awake_hook as *const (),
+        store_awake,
+    );
 }
 
 // ---- Instance tracker macro -----------------------------------------------
@@ -218,7 +294,129 @@ pub(crate) use instance_tracker;
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::c_char;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
+
+    use crate::hook::engine::HookError;
+    use crate::il2cpp::api::Il2CppApi;
+    use crate::il2cpp::types::*;
+
+    use super::*;
+
     instance_tracker!(subject);
+
+    static METHOD_AVAILABLE: AtomicBool = AtomicBool::new(true);
+    static INSTALL_SHOULD_FAIL: AtomicBool = AtomicBool::new(false);
+    static INSTALLED_TARGET: AtomicUsize = AtomicUsize::new(0);
+    static INSTALLED_REPLACEMENT: AtomicUsize = AtomicUsize::new(0);
+    static HOOK_HELPER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    extern "C" fn fake_target() {}
+    extern "C" fn fake_replacement() {}
+    extern "C" fn fake_original() {}
+
+    static mut RESOLVED_METHOD: MethodInfo = MethodInfo { method_pointer: fake_target as *const () };
+
+    unsafe extern "C" fn fake_domain_get() -> *mut Il2CppDomain {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn fake_domain_assembly_open(_: *mut Il2CppDomain, _: *const c_char) -> *mut Il2CppAssembly {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn fake_assembly_get_image(_: *mut Il2CppAssembly) -> *mut Il2CppImage {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn fake_class_from_name(
+        _: *mut Il2CppImage,
+        _: *const c_char,
+        _: *const c_char,
+    ) -> *mut Il2CppClass {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn fake_class_get_method_from_name(
+        _: *mut Il2CppClass,
+        _: *const c_char,
+        _: i32,
+    ) -> *const MethodInfo {
+        if METHOD_AVAILABLE.load(Relaxed) {
+            std::ptr::addr_of!(RESOLVED_METHOD)
+        } else {
+            std::ptr::null()
+        }
+    }
+
+    unsafe extern "C" fn fake_class_get_field_from_name(_: *mut Il2CppClass, _: *const c_char) -> *mut FieldInfo {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn fake_field_get_offset(_: *mut FieldInfo) -> usize {
+        0
+    }
+
+    unsafe extern "C" fn fake_runtime_invoke(
+        _: *const MethodInfo,
+        _: *mut Il2CppObject,
+        _: *mut *mut Il2CppObject,
+        _: *mut *mut Il2CppException,
+    ) -> *mut Il2CppObject {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn fake_string_new(_: *const c_char) -> *mut Il2CppString {
+        std::ptr::null_mut()
+    }
+
+    fn fake_api() -> Il2CppApi {
+        Il2CppApi {
+            domain_get: fake_domain_get,
+            domain_assembly_open: fake_domain_assembly_open,
+            assembly_get_image: fake_assembly_get_image,
+            class_from_name: fake_class_from_name,
+            class_get_method_from_name: fake_class_get_method_from_name,
+            class_get_field_from_name: fake_class_get_field_from_name,
+            field_get_offset: fake_field_get_offset,
+            runtime_invoke: fake_runtime_invoke,
+            string_new: fake_string_new,
+        }
+    }
+
+    fn fake_installer(_: &str, target: *const (), replacement: *const ()) -> Result<*const (), HookError> {
+        INSTALLED_TARGET.store(target as usize, Relaxed);
+        INSTALLED_REPLACEMENT.store(replacement as usize, Relaxed);
+        if INSTALL_SHOULD_FAIL.load(Relaxed) {
+            Err(HookError::BackendError("test failure".to_string()))
+        } else {
+            Ok(fake_original as *const ())
+        }
+    }
+
+    fn reset_hook_helper_test_state() {
+        METHOD_AVAILABLE.store(true, Relaxed);
+        INSTALL_SHOULD_FAIL.store(false, Relaxed);
+        INSTALLED_TARGET.store(0, Relaxed);
+        INSTALLED_REPLACEMENT.store(0, Relaxed);
+    }
+
+    fn test_resolved_hook_install<'a>(
+        api: &'a Il2CppApi,
+        original: &'a AtomicPtr<()>,
+    ) -> ResolvedHookInstall<'a, impl FnOnce(*const ()) + 'a> {
+        ResolvedHookInstall {
+            api,
+            class: 0xABCDusize as *mut Il2CppClass,
+            method_name: "Awake",
+            param_count: 0,
+            hook_name: "TestHook",
+            replacement: fake_replacement as *const (),
+            original: |orig| original.store(orig as *mut (), Relaxed),
+            install: fake_installer,
+        }
+    }
 
     #[test]
     fn instance_starts_null() {
@@ -226,10 +424,55 @@ mod tests {
     }
 
     #[test]
+    fn install_resolved_hook_stores_original_on_success() {
+        let _guard = HOOK_HELPER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_hook_helper_test_state();
+        let api = fake_api();
+        let original = AtomicPtr::new(std::ptr::null_mut());
+
+        let installed = install_resolved_hook_with(test_resolved_hook_install(&api, &original));
+
+        assert!(installed);
+        assert_eq!(INSTALLED_TARGET.load(Relaxed), fake_target as *const () as usize);
+        assert_eq!(INSTALLED_REPLACEMENT.load(Relaxed), fake_replacement as *const () as usize,);
+        assert_eq!(original.load(Relaxed), fake_original as *mut ());
+    }
+
+    #[test]
+    fn install_resolved_hook_returns_false_when_method_is_missing() {
+        let _guard = HOOK_HELPER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_hook_helper_test_state();
+        METHOD_AVAILABLE.store(false, Relaxed);
+        let api = fake_api();
+        let original = AtomicPtr::new(std::ptr::null_mut());
+
+        let installed = install_resolved_hook_with(test_resolved_hook_install(&api, &original));
+
+        assert!(!installed);
+        assert_eq!(INSTALLED_TARGET.load(Relaxed), 0);
+        assert!(original.load(Relaxed).is_null());
+    }
+
+    #[test]
+    fn install_resolved_hook_returns_false_when_installer_fails() {
+        let _guard = HOOK_HELPER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_hook_helper_test_state();
+        INSTALL_SHOULD_FAIL.store(true, Relaxed);
+        let api = fake_api();
+        let original = AtomicPtr::new(std::ptr::null_mut());
+
+        let installed = install_resolved_hook_with(test_resolved_hook_install(&api, &original));
+
+        assert!(!installed);
+        assert_eq!(INSTALLED_TARGET.load(Relaxed), fake_target as *const () as usize);
+        assert!(original.load(Relaxed).is_null());
+    }
+
+    #[test]
     fn awake_stores_and_destroy_clears() {
         subject::_test_init();
 
-        let fake = 0x1234usize as *mut crate::il2cpp::types::Il2CppObject;
+        let fake = 0x1234usize as *mut Il2CppObject;
         subject::hook_awake(fake);
         assert_eq!(subject::get(), fake as *mut ());
 
@@ -241,7 +484,7 @@ mod tests {
     fn clear_if_match_clears_matching() {
         subject::_test_init();
 
-        let fake = 0xCCCCusize as *mut crate::il2cpp::types::Il2CppObject;
+        let fake = 0xCCCCusize as *mut Il2CppObject;
         subject::hook_awake(fake);
         assert_eq!(subject::get(), fake as *mut ());
 
@@ -253,7 +496,7 @@ mod tests {
     fn clear_if_match_ignores_mismatch() {
         subject::_test_init();
 
-        let fake_a = 0xDDDDusize as *mut crate::il2cpp::types::Il2CppObject;
+        let fake_a = 0xDDDDusize as *mut Il2CppObject;
         let fake_b = 0xEEEEusize as *mut ();
 
         subject::hook_awake(fake_a);
@@ -268,8 +511,8 @@ mod tests {
     fn destroy_preserves_different_instance() {
         subject::_test_init();
 
-        let fake_a = 0xAAAAusize as *mut crate::il2cpp::types::Il2CppObject;
-        let fake_b = 0xBBBBusize as *mut crate::il2cpp::types::Il2CppObject;
+        let fake_a = 0xAAAAusize as *mut Il2CppObject;
+        let fake_b = 0xBBBBusize as *mut Il2CppObject;
 
         subject::hook_awake(fake_b);
         subject::hook_destroy(fake_a);

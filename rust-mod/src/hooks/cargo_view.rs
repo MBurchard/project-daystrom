@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
-use crate::hook::engine;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
@@ -195,17 +194,15 @@ pub fn install(api: &Il2CppApi) {
     resolve_offset(api, prescan_class, "_battleTargetData", &OFFSET_BATTLE_TARGET_DATA);
     resolve_offset(api, prescan_class, "_rewardsButtonWidget", &OFFSET_REWARDS_BUTTON_WIDGET);
 
-    if let Some(ptr) = tracker::resolve_fn(api, prescan_class, "ShowWithFleet", 1) {
-        match engine::install_hook("CargoViewShowWithFleet", ptr, hook_show_with_fleet as *const ()) {
-            Ok(orig) => {
-                ORIG_SHOW_WITH_FLEET.store(orig as *mut (), Relaxed);
-                debug!(target: "HookEngine", "Cargo view ShowWithFleet hook installed");
-            }
-            Err(e) => warn!(target: "HookEngine", "Failed to hook CargoView ShowWithFleet: {e}"),
-        }
-    } else {
-        warn!(target: "CargoView", "PreScanTargetWidget.ShowWithFleet not found");
-    }
+    tracker::install_resolved_hook(
+        api,
+        prescan_class,
+        "ShowWithFleet",
+        1,
+        "CargoViewShowWithFleet",
+        hook_show_with_fleet as *const (),
+        |orig| ORIG_SHOW_WITH_FLEET.store(orig as *mut (), Relaxed),
+    );
 
     if let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "RewardsButtonWidget") {
         resolve_offset(api, class, "_rewardsController", &OFFSET_REWARDS_CONTROLLER);
@@ -250,19 +247,9 @@ fn resolve_model_class(api: &Il2CppApi, class_name: &str) -> Option<*mut Il2CppC
 }
 
 fn resolve_offset(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {
-    if let Some(offset) = resolver::resolve_field_offset(api, class, field_name) {
-        target.store(offset, Relaxed);
-        debug!(target: "CargoView", "{field_name} offset: {offset:#x}");
-    } else {
-        warn!(target: "CargoView", "Could not resolve {field_name}");
-    }
+    resolver::resolve_field_offset_into(api, class, field_name, target);
 }
 
 fn resolve_fn(api: &Il2CppApi, class: *mut Il2CppClass, method_name: &str, param_count: i32, target: &AtomicPtr<()>) {
-    if let Some(ptr) = tracker::resolve_fn(api, class, method_name, param_count) {
-        target.store(ptr as *mut (), Relaxed);
-        debug!(target: "CargoView", "{method_name} resolved");
-    } else {
-        warn!(target: "CargoView", "{method_name} not found");
-    }
+    resolver::resolve_method_pointer_into(api, class, method_name, param_count, target);
 }

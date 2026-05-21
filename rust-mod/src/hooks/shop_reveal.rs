@@ -6,8 +6,6 @@
 
 use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
-use log::debug;
-
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
@@ -52,16 +50,13 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    let Some(ptr) = tracker::resolve_fn(api, class, "ShouldShowRevealSequence", 1) else {
-        log::warn!(target: "ShopReveal", "ShouldShowRevealSequence not found");
-        return;
-    };
-
-    match crate::hook::engine::install_hook("ShopReveal", ptr, hook_should_show as *const ()) {
-        Ok(orig) => {
-            ORIGINAL_FN.store(orig as *mut (), Relaxed);
-            debug!(target: "ShopReveal", "ShouldShowRevealSequence hook installed");
-        }
-        Err(e) => log::warn!(target: "ShopReveal", "Failed to hook ShouldShowRevealSequence: {e}"),
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "ShouldShowRevealSequence",
+        1,
+        "ShopReveal",
+        hook_should_show as *const (),
+        |orig| ORIGINAL_FN.store(orig as *mut (), Relaxed),
+    );
 }

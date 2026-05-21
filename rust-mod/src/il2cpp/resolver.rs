@@ -1,4 +1,5 @@
 use std::ffi::CString;
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::warn;
 
@@ -74,6 +75,23 @@ pub fn resolve_field_offset(api: &Il2CppApi, class: *mut Il2CppClass, field_name
     }
 }
 
+/// Resolve a field offset and cache it.
+///
+/// Returns `false` when resolution fails. Failure details are logged by `resolve_field_offset`.
+pub fn resolve_field_offset_into(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    field_name: &str,
+    target: &AtomicUsize,
+) -> bool {
+    let Some(offset) = resolve_field_offset(api, class, field_name) else {
+        return false;
+    };
+
+    target.store(offset, Relaxed);
+    true
+}
+
 /// Resolve a method on an IL2CPP class by name and parameter count.
 ///
 /// Returns the `MethodInfo` including the raw function pointer for hooking.
@@ -105,4 +123,41 @@ pub fn resolve_method(
 
         Some(method)
     }
+}
+
+/// Resolve a method and cache its `MethodInfo` pointer.
+///
+/// Returns `false` when resolution fails. Failure details are logged by `resolve_method`.
+pub fn resolve_method_into(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+    target: &AtomicPtr<MethodInfo>,
+) -> bool {
+    let Some(method) = resolve_method(api, class, method_name, param_count) else {
+        return false;
+    };
+
+    target.store(method as *mut MethodInfo, Relaxed);
+    true
+}
+
+/// Resolve a method and cache its raw native method pointer.
+///
+/// Returns `false` when resolution fails. Failure details are logged by `resolve_method`.
+pub fn resolve_method_pointer_into(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+    target: &AtomicPtr<()>,
+) -> bool {
+    let Some(method) = resolve_method(api, class, method_name, param_count) else {
+        return false;
+    };
+
+    let ptr = unsafe { (*method).method_pointer };
+    target.store(ptr as *mut (), Relaxed);
+    true
 }

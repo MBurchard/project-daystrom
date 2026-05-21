@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
-use crate::hook::engine;
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
@@ -229,14 +228,9 @@ extern "C" fn hook_set_depth(this: *mut Il2CppObject, depth: i32) {
 
 // ---- Field resolution helper ----------------------------------------------
 
-/// Resolve a field offset and store it, logging success or failure.
+/// Resolve a field offset and store it.
 fn resolve_field(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {
-    if let Some(offset) = resolver::resolve_field_offset(api, class, field_name) {
-        target.store(offset, Relaxed);
-        debug!(target: "SystemZoom", "NavigationZoom.{field_name} offset: {offset:#x}");
-    } else {
-        warn!(target: "SystemZoom", "Could not resolve NavigationZoom.{field_name}");
-    }
+    resolver::resolve_field_offset_into(api, class, field_name, target);
 }
 
 // ---- Installation ---------------------------------------------------------
@@ -265,29 +259,19 @@ pub fn install(api: &Il2CppApi) {
 
     // Hook SetDepth (called when the navigation depth changes).
     // SetViewParameters is inlined by MSVC on Windows, but its inlined copies are still called SetDepth.
-    if let Some(ptr) = tracker::resolve_fn(api, class, "SetDepth", 1) {
-        match engine::install_hook("SystemZoom.SetDepth", ptr, hook_set_depth as *const ()) {
-            Ok(orig) => {
-                ORIG_SET_DEPTH.store(orig as *mut (), Relaxed);
-                debug!(target: "SystemZoom", "SetDepth hook installed");
-            }
-            Err(e) => warn!(target: "SystemZoom", "Failed to hook SetDepth: {e}"),
-        }
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "SetDepth",
+        1,
+        "SystemZoom.SetDepth",
+        hook_set_depth as *const (),
+        |orig| ORIG_SET_DEPTH.store(orig as *mut (), Relaxed),
+    );
 
     // Resolve OverrideZoomLimits (called from the SetDepth hook).
-    if let Some(ptr) = tracker::resolve_fn(api, class, "OverrideZoomLimits", 2) {
-        OVERRIDE_ZOOM_LIMITS_FN.store(ptr as *mut (), Relaxed);
-        debug!(target: "SystemZoom", "OverrideZoomLimits resolved");
-    } else {
-        warn!(target: "SystemZoom", "OverrideZoomLimits not found");
-    }
+    resolver::resolve_method_pointer_into(api, class, "OverrideZoomLimits", 2, &OVERRIDE_ZOOM_LIMITS_FN);
 
     // Resolve set_Distance (called for initial zoom and live slider updates, not hooked).
-    if let Some(ptr) = tracker::resolve_fn(api, class, "set_Distance", 1) {
-        SET_DISTANCE_FN.store(ptr as *mut (), Relaxed);
-        debug!(target: "SystemZoom", "set_Distance resolved");
-    } else {
-        warn!(target: "SystemZoom", "set_Distance not found");
-    }
+    resolver::resolve_method_pointer_into(api, class, "set_Distance", 1, &SET_DISTANCE_FN);
 }

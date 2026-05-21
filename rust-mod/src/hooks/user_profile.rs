@@ -3,10 +3,10 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 use std::time::Duration;
 
-use log::{debug, error, warn};
+use log::{debug, warn};
 
-use crate::hook::engine;
 use crate::hook::safety::HookInfo;
+use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -191,18 +191,13 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    let Some(method) = resolver::resolve_method(api, class, "GetLocalUserProfile", 0) else {
-        return;
-    };
-
-    let target = unsafe { (*method).method_pointer };
-    match engine::install_hook("GetLocalUserProfile", target, hook as *const ()) {
-        Ok(original) => {
-            ORIGINAL.store(original as *mut (), Relaxed);
-            debug!(target: "HookEngine", "GetLocalUserProfile hook installed");
-        }
-        Err(e) => {
-            error!(target: "HookEngine", "Failed to hook GetLocalUserProfile: {e}");
-        }
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "GetLocalUserProfile",
+        0,
+        "GetLocalUserProfile",
+        hook as *const (),
+        |original| ORIGINAL.store(original as *mut (), Relaxed),
+    );
 }
