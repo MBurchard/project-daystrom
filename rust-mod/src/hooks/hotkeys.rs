@@ -56,7 +56,7 @@ static ORIG_INITIALIZE_ACTIONS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 /// Tracked `ShortcutsManager` instance (captured in the InitializeActions hook).
 static SHORTCUTS_MANAGER: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved `ShortcutsManager.LoadBindings()` MethodInfo (for `runtime_invoke`).
+/// Resolved `ShortcutsManager.LoadBindings()` MethodInfo.
 static LOAD_BINDINGS_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Method info for `ScreenManager.get_IsInputFocused()` (static).
@@ -266,10 +266,10 @@ extern "C" fn hook_initialize_actions(this: *mut Il2CppObject) {
         unsafe { f(this) };
     }
 
-    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    run_hook_logic(|| {
         SHORTCUTS_MANAGER.store(this as *mut (), Relaxed);
         parse_default_bindings(this);
-    }));
+    });
 }
 
 /// Read `_actions` from the ShortcutsManager instance, call `ToJson()`, and parse the default bindings.
@@ -301,15 +301,7 @@ fn parse_default_bindings(manager: *mut Il2CppObject) {
         return;
     };
 
-    let mut exception: *mut Il2CppException = std::ptr::null_mut();
-    let result = unsafe { (api.runtime_invoke)(method, actions_ptr, std::ptr::null_mut(), &mut exception) };
-
-    if !exception.is_null() || result.is_null() {
-        warn!(target: "Hotkeys", "ToJson() failed");
-        return;
-    }
-
-    let Some(json) = (unsafe { Il2CppString::to_rust_string(result as *const Il2CppString) }) else {
+    let Some(json) = invoke::string(method, actions_ptr, "InputActionAsset.ToJson") else {
         warn!(target: "Hotkeys", "ToJson() returned invalid string");
         return;
     };
@@ -374,28 +366,33 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
         reload_game_bindings();
     }
 
-    if HOOK_INFO.is_active() {
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            if key_down(KEYCODE_ESCAPE) {
-                collect_reward_screen();
-            }
-            let main_kc = MAIN_ACTION_KEYCODE.load(Relaxed);
-            if main_kc != 0 && key_down(main_kc) && !is_input_focused() && super::main_action::check() {
-                MAIN_ACTION_CONSUMED.store(true, Relaxed);
-                deselect_event_system();
-            }
-        }));
-
-        if result.is_err() {
-            HOOK_INFO.record_error();
+    run_hook_logic(|| {
+        if key_down(KEYCODE_ESCAPE) {
+            collect_reward_screen();
         }
-    }
+        let main_kc = MAIN_ACTION_KEYCODE.load(Relaxed);
+        if main_kc != 0 && key_down(main_kc) && !is_input_focused() && super::main_action::check() {
+            MAIN_ACTION_CONSUMED.store(true, Relaxed);
+            deselect_event_system();
+        }
+    });
 
     // Original update runs AFTER our key processing.
     let orig_ptr = ORIGINAL_UPDATE.load(Relaxed);
     if !orig_ptr.is_null() {
         let original: UpdateFn = unsafe { std::mem::transmute(orig_ptr) };
         unsafe { original(this) };
+    }
+}
+
+fn run_hook_logic(logic: impl FnOnce()) {
+    if !HOOK_INFO.is_active() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(logic));
+    if result.is_err() {
+        HOOK_INFO.record_error();
     }
 }
 
@@ -422,7 +419,7 @@ extern "C" fn hook_animated_show(this: *mut Il2CppObject) {
         let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
         unsafe { f(this) };
     }
-    track_reward_instance(this);
+    run_hook_logic(|| track_reward_instance(this));
 }
 
 /// AboutToShow hook for `GenericRewardsScreenViewController` (shared by slots 1, 3).
@@ -434,7 +431,7 @@ extern "C" fn hook_base_reward_show(this: *mut Il2CppObject) {
         let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
         unsafe { f(this) };
     }
-    track_reward_instance(this);
+    run_hook_logic(|| track_reward_instance(this));
 }
 
 /// AboutToShow hook for `FirstTimeSpenderScreenViewController` (slot 2, own override).
@@ -444,7 +441,7 @@ extern "C" fn hook_fts_show(this: *mut Il2CppObject) {
         let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
         unsafe { f(this) };
     }
-    track_reward_instance(this);
+    run_hook_logic(|| track_reward_instance(this));
 }
 
 // ---- Reward AboutToHide hooks ---------------------------------------------
@@ -466,7 +463,7 @@ fn untrack_reward_instance(this: *mut Il2CppObject) {
 
 /// AboutToHide hook for `AnimatedRewardsScreenViewController` (slot 0, own override).
 extern "C" fn hook_animated_hide(this: *mut Il2CppObject) {
-    untrack_reward_instance(this);
+    run_hook_logic(|| untrack_reward_instance(this));
     let orig = ORIG_ANIMATED_HIDE.load(Relaxed);
     if !orig.is_null() {
         let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
@@ -476,7 +473,7 @@ extern "C" fn hook_animated_hide(this: *mut Il2CppObject) {
 
 /// AboutToHide hook for `GenericRewardsScreenViewController` (shared by slots 1, 3).
 extern "C" fn hook_base_reward_hide(this: *mut Il2CppObject) {
-    untrack_reward_instance(this);
+    run_hook_logic(|| untrack_reward_instance(this));
     let orig = ORIG_BASE_HIDE.load(Relaxed);
     if !orig.is_null() {
         let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
@@ -486,7 +483,7 @@ extern "C" fn hook_base_reward_hide(this: *mut Il2CppObject) {
 
 /// AboutToHide hook for `FirstTimeSpenderScreenViewController` (slot 2, own override).
 extern "C" fn hook_fts_hide(this: *mut Il2CppObject) {
-    untrack_reward_instance(this);
+    run_hook_logic(|| untrack_reward_instance(this));
     let orig = ORIG_FTS_HIDE.load(Relaxed);
     if !orig.is_null() {
         let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
@@ -498,8 +495,10 @@ extern "C" fn hook_fts_hide(this: *mut Il2CppObject) {
 
 /// Awake hook for `MissionsNotificationPopoutWidget`.
 extern "C" fn hook_missions_popout_awake(this: *mut Il2CppObject) {
-    MISSIONS_POPOUT_INSTANCE.store(this as *mut (), Relaxed);
-    debug!(target: "Hotkeys", "MissionsNotificationPopout instance tracked");
+    run_hook_logic(|| {
+        MISSIONS_POPOUT_INSTANCE.store(this as *mut (), Relaxed);
+        debug!(target: "Hotkeys", "MissionsNotificationPopout instance tracked");
+    });
     let orig = ORIG_MISSIONS_POPOUT_AWAKE.load(Relaxed);
     if !orig.is_null() {
         let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
@@ -776,21 +775,10 @@ fn reload_game_bindings() {
         return;
     }
 
-    let Some(api) = super::il2cpp_init::IL2CPP_API.get() else { return };
-    let mut exception: *mut Il2CppException = std::ptr::null_mut();
-    unsafe {
-        (api.runtime_invoke)(
-            method as *const _,
-            manager as *mut Il2CppObject,
-            std::ptr::null_mut(),
-            &mut exception,
-        );
-    }
-
-    if exception.is_null() {
+    if invoke::void(method, manager as *mut Il2CppObject, "ShortcutsManager.LoadBindings") {
         debug!(target: "Hotkeys", "Game bindings reloaded via LoadBindings()");
     } else {
-        warn!(target: "Hotkeys", "LoadBindings() threw an exception");
+        warn!(target: "Hotkeys", "LoadBindings() failed");
     }
 }
 

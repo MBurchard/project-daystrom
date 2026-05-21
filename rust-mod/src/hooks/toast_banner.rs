@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering:
 
 use log::debug;
 
+use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
@@ -100,6 +101,9 @@ static ALLOWED_LOGGED_BITS: AtomicU64 = AtomicU64::new(0);
 /// Bitfield tracking which suppressed ToastState values have already been logged.
 static SUPPRESSED_LOGGED_BITS: AtomicU64 = AtomicU64::new(0);
 
+/// Per-hook error tracking and deactivation state.
+static HOOK_INFO: HookInfo = HookInfo::new("ToastBanner");
+
 // ---- Type aliases ---------------------------------------------------------
 
 type BoolToastFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject) -> bool;
@@ -165,7 +169,10 @@ extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2Cp
         return false;
     }
 
-    // Wrap our logic in catch_unwind to prevent panics from aborting the game.
+    if !HOOK_INFO.is_active() {
+        return original_result;
+    }
+
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         // Kill switch: suppress all banners.
         if DISABLE_ALL.load(Relaxed) {
@@ -206,7 +213,13 @@ extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2Cp
         true
     }));
 
-    result.unwrap_or(original_result)
+    match result {
+        Ok(allowed) => allowed,
+        Err(_) => {
+            HOOK_INFO.record_error();
+            original_result
+        }
+    }
 }
 
 // ---- Installation ---------------------------------------------------------

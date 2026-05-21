@@ -4,10 +4,12 @@
 //! Subsequent popups are passed through to the original handler.
 //! When the setting is off, all popups behave normally.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
 
 use log::debug;
 
+use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
@@ -25,6 +27,9 @@ static CLOSE_WHEN_READY_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::nul
 /// Whether the first interstitial has already been seen this session.
 static FIRST_SEEN: AtomicBool = AtomicBool::new(false);
 
+/// Per-hook error tracking and deactivation state.
+static HOOK_INFO: HookInfo = HookInfo::new("Interstitial");
+
 // ---- Type aliases ---------------------------------------------------------
 
 type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
@@ -36,14 +41,13 @@ type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 /// On the first call, if `skip_first_popup` is enabled, calls `CloseWhenReady()` instead of the original to dismiss the
 /// ad popup immediately. All subsequent calls pass through normally.
 extern "C" fn hook_about_to_show(this: *mut Il2CppObject) {
-    if crate::settings::skip_first_popup() && !FIRST_SEEN.swap(true, Relaxed) {
-        let close_ptr = CLOSE_WHEN_READY_FN.load(Relaxed);
-        if !close_ptr.is_null() {
-            debug!(target: "Interstitial", "Closing first popup");
-            invoke::void(close_ptr, this, "InterstitialViewController.CloseWhenReady");
-            return;
+    if HOOK_INFO.is_active() {
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| try_close_first_popup(this)));
+        match result {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(_) => HOOK_INFO.record_error(),
         }
-        // Defensive: if CloseWhenReady wasn't resolved, fall through to original.
     }
 
     let orig_ptr = ORIGINAL_FN.load(Relaxed);
@@ -51,6 +55,19 @@ extern "C" fn hook_about_to_show(this: *mut Il2CppObject) {
         let original: LifecycleFn = unsafe { std::mem::transmute(orig_ptr) };
         unsafe { original(this) };
     }
+}
+
+fn try_close_first_popup(this: *mut Il2CppObject) -> bool {
+    if crate::settings::skip_first_popup() && !FIRST_SEEN.swap(true, Relaxed) {
+        let close_ptr = CLOSE_WHEN_READY_FN.load(Relaxed);
+        if !close_ptr.is_null() {
+            debug!(target: "Interstitial", "Closing first popup");
+            invoke::void(close_ptr, this, "InterstitialViewController.CloseWhenReady");
+            return true;
+        }
+        // Defensive: if CloseWhenReady wasn't resolved, fall through to original.
+    }
+    false
 }
 
 // ---- Installation ---------------------------------------------------------

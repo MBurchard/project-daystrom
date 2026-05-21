@@ -4,8 +4,10 @@
 //! When the setting is active, the hook returns `false` directly without calling the original, saving the overhead of
 //! the original method.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
+use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
@@ -15,6 +17,9 @@ use crate::il2cpp::types::*;
 
 /// Original function pointer for `ShopSceneManager.ShouldShowRevealSequence(bool)`.
 static ORIGINAL_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Per-hook error tracking and deactivation state.
+static HOOK_INFO: HookInfo = HookInfo::new("ShopReveal");
 
 // ---- Type aliases ---------------------------------------------------------
 
@@ -28,9 +33,15 @@ type ShouldShowFn = unsafe extern "C" fn(*mut Il2CppObject, bool) -> bool;
 /// This skips the entire reveal animation and avoids the overhead of the original method.
 /// When the setting is off, the original decides.
 extern "C" fn hook_should_show(this: *mut Il2CppObject, ignore: bool) -> bool {
-    if crate::settings::skip_reveal_sequence() {
-        return false;
+    if HOOK_INFO.is_active() {
+        let result = std::panic::catch_unwind(AssertUnwindSafe(crate::settings::skip_reveal_sequence));
+        match result {
+            Ok(true) => return false,
+            Ok(false) => {}
+            Err(_) => HOOK_INFO.record_error(),
+        }
     }
+
     let orig_ptr = ORIGINAL_FN.load(Relaxed);
     if orig_ptr.is_null() {
         return true; // Defensive: show animation if original is missing.

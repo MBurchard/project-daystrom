@@ -3,10 +3,12 @@
 //! When a target viewer is shown, this hook optionally opens the cargo view normally revealed through the in-game
 //! cargo button.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
+use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
@@ -53,6 +55,8 @@ const HULL_TYPE_ARMADA_TARGET: i32 = 5;
 /// Assemblies to search for PrimeServer model classes.
 const MODEL_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-CSharp", "Assembly-CSharp-firstpass"];
 
+static HOOK_INFO: HookInfo = HookInfo::new("CargoView");
+
 // ---- Type aliases ----------------------------------------------------------
 
 type ShowWithFleetFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject);
@@ -75,7 +79,14 @@ extern "C" fn hook_show_with_fleet(this: *mut Il2CppObject, fleet: *mut Il2CppOb
         unsafe { f(this, fleet) };
     }
 
-    maybe_open_cargo(this);
+    if !HOOK_INFO.is_active() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| maybe_open_cargo(this)));
+    if result.is_err() {
+        HOOK_INFO.record_error();
+    }
 }
 
 fn maybe_open_cargo(prescan: *mut Il2CppObject) {
