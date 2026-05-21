@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use log::debug;
 
+use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::{invoke, resolver, types::*};
@@ -82,6 +83,9 @@ static ABOUT_TO_SHOW_TIME: Mutex<Option<Instant>> = Mutex::new(None);
 /// Whether the ChatPreviewController AboutToShow hook has been logged at least once.
 static CHAT_SHOW_LOGGED: AtomicBool = AtomicBool::new(false);
 
+/// Per-hook error tracking and deactivation state.
+static HOOK_INFO: HookInfo = HookInfo::new("ChatFrame");
+
 // ---- Type aliases ---------------------------------------------------------
 
 type VoidFn = unsafe extern "C" fn(*mut Il2CppObject);
@@ -100,11 +104,11 @@ extern "C" fn hook_mgr_enable(this: *mut Il2CppObject) {
         unsafe { original(this) };
     }
 
-    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    run_hook_logic(|| {
         FRAME_MGR.store(this, Relaxed);
         debug!(target: "ChatFrame", "UIFrameManager instance captured");
         try_restore();
-    }));
+    });
 }
 
 /// Hook for `ChatPreviewController.AboutToShow()`.
@@ -118,7 +122,7 @@ extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
         unsafe { original(this) };
     }
 
-    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    run_hook_logic(|| {
         CHAT_PREVIEW.store(this, Relaxed);
         if !CHAT_SHOW_LOGGED.swap(true, Relaxed) {
             if let Ok(mut guard) = ABOUT_TO_SHOW_TIME.lock() {
@@ -126,7 +130,7 @@ extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
             }
             debug!(target: "ChatFrame", "ChatPreviewController ready (AboutToShow)");
         }
-    }));
+    });
 }
 
 /// Hook for `ChatPreviewController.Update()`.
@@ -135,7 +139,7 @@ extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
 /// messages have settled. After [`RESTORED`] is set, the check is a single atomic load.
 extern "C" fn hook_chat_update(this: *mut Il2CppObject) {
     if !RESTORED.load(Relaxed) {
-        try_restore();
+        run_hook_logic(try_restore);
     }
 
     let orig_ptr = ORIG_CHAT_UPDATE.load(Relaxed);
@@ -156,10 +160,23 @@ extern "C" fn hook_msg_received(this: *mut Il2CppObject, message: *mut Il2CppObj
         unsafe { original(this, message) };
     }
 
-    if !RESTORED.load(Relaxed)
-        && let Ok(mut guard) = LAST_MSG_RECEIVED.lock()
-    {
-        *guard = Some(Instant::now());
+    run_hook_logic(|| {
+        if !RESTORED.load(Relaxed)
+            && let Ok(mut guard) = LAST_MSG_RECEIVED.lock()
+        {
+            *guard = Some(Instant::now());
+        }
+    });
+}
+
+fn run_hook_logic(logic: impl FnOnce()) {
+    if !HOOK_INFO.is_active() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(logic));
+    if result.is_err() {
+        HOOK_INFO.record_error();
     }
 }
 
@@ -169,7 +186,7 @@ extern "C" fn hook_msg_received(this: *mut Il2CppObject, message: *mut Il2CppObj
 ///
 /// Triggers a restore check in case the timer has already elapsed but settings were not available yet.
 pub fn on_settings_synced() {
-    try_restore();
+    run_hook_logic(try_restore);
 }
 
 /// Attempt to auto-open the chat sidebar.

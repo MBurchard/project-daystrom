@@ -156,6 +156,17 @@ fn apply_distance(this: *mut Il2CppObject, distance: f32) {
 /// Re-applies the zoom limit (smax may have changed) and moves the camera to the new distance.
 /// Both changes are visible immediately without switching systems.
 pub fn on_settings_changed() {
+    if !HOOK_INFO.is_active() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(apply_settings_update));
+    if result.is_err() {
+        HOOK_INFO.record_error();
+    }
+}
+
+fn apply_settings_update() {
     let this = CACHED_NAV_ZOOM.load(Relaxed);
     if this.is_null() {
         return;

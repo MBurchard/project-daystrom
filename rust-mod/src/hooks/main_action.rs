@@ -3,10 +3,12 @@
 //! Called from the shared `ScreenManager.Update()` hook when the configured main action key is pressed.
 //! If a viewer widget is active, executes the primary action: Engage (ships), Mine (nodes), or Warp (star systems).
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
+use crate::hook::safety::HookInfo;
 use crate::hooks::tracker::{self, instance_tracker};
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
@@ -89,6 +91,9 @@ static ON_SET_COURSE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::nu
 /// Whether the first main action has been logged.
 static LOGGED_FIRST_ACTION: AtomicBool = AtomicBool::new(false);
 
+/// Per-hook error tracking and deactivation state.
+static HOOK_INFO: HookInfo = HookInfo::new("MainAction");
+
 // ---- Type aliases ---------------------------------------------------------
 
 type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
@@ -100,6 +105,16 @@ type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 /// Reads the IL2CPP class pointer from the object header and dispatches to the correct tracker.
 /// `PreScanStationTargetWidget` goes to [`STATION_INSTANCE`], everything else to [`prescan`].
 extern "C" fn hook_prescan_awake(this: *mut Il2CppObject) {
+    run_hook_logic(|| track_prescan_awake(this));
+
+    let orig = ORIG_PRESCAN_AWAKE.load(Relaxed);
+    if !orig.is_null() {
+        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
+        unsafe { f(this) };
+    }
+}
+
+fn track_prescan_awake(this: *mut Il2CppObject) {
     let class = unsafe { tracker::read_ptr(this as *const (), 0) };
     let station_class = STATION_CLASS.load(Relaxed);
     if !station_class.is_null() && class == station_class {
@@ -109,21 +124,17 @@ extern "C" fn hook_prescan_awake(this: *mut Il2CppObject) {
         // ORIG_AWAKE inside the macro is null, so it only stores, no double-call.
         prescan::hook_awake(this);
     }
-
-    let orig = ORIG_PRESCAN_AWAKE.load(Relaxed);
-    if !orig.is_null() {
-        let f: LifecycleFn = unsafe { std::mem::transmute(orig) };
-        unsafe { f(this) };
-    }
 }
 
 /// OnDestroy hook for `PreScanTargetWidget` (catches both base and station subclass).
 ///
 /// Clears both trackers via compare-exchange (only the matching one changes).
 extern "C" fn hook_prescan_destroy(this: *mut Il2CppObject) {
-    let ptr = this as *mut ();
-    prescan::clear_if_match(ptr);
-    let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
+    run_hook_logic(|| {
+        let ptr = this as *mut ();
+        prescan::clear_if_match(ptr);
+        let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
+    });
 
     let orig = ORIG_PRESCAN_DESTROY.load(Relaxed);
     if !orig.is_null() {
@@ -139,16 +150,29 @@ extern "C" fn hook_prescan_destroy(this: *mut Il2CppObject) {
 /// Some viewer subclasses (e.g. Mining, StarNode) share the same inherited OnDestroy, so hooking it per-class
 /// causes double-hook errors. This single hook checks all trackers and clears any match.
 extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
-    let ptr = this as *mut ();
-    prescan::clear_if_match(ptr);
-    let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
-    mining::clear_if_match(ptr);
-    starnode::clear_if_match(ptr);
+    run_hook_logic(|| {
+        let ptr = this as *mut ();
+        prescan::clear_if_match(ptr);
+        let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
+        mining::clear_if_match(ptr);
+        starnode::clear_if_match(ptr);
+    });
 
     let orig_ptr = ORIG_VIEWER_DESTROY.load(Relaxed);
     if !orig_ptr.is_null() {
         let orig: LifecycleFn = unsafe { std::mem::transmute(orig_ptr) };
         unsafe { orig(this) };
+    }
+}
+
+fn run_hook_logic(logic: impl FnOnce()) {
+    if !HOOK_INFO.is_active() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(logic));
+    if result.is_err() {
+        HOOK_INFO.record_error();
     }
 }
 

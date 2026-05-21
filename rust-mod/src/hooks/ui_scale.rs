@@ -95,6 +95,17 @@ unsafe fn write_scale_factor(scaler: *mut Il2CppObject, value: f32) {
 /// [`crate::settings::apply_update`] / [`crate::settings::apply_sync`]
 /// for live slider updates via WebSocket.
 pub fn apply_current_scale() {
+    if !HOOK_INFO.is_active() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(apply_current_scale_inner));
+    if result.is_err() {
+        HOOK_INFO.record_error();
+    }
+}
+
+fn apply_current_scale_inner() {
     let scaler = CACHED_SCALER.load(Relaxed) as *mut Il2CppObject;
     if scaler.is_null() {
         return;

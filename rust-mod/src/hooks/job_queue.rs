@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::debug;
 
+use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
@@ -40,6 +41,9 @@ static EXPANDED: AtomicBool = AtomicBool::new(false);
 /// Whether the RegenerateLists hook has been logged at least once.
 static REGENERATE_LOGGED: AtomicBool = AtomicBool::new(false);
 
+/// Per-hook error tracking and deactivation state.
+static HOOK_INFO: HookInfo = HookInfo::new("JobQueue");
+
 // ---- Type aliases ---------------------------------------------------------
 
 type VoidFn = unsafe extern "C" fn(*mut Il2CppObject);
@@ -59,14 +63,24 @@ extern "C" fn hook_regenerate_lists(this: *mut Il2CppObject) {
         unsafe { original(this) };
     }
 
-    // Wrap all our logic in catch_unwind to prevent panics from aborting the game.
-    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    run_hook_logic(|| {
         JOB_QUEUE_PANEL.store(this, Relaxed);
         if !REGENERATE_LOGGED.swap(true, Relaxed) {
             debug!(target: "JobQueue", "JobQueuePanelViewController.RegenerateLists fired");
         }
         try_expand();
-    }));
+    });
+}
+
+fn run_hook_logic(logic: impl FnOnce()) {
+    if !HOOK_INFO.is_active() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(logic));
+    if result.is_err() {
+        HOOK_INFO.record_error();
+    }
 }
 
 // ---- Expand ---------------------------------------------------------------
@@ -76,7 +90,7 @@ extern "C" fn hook_regenerate_lists(this: *mut Il2CppObject) {
 /// Triggers an expand check in case the panel is already active but settings were not available
 /// yet at that time.
 pub fn on_settings_synced() {
-    try_expand();
+    run_hook_logic(try_expand);
 }
 
 /// Attempt to auto-expand the job queue panel.
