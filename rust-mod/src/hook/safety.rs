@@ -1,3 +1,4 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 
 /// Maximum number of panics before a hook auto-deactivates for the rest of the session.
@@ -42,6 +43,32 @@ impl HookInfo {
         if count >= MAX_HOOK_ERRORS {
             self.active.store(false, Relaxed);
             log::error!(target: "HookSafety", "Hook '{}' deactivated after {} errors", self.name, count);
+        }
+    }
+
+    /// Run hook logic behind this hook's active flag and panic guard.
+    pub fn run(&self, logic: impl FnOnce()) {
+        if !self.is_active() {
+            return;
+        }
+
+        if catch_unwind(AssertUnwindSafe(logic)).is_err() {
+            self.record_error();
+        }
+    }
+
+    /// Run hook logic behind this hook's active flag and panic guard, returning a fallback on panic or inactivity.
+    pub fn run_or<T>(&self, fallback: T, logic: impl FnOnce() -> T) -> T {
+        if !self.is_active() {
+            return fallback;
+        }
+
+        match catch_unwind(AssertUnwindSafe(logic)) {
+            Ok(value) => value,
+            Err(_) => {
+                self.record_error();
+                fallback
+            }
         }
     }
 }

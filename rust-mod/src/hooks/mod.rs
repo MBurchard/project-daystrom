@@ -13,6 +13,7 @@ pub mod il2cpp_init;
 mod interstitial;
 pub(crate) mod job_queue;
 mod main_action;
+pub(crate) mod main_thread;
 mod player_prefs;
 mod shop_reveal;
 pub(crate) mod system_zoom;
