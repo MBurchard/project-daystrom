@@ -1,4 +1,5 @@
 use std::ffi::c_char;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
@@ -33,7 +34,9 @@ extern "C" fn il2cpp_init_hook(domain_name: *const c_char) -> i64 {
         Ok(api) => {
             IL2CPP_API.set(api).ok();
             debug!(target: "HookEngine", "IL2CPP API loaded, installing game hooks...");
-            super::install_all_hooks();
+            if catch_unwind(AssertUnwindSafe(super::install_all_hooks)).is_err() {
+                error!(target: "HookEngine", "Hook installation panicked; continuing startup");
+            }
         }
         Err(e) => {
             error!(target: "HookEngine", "Failed to load IL2CPP API: {e}");
