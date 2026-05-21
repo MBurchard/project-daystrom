@@ -1,4 +1,3 @@
-use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
@@ -27,6 +26,9 @@ static CACHED_SCALER: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// Captured after the original `UpdateCanvasRootScaleFactor()` runs, so it reflects the game's own computation.
 /// All our scaling is relative to this.
 static ORIGINAL_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
+
+/// Latest UI scale setting, updated from the main-thread settings executor.
+static CURRENT_SCALE_PCT: AtomicU32 = AtomicU32::new(100);
 
 /// Per-hook error tracking and deactivation state.
 static HOOK_INFO: HookInfo = HookInfo::new("UiScale");
@@ -91,21 +93,22 @@ unsafe fn write_scale_factor(scaler: *mut Il2CppObject, value: f32) {
 
 /// Apply the current scale setting to the cached root CanvasScaler.
 ///
-/// Called from the hook (on game-triggered updates) and from
-/// [`crate::settings::apply_update`] / [`crate::settings::apply_sync`]
-/// for live slider updates via WebSocket.
+/// Called from the hook on game-triggered updates and from the main-thread settings dispatcher for live slider
+/// updates.
 pub fn apply_current_scale() {
-    if !HOOK_INFO.is_active() {
-        return;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(apply_current_scale_inner));
-    if result.is_err() {
-        HOOK_INFO.record_error();
-    }
+    apply_scale_inner_guarded(CURRENT_SCALE_PCT.load(Relaxed));
 }
 
-fn apply_current_scale_inner() {
+pub(crate) fn apply_scale(scale_pct: u32) {
+    CURRENT_SCALE_PCT.store(scale_pct, Relaxed);
+    apply_scale_inner_guarded(scale_pct);
+}
+
+fn apply_scale_inner_guarded(scale_pct: u32) {
+    HOOK_INFO.run(|| apply_scale_inner(scale_pct));
+}
+
+fn apply_scale_inner(scale_pct: u32) {
     let scaler = CACHED_SCALER.load(Relaxed) as *mut Il2CppObject;
     if scaler.is_null() {
         return;
@@ -116,7 +119,6 @@ fn apply_current_scale_inner() {
         return;
     }
 
-    let scale_pct = crate::settings::get_scale();
     let value = if scale_pct == 100 {
         original_base
     } else {
@@ -139,11 +141,7 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
         unsafe { original(this) };
     }
 
-    if !HOOK_INFO.is_active() {
-        return;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    HOOK_INFO.run(|| {
         let scaler = unsafe { get_canvas_scaler(this) };
         if scaler.is_null() {
             return;
@@ -155,7 +153,7 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
         ORIGINAL_SCALE_BITS.store(base.to_bits(), Relaxed);
 
         if !LOGGED_FIRST_CALL.swap(true, Relaxed) {
-            let scale_pct = crate::settings::get_scale();
+            let scale_pct = CURRENT_SCALE_PCT.load(Relaxed);
             debug!(
                 target: "UiScale",
                 "Cached original scale: {base:.4}, current setting: {scale_pct}%"
@@ -163,11 +161,7 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
         }
 
         apply_current_scale();
-    }));
-
-    if result.is_err() {
-        HOOK_INFO.record_error();
-    }
+    });
 }
 
 /// Install the UI scale hook via IL2CPP reflection.

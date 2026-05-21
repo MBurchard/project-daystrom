@@ -7,8 +7,7 @@
 //! On Windows, MSVC additionally inlines `SetViewParameters` at all call sites (verified: zero CALL references in
 //! GameAssembly.dll), but the inlined copies are still called `SetDepth`.
 
-use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
@@ -52,6 +51,12 @@ static SET_DISTANCE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mu
 
 /// Cached NavigationZoom instance for live settings updates.
 static CACHED_NAV_ZOOM: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Latest system zoom setting, updated from the main-thread settings executor.
+static CURRENT_SYSTEM_ZOOM: AtomicU32 = AtomicU32::new(1000);
+
+/// Latest ship names visibility setting, updated from the main-thread settings executor.
+static CURRENT_SHIP_NAMES_VISIBLE: AtomicU32 = AtomicU32::new(1800);
 
 /// Per-hook error tracking and deactivation state.
 static HOOK_INFO: HookInfo = HookInfo::new("SystemZoom");
@@ -122,8 +127,8 @@ fn log_zoom_state(this: *mut Il2CppObject, context: &str) {
 ///
 /// Uses the empirically determined formula: `smax = (visibility - 200) / 0.4`.
 /// The result is clamped to at least [`SMAX_FLOOR`], so the game's zoom range is always usable.
-fn calculate_smax() -> f32 {
-    let visibility = crate::settings::get_ship_names_visible() as f32;
+fn calculate_smax(visibility: u32) -> f32 {
+    let visibility = visibility as f32;
     let smax = (visibility - 200.0) / 0.4;
     smax.max(SMAX_FLOOR)
 }
@@ -131,14 +136,14 @@ fn calculate_smax() -> f32 {
 /// Extend the zoom-out limit on a NavigationZoom instance.
 ///
 /// Sets the internal maximum high enough for ship name rendering.
-fn apply_zoom_limit(this: *mut Il2CppObject) {
+fn apply_zoom_limit(this: *mut Il2CppObject, ship_names_visible: u32) {
     let override_ptr = OVERRIDE_ZOOM_LIMITS_FN.load(Relaxed);
     let min_offset = OFFSET_MINIMUM.load(Relaxed);
     if override_ptr.is_null() || this.is_null() || min_offset == 0 {
         return;
     }
     let minimum = read_field(this, &OFFSET_MINIMUM);
-    let smax = calculate_smax();
+    let smax = calculate_smax(ship_names_visible);
     invoke::void_f32_f32(override_ptr, this, minimum, smax, "NavigationZoom.OverrideZoomLimits");
 }
 
@@ -151,22 +156,14 @@ fn apply_distance(this: *mut Il2CppObject, distance: f32) {
     invoke::void_f32(ptr, this, distance, "NavigationZoom.set_Distance");
 }
 
-/// Called when system zoom or ship names settings change via WebSocket.
-///
-/// Re-applies the zoom limit (smax may have changed) and moves the camera to the new distance.
-/// Both changes are visible immediately without switching systems.
-pub fn on_settings_changed() {
-    if !HOOK_INFO.is_active() {
-        return;
-    }
+pub(crate) fn on_settings_changed_value(system_zoom: u32, ship_names_visible: u32) {
+    CURRENT_SYSTEM_ZOOM.store(system_zoom, Relaxed);
+    CURRENT_SHIP_NAMES_VISIBLE.store(ship_names_visible, Relaxed);
 
-    let result = std::panic::catch_unwind(AssertUnwindSafe(apply_settings_update));
-    if result.is_err() {
-        HOOK_INFO.record_error();
-    }
+    HOOK_INFO.run(|| apply_settings_update(system_zoom, ship_names_visible));
 }
 
-fn apply_settings_update() {
+fn apply_settings_update(system_zoom: u32, ship_names_visible: u32) {
     let this = CACHED_NAV_ZOOM.load(Relaxed);
     if this.is_null() {
         return;
@@ -178,10 +175,10 @@ fn apply_settings_update() {
         return;
     }
 
-    apply_zoom_limit(this);
-    let zoom = crate::settings::get_system_zoom() as f32;
+    apply_zoom_limit(this, ship_names_visible);
+    let zoom = system_zoom as f32;
     apply_distance(this, zoom);
-    let smax = calculate_smax();
+    let smax = calculate_smax(ship_names_visible);
     debug!(target: "SystemZoom", "Live update: distance={zoom:.0}, smax={smax:.0}");
 }
 
@@ -200,11 +197,7 @@ extern "C" fn hook_set_depth(this: *mut Il2CppObject, depth: i32) {
         unsafe { original(this, depth) };
     }
 
-    if !HOOK_INFO.is_active() {
-        return;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    HOOK_INFO.run(|| {
         let is_first = !LOGGED_FIRST.swap(true, Relaxed);
         let is_system = depth == NODE_DEPTH_SOLAR_SYSTEM;
 
@@ -220,18 +213,15 @@ extern "C" fn hook_set_depth(this: *mut Il2CppObject, depth: i32) {
         // Cache the instance, extend zoom limit, and set initial distance.
         if is_system {
             CACHED_NAV_ZOOM.store(this, Relaxed);
-            apply_zoom_limit(this);
-            let zoom = crate::settings::get_system_zoom() as f32;
+            let ship_names_visible = CURRENT_SHIP_NAMES_VISIBLE.load(Relaxed);
+            apply_zoom_limit(this, ship_names_visible);
+            let zoom = CURRENT_SYSTEM_ZOOM.load(Relaxed) as f32;
             apply_distance(this, zoom);
             if is_first {
                 log_zoom_state(this, "  After override:");
             }
         }
-    }));
-
-    if result.is_err() {
-        HOOK_INFO.record_error();
-    }
+    });
 }
 
 // ---- Field resolution helper ----------------------------------------------

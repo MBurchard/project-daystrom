@@ -10,7 +10,6 @@
 //! - `ChatPreviewController.Update` checks the debounce each frame.
 //! - `ChatService.HandleMessageReceived` tracks when the last server message arrived.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 use std::time::{Duration, Instant};
@@ -83,6 +82,9 @@ static ABOUT_TO_SHOW_TIME: Mutex<Option<Instant>> = Mutex::new(None);
 /// Whether the ChatPreviewController AboutToShow hook has been logged at least once.
 static CHAT_SHOW_LOGGED: AtomicBool = AtomicBool::new(false);
 
+/// Latest auto-open setting, updated from the main-thread settings executor.
+static AUTO_OPEN_SIDEBAR: AtomicBool = AtomicBool::new(false);
+
 /// Per-hook error tracking and deactivation state.
 static HOOK_INFO: HookInfo = HookInfo::new("ChatFrame");
 
@@ -104,7 +106,7 @@ extern "C" fn hook_mgr_enable(this: *mut Il2CppObject) {
         unsafe { original(this) };
     }
 
-    run_hook_logic(|| {
+    HOOK_INFO.run(|| {
         FRAME_MGR.store(this, Relaxed);
         debug!(target: "ChatFrame", "UIFrameManager instance captured");
         try_restore();
@@ -122,7 +124,7 @@ extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
         unsafe { original(this) };
     }
 
-    run_hook_logic(|| {
+    HOOK_INFO.run(|| {
         CHAT_PREVIEW.store(this, Relaxed);
         if !CHAT_SHOW_LOGGED.swap(true, Relaxed) {
             if let Ok(mut guard) = ABOUT_TO_SHOW_TIME.lock() {
@@ -139,7 +141,7 @@ extern "C" fn hook_chat_about_to_show(this: *mut Il2CppObject) {
 /// messages have settled. After [`RESTORED`] is set, the check is a single atomic load.
 extern "C" fn hook_chat_update(this: *mut Il2CppObject) {
     if !RESTORED.load(Relaxed) {
-        run_hook_logic(try_restore);
+        HOOK_INFO.run(try_restore);
     }
 
     let orig_ptr = ORIG_CHAT_UPDATE.load(Relaxed);
@@ -160,7 +162,7 @@ extern "C" fn hook_msg_received(this: *mut Il2CppObject, message: *mut Il2CppObj
         unsafe { original(this, message) };
     }
 
-    run_hook_logic(|| {
+    HOOK_INFO.run(|| {
         if !RESTORED.load(Relaxed)
             && let Ok(mut guard) = LAST_MSG_RECEIVED.lock()
         {
@@ -169,24 +171,11 @@ extern "C" fn hook_msg_received(this: *mut Il2CppObject, message: *mut Il2CppObj
     });
 }
 
-fn run_hook_logic(logic: impl FnOnce()) {
-    if !HOOK_INFO.is_active() {
-        return;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(logic));
-    if result.is_err() {
-        HOOK_INFO.record_error();
-    }
-}
-
 // ---- Restore --------------------------------------------------------------
 
-/// Called when settings are synced from Daystrom.
-///
-/// Triggers a restore check in case the timer has already elapsed but settings were not available yet.
-pub fn on_settings_synced() {
-    run_hook_logic(try_restore);
+pub(crate) fn on_settings_synced_value(auto_open_sidebar: bool) {
+    AUTO_OPEN_SIDEBAR.store(auto_open_sidebar, Relaxed);
+    HOOK_INFO.run(try_restore);
 }
 
 /// Attempt to auto-open the chat sidebar.
@@ -196,7 +185,7 @@ pub fn on_settings_synced() {
 /// - ChatPreviewController instance captured
 /// - Message history settled ([`MSG_DEBOUNCE`] elapsed since last `HandleMessageReceived`),
 ///   OR [`FALLBACK_TIMEOUT`] elapsed since `AboutToShow` (in case no messages arrive at all)
-/// - `auto_open_sidebar` setting enabled
+/// - auto-open sidebar setting enabled
 ///
 /// On success, triggers `OnSidePanelButtonClicked` to open the chat through the game's normal flow, then calls
 /// `ResizeSideFrame` directly on the captured `UIFrameManager` instance to maximize the width.
@@ -223,7 +212,7 @@ fn try_restore() {
     if !debounce_settled && !fallback_expired {
         return;
     }
-    if !crate::settings::auto_open_sidebar() {
+    if !AUTO_OPEN_SIDEBAR.load(Relaxed) {
         debug!(target: "ChatFrame", "try_restore: all ready, waiting for settings sync");
         return;
     }

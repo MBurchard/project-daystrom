@@ -9,6 +9,8 @@ use std::sync::{Mutex, OnceLock};
 use log::debug;
 use serde::{Deserialize, Deserializer};
 
+use crate::hooks::main_thread::{self, MainThreadTask};
+
 // ---- Lenient deserialization -----------------------------------------------
 
 /// Deserialize an `Option<T>` that returns `None` for type mismatches instead of failing.
@@ -122,19 +124,10 @@ fn state() -> &'static Mutex<GameSettings> {
 
 // ---- Public API ------------------------------------------------------------
 
-/// Current UI scale percentage (50-200, default 100).
-pub fn get_scale() -> u32 {
-    state().lock().unwrap().ui.scale.unwrap_or(100)
-}
-
 /// Whether the chat sidebar should be auto-opened on game start.
+#[cfg(test)]
 pub fn auto_open_sidebar() -> bool {
     state().lock().unwrap().ui.auto_open_sidebar.unwrap_or(false)
-}
-
-/// Whether the job queue panel should be auto-expanded from compact to full view.
-pub fn auto_expand_job_queue() -> bool {
-    state().lock().unwrap().ui.auto_expand_job_queue.unwrap_or(false)
 }
 
 /// Whether to skip the shop reveal sequence animation.
@@ -145,16 +138,6 @@ pub fn skip_reveal_sequence() -> bool {
 /// Whether to skip the first interstitial popup after game start.
 pub fn skip_first_popup() -> bool {
     state().lock().unwrap().ui.skip_first_popup.unwrap_or(true)
-}
-
-/// Whether all toast banner notifications should be suppressed.
-pub fn disable_all_banners() -> bool {
-    state().lock().unwrap().banners.disable_all.unwrap_or(false)
-}
-
-/// List of specific banner type names to suppress.
-pub fn disabled_banner_types() -> Vec<String> {
-    state().lock().unwrap().banners.disabled_types.clone().unwrap_or_default()
 }
 
 /// Whether cargo should auto-open after selecting a target.
@@ -183,11 +166,13 @@ pub fn show_cargo_for_players() -> bool {
 }
 
 /// System view zoom distance (1000-3000, default 1000).
+#[cfg(test)]
 pub fn get_system_zoom() -> u32 {
     state().lock().unwrap().ui.system_zoom.unwrap_or(1000)
 }
 
 /// Ship names visibility distance (1000-3000, default 1800).
+#[cfg(test)]
 pub fn get_ship_names_visible() -> u32 {
     state().lock().unwrap().ui.ship_names_visible.unwrap_or(1800)
 }
@@ -196,26 +181,17 @@ pub fn get_ship_names_visible() -> u32 {
 ///
 /// Returns `Some("Space")` by default. Returns `None` when explicitly disabled (empty string).
 pub fn trigger_main_action() -> Option<String> {
-    match state().lock().unwrap().shortcuts.get("trigger_main_action").map(|s| s.as_str()) {
-        Some("") => None,
-        Some(key) => Some(key.to_string()),
-        None => Some("Space".to_string()),
-    }
+    trigger_main_action_from(&state().lock().unwrap().shortcuts)
 }
 
 /// Replace all settings with a full snapshot from Daystrom (`settings.sync`).
 pub fn apply_sync(settings: GameSettings) {
     debug!(target: "Settings", "Sync: {settings:?}");
-    // Scoped block: release the Mutex before side effect hooks, which call getters and would deadlock on the same lock.
+    let tasks = tasks_for_settings_sync(&settings);
     {
         *state().lock().unwrap() = settings;
     }
-    crate::hooks::ui_scale::apply_current_scale();
-    crate::hooks::chat_frame::on_settings_synced();
-    crate::hooks::job_queue::on_settings_synced();
-    crate::hooks::toast_banner::on_settings_changed();
-    crate::hooks::system_zoom::on_settings_changed();
-    crate::hooks::hotkeys::on_shortcuts_changed();
+    enqueue_tasks(tasks);
 }
 
 /// Patch individual settings from an incremental update (`settings.update`).
@@ -228,19 +204,23 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             let new_scale = value.as_u64().map(|v| v as u32);
             debug!(target: "Settings", "Update: game.ui.scale = {new_scale:?}");
             s.ui.scale = new_scale;
-            // Release the Mutex before apply_current_scale(), which calls get_scale() and would deadlock.
-            drop(s);
-            crate::hooks::ui_scale::apply_current_scale();
+            main_thread::enqueue(MainThreadTask::UiScale { scale_pct: s.ui.scale.unwrap_or(100) });
         }
         "game.ui.auto_open_sidebar" => {
             let new_val = value.as_bool();
             debug!(target: "Settings", "Update: game.ui.auto_open_sidebar = {new_val:?}");
             s.ui.auto_open_sidebar = new_val;
+            main_thread::enqueue(MainThreadTask::ChatFrame {
+                auto_open_sidebar: s.ui.auto_open_sidebar.unwrap_or(false),
+            });
         }
         "game.ui.auto_expand_job_queue" => {
             let new_val = value.as_bool();
             debug!(target: "Settings", "Update: game.ui.auto_expand_job_queue = {new_val:?}");
             s.ui.auto_expand_job_queue = new_val;
+            main_thread::enqueue(MainThreadTask::JobQueue {
+                auto_expand_job_queue: s.ui.auto_expand_job_queue.unwrap_or(false),
+            });
         }
         "game.ui.skip_reveal_sequence" => {
             let new_val = value.as_bool();
@@ -256,8 +236,10 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             let new_val = value.as_bool();
             debug!(target: "Settings", "Update: game.banners.disable_all = {new_val:?}");
             s.banners.disable_all = new_val;
-            drop(s);
-            crate::hooks::toast_banner::on_settings_changed();
+            enqueue_tasks(vec![MainThreadTask::ToastBanner {
+                disable_all: s.banners.disable_all.unwrap_or(false),
+                disabled_types: s.banners.disabled_types.clone().unwrap_or_default(),
+            }]);
         }
         "game.banners.disabled_types" => {
             let new_val = value
@@ -265,30 +247,37 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
             debug!(target: "Settings", "Update: game.banners.disabled_types = {new_val:?}");
             s.banners.disabled_types = new_val;
-            drop(s);
-            crate::hooks::toast_banner::on_settings_changed();
+            enqueue_tasks(vec![MainThreadTask::ToastBanner {
+                disable_all: s.banners.disable_all.unwrap_or(false),
+                disabled_types: s.banners.disabled_types.clone().unwrap_or_default(),
+            }]);
         }
         "game.ui.system_zoom" => {
             let new_val = value.as_u64().map(|v| v as u32);
             debug!(target: "Settings", "Update: game.ui.system_zoom = {new_val:?}");
             s.ui.system_zoom = new_val;
-            drop(s);
-            crate::hooks::system_zoom::on_settings_changed();
+            enqueue_tasks(vec![MainThreadTask::SystemZoom {
+                system_zoom: s.ui.system_zoom.unwrap_or(1000),
+                ship_names_visible: s.ui.ship_names_visible.unwrap_or(1800),
+            }]);
         }
         "game.ui.ship_names_visible" => {
             let new_val = value.as_u64().map(|v| v as u32);
             debug!(target: "Settings", "Update: game.ui.ship_names_visible = {new_val:?}");
             s.ui.ship_names_visible = new_val;
-            drop(s);
-            crate::hooks::system_zoom::on_settings_changed();
+            enqueue_tasks(vec![MainThreadTask::SystemZoom {
+                system_zoom: s.ui.system_zoom.unwrap_or(1000),
+                ship_names_visible: s.ui.ship_names_visible.unwrap_or(1800),
+            }]);
         }
         "game.shortcuts" => {
             let new_val: std::collections::BTreeMap<String, String> =
                 serde_json::from_value(value.clone()).unwrap_or_default();
             debug!(target: "Settings", "Update: game.shortcuts = {new_val:?}");
             s.shortcuts = new_val;
-            drop(s);
-            crate::hooks::hotkeys::on_shortcuts_changed();
+            enqueue_tasks(vec![MainThreadTask::Hotkeys {
+                trigger_main_action: trigger_main_action_from(&s.shortcuts),
+            }]);
         }
         "game.cargo_view" => {
             let new_val = serde_json::from_value::<GameCargoViewSettings>(value.clone()).ok();
@@ -300,6 +289,45 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
         other => {
             debug!(target: "Settings", "Unknown setting: {other}");
         }
+    }
+}
+
+fn enqueue_tasks(tasks: Vec<MainThreadTask>) {
+    for task in tasks {
+        main_thread::enqueue(task);
+    }
+}
+
+fn tasks_for_settings_sync(settings: &GameSettings) -> Vec<MainThreadTask> {
+    vec![
+        MainThreadTask::UiScale {
+            scale_pct: settings.ui.scale.unwrap_or(100),
+        },
+        MainThreadTask::ChatFrame {
+            auto_open_sidebar: settings.ui.auto_open_sidebar.unwrap_or(false),
+        },
+        MainThreadTask::JobQueue {
+            auto_expand_job_queue: settings.ui.auto_expand_job_queue.unwrap_or(false),
+        },
+        MainThreadTask::ToastBanner {
+            disable_all: settings.banners.disable_all.unwrap_or(false),
+            disabled_types: settings.banners.disabled_types.clone().unwrap_or_default(),
+        },
+        MainThreadTask::SystemZoom {
+            system_zoom: settings.ui.system_zoom.unwrap_or(1000),
+            ship_names_visible: settings.ui.ship_names_visible.unwrap_or(1800),
+        },
+        MainThreadTask::Hotkeys {
+            trigger_main_action: trigger_main_action_from(&settings.shortcuts),
+        },
+    ]
+}
+
+fn trigger_main_action_from(shortcuts: &std::collections::BTreeMap<String, String>) -> Option<String> {
+    match shortcuts.get("trigger_main_action").map(|s| s.as_str()) {
+        Some("") => None,
+        Some(key) => Some(key.to_string()),
+        None => Some("Space".to_string()),
     }
 }
 

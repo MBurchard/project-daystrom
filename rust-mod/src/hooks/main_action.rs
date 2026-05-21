@@ -3,7 +3,6 @@
 //! Called from the shared `ScreenManager.Update()` hook when the configured main action key is pressed.
 //! If a viewer widget is active, executes the primary action: Engage (ships), Mine (nodes), or Warp (star systems).
 
-use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
@@ -105,7 +104,7 @@ type LifecycleFn = unsafe extern "C" fn(*mut Il2CppObject);
 /// Reads the IL2CPP class pointer from the object header and dispatches to the correct tracker.
 /// `PreScanStationTargetWidget` goes to [`STATION_INSTANCE`], everything else to [`prescan`].
 extern "C" fn hook_prescan_awake(this: *mut Il2CppObject) {
-    run_hook_logic(|| track_prescan_awake(this));
+    HOOK_INFO.run(|| track_prescan_awake(this));
 
     let orig = ORIG_PRESCAN_AWAKE.load(Relaxed);
     if !orig.is_null() {
@@ -130,7 +129,7 @@ fn track_prescan_awake(this: *mut Il2CppObject) {
 ///
 /// Clears both trackers via compare-exchange (only the matching one changes).
 extern "C" fn hook_prescan_destroy(this: *mut Il2CppObject) {
-    run_hook_logic(|| {
+    HOOK_INFO.run(|| {
         let ptr = this as *mut ();
         prescan::clear_if_match(ptr);
         let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
@@ -150,7 +149,7 @@ extern "C" fn hook_prescan_destroy(this: *mut Il2CppObject) {
 /// Some viewer subclasses (e.g. Mining, StarNode) share the same inherited OnDestroy, so hooking it per-class
 /// causes double-hook errors. This single hook checks all trackers and clears any match.
 extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
-    run_hook_logic(|| {
+    HOOK_INFO.run(|| {
         let ptr = this as *mut ();
         prescan::clear_if_match(ptr);
         let _ = STATION_INSTANCE.compare_exchange(ptr, std::ptr::null_mut(), Relaxed, Relaxed);
@@ -162,17 +161,6 @@ extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
     if !orig_ptr.is_null() {
         let orig: LifecycleFn = unsafe { std::mem::transmute(orig_ptr) };
         unsafe { orig(this) };
-    }
-}
-
-fn run_hook_logic(logic: impl FnOnce()) {
-    if !HOOK_INFO.is_active() {
-        return;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(logic));
-    if result.is_err() {
-        HOOK_INFO.record_error();
     }
 }
 

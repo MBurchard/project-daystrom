@@ -3,7 +3,6 @@
 //! Hooks `ToastObserver.AreToastsAllowed(Toast)` to check the toast's state against the user's disabled list.
 //! Returns `false` for suppressed types, causing the game to skip the toast through its own control flow.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering::Relaxed};
 
 use log::debug;
@@ -132,20 +131,15 @@ fn toast_state_bits_for_names(names: &[String]) -> u64 {
 
 // ---- Settings callback ----------------------------------------------------
 
-/// Called when banner settings change (sync or incremental update).
-///
-/// Converts the human-readable name list into a u64 bitfield for O(1) lookup.
-pub fn on_settings_changed() {
-    DISABLE_ALL.store(crate::settings::disable_all_banners(), Relaxed);
+pub(crate) fn on_settings_changed_value(disable_all: bool, names: Vec<String>) {
+    DISABLE_ALL.store(disable_all, Relaxed);
 
-    let names = crate::settings::disabled_banner_types();
     let bits = toast_state_bits_for_names(&names);
     DISABLED_BITS.store(bits, Relaxed);
     // Reset dedup bits so the new state is logged on next occurrence.
     ALLOWED_LOGGED_BITS.store(0, Relaxed);
     SUPPRESSED_LOGGED_BITS.store(0, Relaxed);
-    debug!(target: "ToastBanner", "Settings updated: disable_all={}, disabled_bits=0x{bits:016X}",
-        DISABLE_ALL.load(Relaxed));
+    debug!(target: "ToastBanner", "Settings updated: disable_all={disable_all}, disabled_bits=0x{bits:016X}");
 }
 
 // ---- Hook -----------------------------------------------------------------
@@ -169,11 +163,7 @@ extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2Cp
         return false;
     }
 
-    if !HOOK_INFO.is_active() {
-        return original_result;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    HOOK_INFO.run_or(original_result, || {
         // Kill switch: suppress all banners.
         if DISABLE_ALL.load(Relaxed) {
             return false;
@@ -211,15 +201,7 @@ extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2Cp
             }
         }
         true
-    }));
-
-    match result {
-        Ok(allowed) => allowed,
-        Err(_) => {
-            HOOK_INFO.record_error();
-            original_result
-        }
-    }
+    })
 }
 
 // ---- Installation ---------------------------------------------------------

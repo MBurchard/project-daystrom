@@ -3,7 +3,6 @@
 //! When a target viewer is shown, this hook optionally opens the cargo view normally revealed through the in-game
 //! cargo button.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
@@ -79,14 +78,7 @@ extern "C" fn hook_show_with_fleet(this: *mut Il2CppObject, fleet: *mut Il2CppOb
         unsafe { f(this, fleet) };
     }
 
-    if !HOOK_INFO.is_active() {
-        return;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| maybe_open_cargo(this)));
-    if result.is_err() {
-        HOOK_INFO.record_error();
-    }
+    HOOK_INFO.run(|| maybe_open_cargo(this));
 }
 
 fn maybe_open_cargo(prescan: *mut Il2CppObject) {

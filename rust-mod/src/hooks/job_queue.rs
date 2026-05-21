@@ -7,7 +7,6 @@
 //! Note: `OnEnable()` cannot be hooked because it resolves to a generic `ViewController<T>`
 //! vtable slot (IL2CPP generic sharing), causing a C++ foreign exception.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::debug;
@@ -41,6 +40,9 @@ static EXPANDED: AtomicBool = AtomicBool::new(false);
 /// Whether the RegenerateLists hook has been logged at least once.
 static REGENERATE_LOGGED: AtomicBool = AtomicBool::new(false);
 
+/// Latest auto-expand setting, updated from the main-thread settings executor.
+static AUTO_EXPAND_JOB_QUEUE: AtomicBool = AtomicBool::new(false);
+
 /// Per-hook error tracking and deactivation state.
 static HOOK_INFO: HookInfo = HookInfo::new("JobQueue");
 
@@ -63,7 +65,7 @@ extern "C" fn hook_regenerate_lists(this: *mut Il2CppObject) {
         unsafe { original(this) };
     }
 
-    run_hook_logic(|| {
+    HOOK_INFO.run(|| {
         JOB_QUEUE_PANEL.store(this, Relaxed);
         if !REGENERATE_LOGGED.swap(true, Relaxed) {
             debug!(target: "JobQueue", "JobQueuePanelViewController.RegenerateLists fired");
@@ -72,32 +74,18 @@ extern "C" fn hook_regenerate_lists(this: *mut Il2CppObject) {
     });
 }
 
-fn run_hook_logic(logic: impl FnOnce()) {
-    if !HOOK_INFO.is_active() {
-        return;
-    }
-
-    let result = std::panic::catch_unwind(AssertUnwindSafe(logic));
-    if result.is_err() {
-        HOOK_INFO.record_error();
-    }
-}
-
 // ---- Expand ---------------------------------------------------------------
 
-/// Called when settings are synced from Daystrom.
-///
-/// Triggers an expand check in case the panel is already active but settings were not available
-/// yet at that time.
-pub fn on_settings_synced() {
-    run_hook_logic(try_expand);
+pub(crate) fn on_settings_synced_value(auto_expand_job_queue: bool) {
+    AUTO_EXPAND_JOB_QUEUE.store(auto_expand_job_queue, Relaxed);
+    HOOK_INFO.run(try_expand);
 }
 
 /// Attempt to auto-expand the job queue panel.
 ///
 /// Called from two places to handle either timing scenario:
 /// - `hook_regenerate_lists` — panel is ready, settings may not be synced yet
-/// - `on_settings_synced` — settings arrived, panel may not be ready yet
+/// - `on_settings_synced_value` — settings arrived, panel may not be ready yet
 ///
 /// On success, triggers `OnContractExpandButtonClickEventHandler` to expand through the game's
 /// normal flow.
@@ -109,7 +97,7 @@ fn try_expand() {
     if panel.is_null() {
         return;
     }
-    if !crate::settings::auto_expand_job_queue() {
+    if !AUTO_EXPAND_JOB_QUEUE.load(Relaxed) {
         return;
     }
 
