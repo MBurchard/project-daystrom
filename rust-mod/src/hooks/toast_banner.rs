@@ -91,7 +91,7 @@ static ORIG_ARE_TOASTS_ALLOWED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 static DISABLE_ALL: AtomicBool = AtomicBool::new(false);
 
 /// Bitfield of disabled ToastState values. Bit N is set when ToastState N is disabled.
-/// All 58 values (0-57) fit in a u64.
+/// All 58 values (0-57) fit in a u64 bitfield.
 static DISABLED_BITS: AtomicU64 = AtomicU64::new(0);
 
 /// Bitfield tracking which allowed ToastState values have already been logged.
@@ -108,10 +108,22 @@ type BoolToastFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject) ->
 
 /// Look up the human-readable name for a ToastState value.
 fn state_name(value: u32) -> &'static str {
-    TOAST_STATES.iter()
+    TOAST_STATES
+        .iter()
         .find(|(_, v)| *v == value)
         .map(|(n, _)| *n)
         .unwrap_or("Unknown")
+}
+
+/// Convert human-readable ToastState names into a u64 bitfield for O(1) lookup.
+fn toast_state_bits(names: &[String]) -> u64 {
+    let mut bits: u64 = 0;
+    for name in names {
+        if let Some(&(_, value)) = TOAST_STATES.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+            bits |= 1u64 << value;
+        }
+    }
+    bits
 }
 
 // ---- Settings callback ----------------------------------------------------
@@ -123,12 +135,7 @@ pub fn on_settings_changed() {
     DISABLE_ALL.store(crate::settings::disable_all_banners(), Relaxed);
 
     let names = crate::settings::disabled_banner_types();
-    let mut bits: u64 = 0;
-    for name in &names {
-        if let Some(&(_, value)) = TOAST_STATES.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
-            bits |= 1u64 << value;
-        }
-    }
+    let bits = toast_state_bits(&names);
     DISABLED_BITS.store(bits, Relaxed);
     // Reset dedup bits so the new state is logged on next occurrence.
     ALLOWED_LOGGED_BITS.store(0, Relaxed);
@@ -143,10 +150,7 @@ pub fn on_settings_changed() {
 ///
 /// Returns `false` for suppressed toast types, letting the game skip them naturally.
 /// Calls the original first to respect any game-internal suppression logic.
-extern "C" fn hook_are_toasts_allowed(
-    this: *mut Il2CppObject,
-    toast: *mut Il2CppObject,
-) -> bool {
+extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2CppObject) -> bool {
     // Call the original to get the game's own decision.
     let orig_ptr = ORIG_ARE_TOASTS_ALLOWED.load(Relaxed);
     let original_result = if !orig_ptr.is_null() {
@@ -177,9 +181,7 @@ extern "C" fn hook_are_toasts_allowed(
         if state_offset == 0 {
             return true;
         }
-        let state_value = unsafe {
-            tracker::read_i32(toast as *const (), state_offset)
-        };
+        let state_value = unsafe { tracker::read_i32(toast as *const (), state_offset) };
         if state_value < 0 {
             return true;
         }
@@ -215,12 +217,8 @@ extern "C" fn hook_are_toasts_allowed(
 /// A single hook covers all toast enqueue paths.
 pub fn install(api: &Il2CppApi) {
     // Resolve Toast field offset for reading the toast state in the hook.
-    if let Some(toast_class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.HUD", "Toast",
-    ) {
-        if let Some(offset) = resolver::resolve_field_offset(
-            api, toast_class, "<State>k__BackingField",
-        ) {
+    if let Some(toast_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "Toast") {
+        if let Some(offset) = resolver::resolve_field_offset(api, toast_class, "<State>k__BackingField") {
             TOAST_STATE_OFFSET.store(offset, Relaxed);
             debug!(target: "ToastBanner", "Toast.<State>k__BackingField offset: {offset:#x}");
         } else {
@@ -230,16 +228,16 @@ pub fn install(api: &Il2CppApi) {
         log::warn!(target: "ToastBanner", "Toast class not found");
     }
 
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.HUD", "ToastObserver",
-    ) else {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "ToastObserver") else {
         log::warn!(target: "ToastBanner", "ToastObserver not found");
         return;
     };
 
     if let Some(ptr) = tracker::resolve_fn(api, class, "AreToastsAllowed", 1) {
         match crate::hook::engine::install_hook(
-            "ToastBanner.AreToastsAllowed", ptr, hook_are_toasts_allowed as *const (),
+            "ToastBanner.AreToastsAllowed",
+            ptr,
+            hook_are_toasts_allowed as *const (),
         ) {
             Ok(orig) => {
                 ORIG_ARE_TOASTS_ALLOWED.store(orig as *mut (), Relaxed);
@@ -286,16 +284,11 @@ mod tests {
     #[test]
     fn bitfield_conversion() {
         let names = vec!["Victory".to_string(), "Defeat".to_string(), "Unknown".to_string()];
-        let mut bits: u64 = 0;
-        for name in &names {
-            if let Some(&(_, value)) = TOAST_STATES.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
-                bits |= 1u64 << value;
-            }
-        }
+        let bits = toast_state_bits(&names);
         // Victory=10, Defeat=11
-        assert!(bits & (1 << 10) != 0, "Victory bit not set");
-        assert!(bits & (1 << 11) != 0, "Defeat bit not set");
-        assert!(bits & (1 << 0) == 0, "Standard bit should not be set");
+        assert_ne!(bits & (1 << 10), 0, "Victory bit not set");
+        assert_ne!(bits & (1 << 11), 0, "Defeat bit not set");
+        assert_eq!(bits & (1 << 0), 0, "Standard bit should not be set");
     }
 
     #[test]
@@ -321,16 +314,13 @@ mod tests {
 
     #[test]
     fn json_categories_match_toast_states() {
-        let json: std::collections::HashMap<String, Vec<String>> =
-            serde_json::from_str(include_str!(
-                "../../../app/modules/app/src/components/toast-banner-categories.json"
-            )).unwrap();
-        let json_names: std::collections::BTreeSet<&str> = json.values()
-            .flat_map(|v| v.iter().map(String::as_str))
-            .collect();
-        let rust_names: std::collections::BTreeSet<&str> = TOAST_STATES.iter()
-            .map(|(n, _)| *n)
-            .collect();
+        let json: std::collections::HashMap<String, Vec<String>> = serde_json::from_str(include_str!(
+            "../../../app/modules/app/src/components/toast-banner-categories.json"
+        ))
+        .unwrap();
+        let json_names: std::collections::BTreeSet<&str> =
+            json.values().flat_map(|v| v.iter().map(String::as_str)).collect();
+        let rust_names: std::collections::BTreeSet<&str> = TOAST_STATES.iter().map(|(n, _)| *n).collect();
         assert_eq!(json_names, rust_names, "JSON categories and TOAST_STATES diverged");
     }
 }

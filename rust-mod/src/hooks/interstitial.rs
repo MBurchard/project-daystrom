@@ -60,9 +60,9 @@ extern "C" fn hook_about_to_show(this: *mut Il2CppObject) {
 /// Hooks `InterstitialViewController.AboutToShow` and resolves `CloseWhenReady` for direct
 /// invocation.
 pub fn install(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Interstitial", "InterstitialViewController",
-    ) else {
+    let Some(class) =
+        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Interstitial", "InterstitialViewController")
+    else {
         log::warn!(target: "Interstitial", "InterstitialViewController not found");
         return;
     };
@@ -80,9 +80,7 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    match crate::hook::engine::install_hook(
-        "Interstitial", show_ptr, hook_about_to_show as *const (),
-    ) {
+    match crate::hook::engine::install_hook("Interstitial", show_ptr, hook_about_to_show as *const ()) {
         Ok(orig) => {
             ORIGINAL_FN.store(orig as *mut (), Relaxed);
             debug!(target: "Interstitial", "AboutToShow hook installed");

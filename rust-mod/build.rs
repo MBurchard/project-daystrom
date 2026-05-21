@@ -11,11 +11,10 @@ fn main() {
     println!("cargo:rerun-if-changed={conf_path}");
     println!("cargo:rerun-if-changed={ROOT_PACKAGE_JSON}");
 
-    let content = fs::read_to_string(conf_path)
-        .unwrap_or_else(|e| panic!("Cannot read {conf_path}: {e}"));
+    let content = fs::read_to_string(conf_path).unwrap_or_else(|e| panic!("Cannot read {conf_path}: {e}"));
 
-    let identifier = extract_identifier(&content)
-        .unwrap_or_else(|| panic!("No \"identifier\" field found in {conf_path}"));
+    let identifier =
+        extract_identifier(&content).unwrap_or_else(|| panic!("No \"identifier\" field found in {conf_path}"));
 
     println!("cargo:rustc-env=TAURI_IDENTIFIER={identifier}");
 
@@ -25,7 +24,8 @@ fn main() {
     // The actual forwarding is handled at runtime in src/proxy.rs.
     #[cfg(target_os = "windows")]
     {
-        let def_path = std::path::Path::new("version.def").canonicalize()
+        let def_path = std::path::Path::new("version.def")
+            .canonicalize()
             .expect("version.def not found in rust-mod root");
         println!("cargo:rerun-if-changed=version.def");
         println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());

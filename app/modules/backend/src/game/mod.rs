@@ -8,9 +8,9 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 #[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use tauri::Manager;
 
 use crate::use_log;
@@ -53,11 +53,11 @@ fn read_game_path(content: &str) -> Option<&str> {
 }
 
 #[cfg(target_os = "macos")]
+pub mod entitlements;
+#[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
-#[cfg(target_os = "macos")]
-pub mod entitlements;
 
 #[cfg(not(target_os = "macos"))]
 pub mod entitlements {
@@ -115,7 +115,11 @@ pub fn detect() -> Option<GameInfo> {
 
     let (install_dir, executable) = base?;
     let installed_version = version::read_installed(&install_dir);
-    Some(GameInfo { install_dir, executable, installed_version })
+    Some(GameInfo {
+        install_dir,
+        executable,
+        installed_version,
+    })
 }
 
 /// Check whether a process matching `pattern` is currently running.
@@ -128,10 +132,7 @@ fn is_process_active(pattern: &str) -> bool {
         silent_command("tasklist")
             .args(["/FI", &format!("IMAGENAME eq {pattern}"), "/NH"])
             .output()
-            .map(|out| {
-                out.status.success()
-                    && String::from_utf8_lossy(&out.stdout).contains(pattern)
-            })
+            .map(|out| out.status.success() && String::from_utf8_lossy(&out.stdout).contains(pattern))
             .unwrap_or(false)
     }
 
@@ -211,11 +212,7 @@ pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     return None;
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    if library.exists() {
-        Some(library)
-    } else {
-        None
-    }
+    if library.exists() { Some(library) } else { None }
 }
 
 /// Compute the SHA-256 digest of a file by streaming it in 8 KB chunks.
@@ -289,7 +286,7 @@ pub fn deploy_mod(install_dir: &Path, mod_library: &Path) -> Result<(), String> 
     Ok(())
 }
 
-/// Remove the deployed mod and its runtime artifacts from the game directory.
+/// Remove the deployed mod and its runtime artefacts from the game directory.
 ///
 /// Deletes `version.dll`, `community_patch.log`, and `community_patch_runtime.vars`.
 /// The settings file (`community_patch_settings.toml`) is intentionally kept.

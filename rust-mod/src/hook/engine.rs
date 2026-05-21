@@ -41,11 +41,7 @@ impl std::fmt::Display for HookError {
 /// correct function type and store it for calling the original implementation.
 ///
 /// Prevents double-hooking: if `target` was already hooked, returns `HookError::AlreadyHooked`.
-pub fn install_hook(
-    name: &str,
-    target: *const (),
-    replacement: *const (),
-) -> Result<*const (), HookError> {
+pub fn install_hook(name: &str, target: *const (), replacement: *const ()) -> Result<*const (), HookError> {
     let addr = target as usize;
 
     if !try_register(addr) {
@@ -53,9 +49,7 @@ pub fn install_hook(
         return Err(HookError::AlreadyHooked(addr));
     }
 
-    let original = unsafe {
-        super::inline_hook::install(target, replacement)
-    }.map_err(HookError::BackendError)?;
+    let original = unsafe { super::inline_hook::install(target, replacement) }.map_err(HookError::BackendError)?;
 
     debug!(target: "HookEngine", "Hook '{name}' installed at {addr:#x}");
 

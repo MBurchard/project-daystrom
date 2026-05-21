@@ -230,12 +230,7 @@ extern "C" fn hook_set_depth(this: *mut Il2CppObject, depth: i32) {
 // ---- Field resolution helper ----------------------------------------------
 
 /// Resolve a field offset and store it, logging success or failure.
-fn resolve_field(
-    api: &Il2CppApi,
-    class: *mut Il2CppClass,
-    field_name: &str,
-    target: &AtomicUsize,
-) {
+fn resolve_field(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {
     if let Some(offset) = resolver::resolve_field_offset(api, class, field_name) {
         target.store(offset, Relaxed);
         debug!(target: "SystemZoom", "NavigationZoom.{field_name} offset: {offset:#x}");
@@ -251,9 +246,8 @@ fn resolve_field(
 /// Hooks `SetDepth` to extend the zoom-out limit for system views and resolves `OverrideZoomLimits` as a callable
 /// function.
 pub fn install(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom",
-    ) else {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom")
+    else {
         warn!(target: "SystemZoom", "NavigationZoom class not found");
         return;
     };
@@ -272,9 +266,7 @@ pub fn install(api: &Il2CppApi) {
     // Hook SetDepth (called when the navigation depth changes).
     // SetViewParameters is inlined by MSVC on Windows, but its inlined copies are still called SetDepth.
     if let Some(ptr) = tracker::resolve_fn(api, class, "SetDepth", 1) {
-        match engine::install_hook(
-            "SystemZoom.SetDepth", ptr, hook_set_depth as *const (),
-        ) {
+        match engine::install_hook("SystemZoom.SetDepth", ptr, hook_set_depth as *const ()) {
             Ok(orig) => {
                 ORIG_SET_DEPTH.store(orig as *mut (), Relaxed);
                 debug!(target: "SystemZoom", "SetDepth hook installed");

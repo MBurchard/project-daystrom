@@ -18,7 +18,6 @@ use_log!("Commands");
 #[ts(export)]
 pub struct GameStatus {
     // ---- Base fields (set by detection, commands, monitor) ----
-
     /// Whether STFC was found on this machine.
     pub installed: bool,
     /// Installed game version from the `.version` file, if available.
@@ -47,7 +46,6 @@ pub struct GameStatus {
     pub launcher_started_by_us: bool,
 
     // ---- Derived fields (computed by recompute_derived) ----
-
     /// Whether a game update is available (remote > installed).
     pub update_available: bool,
     /// Whether all preconditions for launching the game are met.
@@ -91,24 +89,15 @@ pub fn recompute_derived(s: &mut GameStatus) {
         _ => false,
     };
 
-    s.can_launch = s.mod_deployed
-        && !s.update_available
-        && !s.game_running
-        && !s.launcher_running;
+    s.can_launch = s.mod_deployed && !s.update_available && !s.game_running && !s.launcher_running;
 
-    s.can_install_mod = s.mod_installable
-        && !s.update_available
-        && !s.game_running
-        && !s.launcher_running;
+    s.can_install_mod = s.mod_installable && !s.update_available && !s.game_running && !s.launcher_running;
 
-    s.can_remove_mod = s.mod_removable
-        && !s.game_running
-        && !s.launcher_running;
+    s.can_remove_mod = s.mod_removable && !s.game_running && !s.launcher_running;
 
     s.can_launch_updater = s.update_available && !s.launcher_running;
 
-    s.should_block_quit = (s.game_started_by_us && s.game_running)
-        || (s.launcher_started_by_us && s.launcher_running);
+    s.should_block_quit = (s.game_started_by_us && s.game_running) || (s.launcher_started_by_us && s.launcher_running);
 
     s.version_check_class = if s.update_available {
         "warn".to_string()
@@ -126,11 +115,7 @@ pub fn recompute_derived(s: &mut GameStatus) {
 /// Pure function: no I/O, no Tauri dependency. All platform-specific decisions about
 /// `mod_removable` are resolved via `cfg!()` so the logic is testable on any platform.
 /// Derived fields are computed automatically via [`recompute_derived`].
-fn build_game_status(
-    detection: Option<&DetectedGame>,
-    mod_available: bool,
-    launcher_running: bool,
-) -> GameStatus {
+fn build_game_status(detection: Option<&DetectedGame>, mod_available: bool, launcher_running: bool) -> GameStatus {
     let mut status = match detection {
         Some(det) => GameStatus {
             installed: true,
@@ -185,7 +170,9 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
         if status.all_granted() {
             log_info!("Entitlements OK, mod injection ready");
         } else {
-            let names: Vec<_> = status.missing.iter()
+            let names: Vec<_> = status
+                .missing
+                .iter()
                 .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
                 .collect();
             log_warn!("Missing entitlements: {}", names.join(", "));
@@ -198,13 +185,14 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
         #[cfg(target_os = "macos")]
         let (mod_deployed, mod_outdated) = (status.all_granted(), false);
         #[cfg(target_os = "windows")]
-        let (mod_deployed, mod_outdated) = mod_library.as_ref().map(|lib| {
-            match game::check_mod_deployment(&info.install_dir, lib) {
+        let (mod_deployed, mod_outdated) = mod_library
+            .as_ref()
+            .map(|lib| match game::check_mod_deployment(&info.install_dir, lib) {
                 game::ModDeploymentState::UpToDate => (true, false),
                 game::ModDeploymentState::Outdated => (false, true),
                 game::ModDeploymentState::NotDeployed => (false, false),
-            }
-        }).unwrap_or((false, false));
+            })
+            .unwrap_or((false, false));
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let (mod_deployed, mod_outdated) = (false, false);
 
@@ -239,8 +227,7 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let mod_library = game::find_mod_library(&app)
-            .ok_or("Mod library not found — run build:mod first")?;
+        let mod_library = game::find_mod_library(&app).ok_or("Mod library not found — run build:mod first")?;
         game::deploy_mod(&info.install_dir, &mod_library)?;
     }
 
@@ -276,9 +263,12 @@ pub fn remove_mod(
             return Err("Cannot remove mod while the game is running".to_string());
         }
 
-        let confirmed = window.dialog()
-            .message("Remove the Daystrom Mod?\n\n\
-                      After removal, the game can only be launched through the Scopely Launcher.")
+        let confirmed = window
+            .dialog()
+            .message(
+                "Remove the Daystrom Mod?\n\n\
+                      After removal, the game can only be launched through the Scopely Launcher.",
+            )
             .title("Remove Mod")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
@@ -374,15 +364,16 @@ pub fn launch_updater(app: tauri::AppHandle) -> Result<(), String> {
 pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(), String> {
     let info = game::detect().ok_or("STFC not found")?;
 
-    let mod_library = game::find_mod_library(&app)
-        .ok_or("Mod library not found — run build:mod first")?;
+    let mod_library = game::find_mod_library(&app).ok_or("Mod library not found — run build:mod first")?;
 
     // macOS: entitlements must be patched before launching
     #[cfg(target_os = "macos")]
     {
         let status = game::entitlements::check(&info.executable);
         if !status.all_granted() {
-            let names: Vec<_> = status.missing.iter()
+            let names: Vec<_> = status
+                .missing
+                .iter()
                 .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
                 .collect();
             return Err(format!("Missing entitlements: {} — patch them first", names.join(", ")));

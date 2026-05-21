@@ -14,19 +14,16 @@ pub type Il2CppInitFn = unsafe extern "C" fn(*const c_char) -> i64;
 type Il2CppDomainGetFn = unsafe extern "C" fn() -> *mut Il2CppDomain;
 
 /// Type alias for `il2cpp_domain_assembly_open(domain, name) -> assembly`.
-type Il2CppDomainAssemblyOpenFn =
-    unsafe extern "C" fn(*mut Il2CppDomain, *const c_char) -> *mut Il2CppAssembly;
+type Il2CppDomainAssemblyOpenFn = unsafe extern "C" fn(*mut Il2CppDomain, *const c_char) -> *mut Il2CppAssembly;
 
 /// Type alias for `il2cpp_assembly_get_image(assembly) -> image`.
 type Il2CppAssemblyGetImageFn = unsafe extern "C" fn(*mut Il2CppAssembly) -> *mut Il2CppImage;
 
 /// Type alias for `il2cpp_class_from_name(image, namespace, name) -> class`.
-type Il2CppClassFromNameFn =
-    unsafe extern "C" fn(*mut Il2CppImage, *const c_char, *const c_char) -> *mut Il2CppClass;
+type Il2CppClassFromNameFn = unsafe extern "C" fn(*mut Il2CppImage, *const c_char, *const c_char) -> *mut Il2CppClass;
 
 /// Type alias for `il2cpp_class_get_method_from_name(class, name, argc) -> method_info`.
-type Il2CppClassGetMethodFromNameFn =
-    unsafe extern "C" fn(*mut Il2CppClass, *const c_char, i32) -> *const MethodInfo;
+type Il2CppClassGetMethodFromNameFn = unsafe extern "C" fn(*mut Il2CppClass, *const c_char, i32) -> *const MethodInfo;
 
 /// Type alias for `il2cpp_runtime_invoke(method, obj, params, exc) -> result`.
 pub type Il2CppRuntimeInvokeFn = unsafe extern "C" fn(
@@ -37,8 +34,7 @@ pub type Il2CppRuntimeInvokeFn = unsafe extern "C" fn(
 ) -> *mut Il2CppObject;
 
 /// Type alias for `il2cpp_class_get_field_from_name(class, name) -> field_info`.
-type Il2CppClassGetFieldFromNameFn =
-    unsafe extern "C" fn(*mut Il2CppClass, *const c_char) -> *mut FieldInfo;
+type Il2CppClassGetFieldFromNameFn = unsafe extern "C" fn(*mut Il2CppClass, *const c_char) -> *mut FieldInfo;
 
 /// Type alias for `il2cpp_field_get_offset(field) -> offset`.
 type Il2CppFieldGetOffsetFn = unsafe extern "C" fn(*mut FieldInfo) -> usize;
@@ -101,8 +97,7 @@ unsafe fn resolve<T: Copy>(lib: &Library, name: &'static str) -> Result<T, Il2Cp
 /// The library must have been loaded previously by `hooks::il2cpp_init::install()`.
 /// Called from inside the `il2cpp_init` hook callback after IL2CPP has initialized.
 pub fn load() -> Result<Il2CppApi, Il2CppError> {
-    let lib = crate::hooks::il2cpp_init::game_assembly()
-        .ok_or(Il2CppError::LibraryNotLoaded)?;
+    let lib = crate::hooks::il2cpp_init::game_assembly().ok_or(Il2CppError::LibraryNotLoaded)?;
 
     unsafe {
         Ok(Il2CppApi {

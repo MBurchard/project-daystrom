@@ -30,21 +30,14 @@ fn state() -> &'static Mutex<PlayerData> {
 /// Compares each field against the stored state.
 /// Only changed fields are logged (debug) and sent to Daystrom via WebSocket as individual `player.update` messages
 /// with `key`/`value` pairs.
-pub fn update_player(
-    name: Option<String>,
-    level: Option<i32>,
-    might: Option<u64>,
-) {
+pub fn update_player(name: Option<String>, level: Option<i32>, might: Option<u64>) {
     let state = state();
     let mut data = state.lock().unwrap();
 
     if name != data.name {
         if let Some(ref v) = name {
             debug!(target: "PlayerData", "name = {v}");
-            crate::ws_client::send(
-                "player.update",
-                serde_json::json!({"key": "name", "value": v}),
-            );
+            crate::ws_client::send("player.update", serde_json::json!({"key": "name", "value": v}));
         }
         data.name = name;
     }
@@ -52,10 +45,7 @@ pub fn update_player(
     if level != data.level {
         if let Some(v) = level {
             debug!(target: "PlayerData", "level = {v}");
-            crate::ws_client::send(
-                "player.update",
-                serde_json::json!({"key": "level", "value": v}),
-            );
+            crate::ws_client::send("player.update", serde_json::json!({"key": "level", "value": v}));
         }
         data.level = level;
     }
@@ -63,10 +53,7 @@ pub fn update_player(
     if might != data.might {
         if let Some(v) = might {
             debug!(target: "PlayerData", "might = {v}");
-            crate::ws_client::send(
-                "player.update",
-                serde_json::json!({"key": "might", "value": v}),
-            );
+            crate::ws_client::send("player.update", serde_json::json!({"key": "might", "value": v}));
         }
         data.might = might;
     }
@@ -76,10 +63,12 @@ pub fn update_player(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     /// Serialize tests that share the global STATE.
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Reset state to default before each test.
     fn reset() {

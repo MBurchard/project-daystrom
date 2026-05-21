@@ -38,9 +38,7 @@ fn real_dll() -> HModule {
     REAL_VERSION
         .get_or_init(|| {
             // UTF-16 encoded "C:\Windows\System32\version.dll\0"
-            let path: Vec<u16> = "C:\\Windows\\System32\\version.dll\0"
-                .encode_utf16()
-                .collect();
+            let path: Vec<u16> = "C:\\Windows\\System32\\version.dll\0".encode_utf16().collect();
             let handle = unsafe { LoadLibraryW(path.as_ptr()) };
             if handle.is_null() {
                 // Nothing we can do, the game will crash anyway without version.dll

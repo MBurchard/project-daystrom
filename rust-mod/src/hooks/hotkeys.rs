@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -98,12 +98,8 @@ impl RewardTarget {
 /// - Slot 1: `ShipScrappingRewardsScreenViewController` (inherits base AboutToShow)
 /// - Slot 2: `FirstTimeSpenderScreenViewController` (own AboutToShow override)
 /// - Slot 3: `RewardPreviewMultipleListViewController` (inherits base AboutToShow)
-static REWARD_TARGETS: [RewardTarget; 4] = [
-    RewardTarget::new(),
-    RewardTarget::new(),
-    RewardTarget::new(),
-    RewardTarget::new(),
-];
+static REWARD_TARGETS: [RewardTarget; 4] =
+    [RewardTarget::new(), RewardTarget::new(), RewardTarget::new(), RewardTarget::new()];
 
 // ---- Widget collect tracking ------------------------------------------------
 //
@@ -139,7 +135,6 @@ static ORIG_FTS_HIDE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Per-hook error tracking.
 static HOOK_INFO: HookInfo = HookInfo::new("Hotkeys");
-
 
 // ---- Type aliases ---------------------------------------------------------
 
@@ -189,8 +184,7 @@ fn deselect_event_system() {
     if current_fn_ptr.is_null() {
         return;
     }
-    let get_current: GetCurrentEventSystemFn =
-        unsafe { std::mem::transmute(current_fn_ptr) };
+    let get_current: GetCurrentEventSystemFn = unsafe { std::mem::transmute(current_fn_ptr) };
     let event_system = unsafe { get_current() };
     if event_system.is_null() {
         return;
@@ -295,9 +289,9 @@ fn parse_default_bindings(manager: *mut Il2CppObject) {
     }
 
     // Resolve InputActionAsset.ToJson() and call it.
-    let Some(asset_class) = resolver::resolve_class(
-        api, "Unity.InputSystem", "UnityEngine.InputSystem", "InputActionAsset",
-    ) else {
+    let Some(asset_class) =
+        resolver::resolve_class(api, "Unity.InputSystem", "UnityEngine.InputSystem", "InputActionAsset")
+    else {
         warn!(target: "Hotkeys", "InputActionAsset class not found");
         return;
     };
@@ -386,9 +380,7 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
                 collect_reward_screen();
             }
             let main_kc = MAIN_ACTION_KEYCODE.load(Relaxed);
-            if main_kc != 0 && key_down(main_kc)
-                && !is_input_focused() && super::main_action::check()
-            {
+            if main_kc != 0 && key_down(main_kc) && !is_input_focused() && super::main_action::check() {
                 MAIN_ACTION_CONSUMED.store(true, Relaxed);
                 deselect_event_system();
             }
@@ -694,7 +686,8 @@ fn resolve_binding_conflicts(key_name: &str) {
     }
 
     // Find all bindings that are currently on the conflicting key.
-    let conflicts: Vec<(String, String)> = effective.iter()
+    let conflicts: Vec<(String, String)> = effective
+        .iter()
         .filter(|(_, (_, path))| *path == input_path)
         .map(|(id, (action, _))| (id.clone(), action.clone()))
         .collect();
@@ -748,7 +741,12 @@ fn reload_game_bindings() {
     let Some(api) = super::il2cpp_init::IL2CPP_API.get() else { return };
     let mut exception: *mut Il2CppException = std::ptr::null_mut();
     unsafe {
-        (api.runtime_invoke)(method as *const _, manager as *mut Il2CppObject, std::ptr::null_mut(), &mut exception);
+        (api.runtime_invoke)(
+            method as *const _,
+            manager as *mut Il2CppObject,
+            std::ptr::null_mut(),
+            &mut exception,
+        );
     }
 
     if exception.is_null() {
@@ -778,9 +776,8 @@ pub fn install(api: &Il2CppApi) {
 /// Post-hook `ShortcutsManager.InitializeActions()` to parse default bindings and resolve `LoadBindings()`
 /// for runtime keybinding reloads.
 fn install_shortcuts_hook(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutsManager",
-    ) else {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutsManager")
+    else {
         warn!(target: "Hotkeys", "ShortcutsManager not found");
         return;
     };
@@ -819,9 +816,8 @@ fn install_shortcuts_hook(api: &Il2CppApi) {
 /// GetKeyDownInt is hooked (not just resolved) so consumed keys can be suppressed for the game's own code.
 /// Returns `false` if the hook cannot be installed (remaining hooks would be useless).
 fn install_input(api: &Il2CppApi) -> bool {
-    let Some(input_class) = resolver::resolve_class(
-        api, "UnityEngine.InputLegacyModule", "UnityEngine", "Input",
-    ) else {
+    let Some(input_class) = resolver::resolve_class(api, "UnityEngine.InputLegacyModule", "UnityEngine", "Input")
+    else {
         warn!(target: "Hotkeys", "Input class not found, hotkeys disabled");
         return false;
     };
@@ -843,9 +839,7 @@ fn install_input(api: &Il2CppApi) -> bool {
     }
 
     // IsInputFocused is optional; main action and future keys still work without it.
-    if let Some(sm_class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager",
-    ) {
+    if let Some(sm_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") {
         if let Some(ptr) = tracker::resolve_fn(api, sm_class, "get_IsInputFocused", 0) {
             IS_INPUT_FOCUSED_FN.store(ptr as *mut (), Relaxed);
             debug!(target: "Hotkeys", "ScreenManager.IsInputFocused resolved");
@@ -855,18 +849,14 @@ fn install_input(api: &Il2CppApi) -> bool {
     }
 
     // EventSystem: deselect UI after handling the main action to prevent Unity's Submit action.
-    if let Some(es_class) = resolver::resolve_class(
-        api, "UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem",
-    ) {
+    if let Some(es_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem") {
         if let Some(ptr) = tracker::resolve_fn(api, es_class, "get_current", 0) {
             EVENT_SYSTEM_CURRENT_FN.store(ptr as *mut (), Relaxed);
         }
         if let Some(ptr) = tracker::resolve_fn(api, es_class, "SetSelectedGameObject", 1) {
             SET_SELECTED_GO_FN.store(ptr as *mut (), Relaxed);
         }
-        if !EVENT_SYSTEM_CURRENT_FN.load(Relaxed).is_null()
-            && !SET_SELECTED_GO_FN.load(Relaxed).is_null()
-        {
+        if !EVENT_SYSTEM_CURRENT_FN.load(Relaxed).is_null() && !SET_SELECTED_GO_FN.load(Relaxed).is_null() {
             debug!(target: "Hotkeys", "EventSystem deselect resolved");
         } else {
             warn!(target: "Hotkeys", "EventSystem partially resolved, UI deselect may not work");
@@ -889,10 +879,30 @@ fn install_input(api: &Il2CppApi) -> bool {
 fn install_reward_tracking(api: &Il2CppApi) {
     // Subclass definitions: (slot, namespace, class name, label).
     let subclasses: [(usize, &str, &str, &str); 4] = [
-        (0, "Digit.Prime.Missions.UI", "AnimatedRewardsScreenViewController", "AnimatedRewards"),
-        (1, "Digit.Prime.Ships", "ShipScrappingRewardsScreenViewController", "ShipScrapping"),
-        (2, "Digit.Prime.SharedFeatures", "FirstTimeSpenderScreenViewController", "FirstTimeSpender"),
-        (3, "Digit.Prime.SharedFeatures", "RewardPreviewMultipleListViewController", "RewardPreview"),
+        (
+            0,
+            "Digit.Prime.Missions.UI",
+            "AnimatedRewardsScreenViewController",
+            "AnimatedRewards",
+        ),
+        (
+            1,
+            "Digit.Prime.Ships",
+            "ShipScrappingRewardsScreenViewController",
+            "ShipScrapping",
+        ),
+        (
+            2,
+            "Digit.Prime.SharedFeatures",
+            "FirstTimeSpenderScreenViewController",
+            "FirstTimeSpender",
+        ),
+        (
+            3,
+            "Digit.Prime.SharedFeatures",
+            "RewardPreviewMultipleListViewController",
+            "RewardPreview",
+        ),
     ];
 
     // Resolve each subclass: store its Il2CppClass pointer and OnCollectClicked.
@@ -915,9 +925,7 @@ fn install_reward_tracking(api: &Il2CppApi) {
     for target in &REWARD_TARGETS {
         let class = target.class.load(Relaxed);
         if !class.is_null()
-            && let Some(ptr) = tracker::resolve_fn(
-                api, class as *mut Il2CppClass, "IsActive", 0,
-            )
+            && let Some(ptr) = tracker::resolve_fn(api, class as *mut Il2CppClass, "IsActive", 0)
         {
             IS_ACTIVE_FN.store(ptr as *mut (), Relaxed);
             debug!(target: "Hotkeys", "IsActive resolved (from UIBehaviour)");
@@ -951,7 +959,9 @@ fn install_reward_tracking(api: &Il2CppApi) {
 
     // Hook GenericRewardsScreenViewController.AboutToShow/Hide (shared by slots 1, 3).
     let Some(base_class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.SharedFeatures",
+        api,
+        "Assembly-CSharp",
+        "Digit.Prime.SharedFeatures",
         "GenericRewardsScreenViewController",
     ) else {
         warn!(target: "Hotkeys", "GenericRewardsScreenViewController not found");
@@ -1008,9 +1018,9 @@ fn install_reward_tracking(api: &Il2CppApi) {
 /// They persist for the session and use OnEnable/OnDisable for visibility.
 fn install_widget_collect_tracking(api: &Il2CppApi) {
     // MissionsNotificationPopoutWidget
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.HUD", "MissionsNotificationPopoutWidget",
-    ) else {
+    let Some(class) =
+        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "MissionsNotificationPopoutWidget")
+    else {
         warn!(target: "Hotkeys", "MissionsNotificationPopoutWidget not found");
         return;
     };
@@ -1038,23 +1048,20 @@ fn install_widget_collect_tracking(api: &Il2CppApi) {
 /// Falls back to `LateUpdate()` if `Update` is not found (Update may not appear in the IL2CPP dump if it's
 /// compiler-generated).
 fn install_update_hook(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager",
-    ) else {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") else {
         return;
     };
 
     // Try Update first, fall back to LateUpdate.
-    let (name, ptr) =
-        if let Some(p) = tracker::resolve_fn(api, class, "Update", 0) {
-            ("Update", p)
-        } else if let Some(p) = tracker::resolve_fn(api, class, "LateUpdate", 0) {
-            warn!(target: "Hotkeys", "Update not found, falling back to LateUpdate");
-            ("LateUpdate", p)
-        } else {
-            error!(target: "Hotkeys", "Neither Update nor LateUpdate found on ScreenManager");
-            return;
-        };
+    let (name, ptr) = if let Some(p) = tracker::resolve_fn(api, class, "Update", 0) {
+        ("Update", p)
+    } else if let Some(p) = tracker::resolve_fn(api, class, "LateUpdate", 0) {
+        warn!(target: "Hotkeys", "Update not found, falling back to LateUpdate");
+        ("LateUpdate", p)
+    } else {
+        error!(target: "Hotkeys", "Neither Update nor LateUpdate found on ScreenManager");
+        return;
+    };
 
     match engine::install_hook("Hotkeys", ptr, hook_update as *const ()) {
         Ok(original) => {

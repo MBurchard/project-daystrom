@@ -186,27 +186,18 @@ unsafe fn is_viewer_visible(instance: *const ()) -> bool {
 /// Returns `true` if an action was executed (the key should be consumed).
 pub fn check() -> bool {
     let p = prescan::get();
-    if !p.is_null()
-        && unsafe { is_viewer_visible(p) }
-        && try_engage(p)
-    {
+    if !p.is_null() && unsafe { is_viewer_visible(p) } && try_engage(p) {
         return true;
     }
 
     // Station prescan (player bases) uses the same engage logic (inherited fields).
     let st = STATION_INSTANCE.load(Relaxed);
-    if !st.is_null()
-        && unsafe { is_viewer_visible(st) }
-        && try_engage(st)
-    {
+    if !st.is_null() && unsafe { is_viewer_visible(st) } && try_engage(st) {
         return true;
     }
 
     let m = mining::get();
-    if !m.is_null()
-        && unsafe { is_viewer_visible(m) }
-        && try_mine(m)
-    {
+    if !m.is_null() && unsafe { is_viewer_visible(m) } && try_mine(m) {
         return true;
     }
 
@@ -220,7 +211,7 @@ pub fn check() -> bool {
     try_set_course()
 }
 
-/// Attempt engage or queue on the PreScanTargetWidget.
+/// Attempt to engage or queue on the PreScanTargetWidget.
 ///
 /// Checks the engage button first (normal attack). If invisible, checks the queue button.
 /// Queue is only triggered if the button is both active and interactable (not full).
@@ -371,9 +362,7 @@ pub fn install(api: &Il2CppApi) {
     // Resolve shared visibility offsets (used by all viewer types).
     // _visibilityController is inherited from ObjectViewerBaseWidget; resolving on any
     // concrete subclass works because IL2CPP traverses the class hierarchy.
-    if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController",
-    ) {
+    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController") {
         if let Some(offset) = resolver::resolve_field_offset(api, c, "_state") {
             OFFSET_VIS_STATE.store(offset, Relaxed);
             debug!(target: "Hotkeys", "VisibilityController._state offset: {offset:#x}");
@@ -382,10 +371,8 @@ pub fn install(api: &Il2CppApi) {
         }
     }
 
-    // PreScanTargetWidget has its own OnDestroy override, so full install is safe.
-    if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget",
-    ) {
+    // PreScanTargetWidget has its own OnDestroy override, so full installation is safe.
+    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget") {
         // Resolve _visibilityController offset on a concrete viewer subclass.
         if let Some(offset) = resolver::resolve_field_offset(api, c, "_visibilityController") {
             OFFSET_VIS_CTRL.store(offset, Relaxed);
@@ -439,9 +426,8 @@ pub fn install(api: &Il2CppApi) {
     }
 
     // Resolve PreScanStationTargetWidget class pointer for runtime dispatch in the Awake hook.
-    if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanStationTargetWidget",
-    ) {
+    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanStationTargetWidget")
+    {
         STATION_CLASS.store(c as *mut (), Relaxed);
         debug!(target: "Hotkeys", "PreScanStationTargetWidget class resolved for dispatch");
     } else {
@@ -450,9 +436,7 @@ pub fn install(api: &Il2CppApi) {
 
     // ScanEngageButtonsWidget.OnEngageButtonClicked (no tracking needed, reached via
     // PreScanTargetWidget._scanEngageButtonsWidget field).
-    if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Combat", "ScanEngageButtonsWidget",
-    ) {
+    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "ScanEngageButtonsWidget") {
         if let Some(p) = tracker::resolve_fn(api, c, "OnEngageButtonClicked", 0) {
             ON_ENGAGE_FN.store(p as *mut (), Relaxed);
             debug!(target: "Hotkeys", "OnEngageButtonClicked resolved");
@@ -467,9 +451,7 @@ pub fn install(api: &Il2CppApi) {
     }
 
     // GenericButtonWidget.get_Interactable (needed for queue button state check).
-    if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget",
-    ) {
+    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget") {
         if let Some(p) = tracker::resolve_fn(api, c, "get_Interactable", 0) {
             GET_INTERACTABLE_FN.store(p as *mut (), Relaxed);
             debug!(target: "Hotkeys", "GenericButtonWidget.get_Interactable resolved");
@@ -480,9 +462,9 @@ pub fn install(api: &Il2CppApi) {
 
     // MiningObjectViewerWidget and StarNodeObjectViewerWidget share the base class OnDestroy,
     // so we hook Awake individually and OnDestroy once via the shared viewer hook.
-    if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "MiningObjectViewerWidget",
-    ) {
+    if let Some(c) =
+        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "MiningObjectViewerWidget")
+    {
         mining::install_awake(api, c, "Mining");
         install_shared_destroy(api, c);
         if let Some(p) = tracker::resolve_fn(api, c, "MineClicked", 0) {
@@ -493,9 +475,9 @@ pub fn install(api: &Il2CppApi) {
         }
     }
 
-    if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "StarNodeObjectViewerWidget",
-    ) {
+    if let Some(c) =
+        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "StarNodeObjectViewerWidget")
+    {
         starnode::install_awake(api, c, "StarNode");
         if let Some(p) = tracker::resolve_fn(api, c, "InitiateWarp", 0) {
             INITIATE_WARP_FN.store(p as *mut (), Relaxed);
@@ -507,7 +489,10 @@ pub fn install(api: &Il2CppApi) {
 
     // NavigationInteractionUIViewController: fallback "Set Course" when no viewer is open.
     if let Some(c) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationInteractionUIViewController",
+        api,
+        "Assembly-CSharp",
+        "Digit.Prime.Navigation",
+        "NavigationInteractionUIViewController",
     ) {
         nav_controller::install(api, c, "NavController");
         if let Some(p) = tracker::resolve_fn(api, c, "OnSetCourseButtonClick", 0) {

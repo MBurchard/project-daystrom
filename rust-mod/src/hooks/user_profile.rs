@@ -1,6 +1,6 @@
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 use std::time::Duration;
 
 use log::{debug, error, warn};
@@ -35,11 +35,7 @@ type GetLocalUserProfileFn = unsafe extern "C" fn(*mut Il2CppObject) -> *mut Il2
 ///
 /// IL2CppDumper shows the namespace `Digit.PrimeServer.Models` but doesn't reveal the assembly name. We try
 /// the most likely candidates in order.
-const PROFILE_ASSEMBLIES: &[&str] = &[
-    "Digit.Client.PrimeLib.Runtime",
-    "Assembly-CSharp",
-    "Assembly-CSharp-firstpass",
-];
+const PROFILE_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-CSharp", "Assembly-CSharp-firstpass"];
 
 /// Hook replacement for `UserProfileManager.GetLocalUserProfile()`.
 ///
@@ -71,17 +67,20 @@ extern "C" fn hook(this: *mut Il2CppObject) -> *mut Il2CppObject {
 /// Resolve the UserProfile class, trying multiple assemblies. Cached after first successful resolution.
 /// Returns None permanently after the first failed attempt (to avoid repeated lookups).
 fn resolve_profile_class(api: &Il2CppApi) -> Option<*mut Il2CppClass> {
-    PROFILE_CLASS.get_or_init(|| {
-        for assembly in PROFILE_ASSEMBLIES {
-            let class = resolver::resolve_class(api, assembly, "Digit.PrimeServer.Models", "UserProfile");
-            if let Some(ptr) = class {
-                debug!(target: "PlayerData", "UserProfile class found in assembly '{assembly}'");
-                return Some(ClassPtr(ptr));
+    PROFILE_CLASS
+        .get_or_init(|| {
+            for assembly in PROFILE_ASSEMBLIES {
+                let class = resolver::resolve_class(api, assembly, "Digit.PrimeServer.Models", "UserProfile");
+                if let Some(ptr) = class {
+                    debug!(target: "PlayerData", "UserProfile class found in assembly '{assembly}'");
+                    return Some(ClassPtr(ptr));
+                }
             }
-        }
-        warn!(target: "PlayerData", "UserProfile class not found in any assembly, player data logging disabled");
-        None
-    }).as_ref().map(|c| c.0)
+            warn!(target: "PlayerData", "UserProfile class not found in any assembly, player data logging disabled");
+            None
+        })
+        .as_ref()
+        .map(|c| c.0)
 }
 
 /// Read player information from a UserProfile object and push changes to the game state.
@@ -131,9 +130,7 @@ fn read_string_property(
     let method = resolver::resolve_method(api, class, method_name, 0)?;
     let mut exception: *mut Il2CppException = std::ptr::null_mut();
 
-    let result = unsafe {
-        (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception)
-    };
+    let result = unsafe { (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception) };
 
     if !exception.is_null() || result.is_null() {
         return None;
@@ -152,9 +149,7 @@ fn read_int_property(
     let method = resolver::resolve_method(api, class, method_name, 0)?;
     let mut exception: *mut Il2CppException = std::ptr::null_mut();
 
-    let result = unsafe {
-        (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception)
-    };
+    let result = unsafe { (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception) };
 
     if !exception.is_null() || result.is_null() {
         return None;
@@ -175,9 +170,7 @@ fn read_ulong_property(
     let method = resolver::resolve_method(api, class, method_name, 0)?;
     let mut exception: *mut Il2CppException = std::ptr::null_mut();
 
-    let result = unsafe {
-        (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception)
-    };
+    let result = unsafe { (api.runtime_invoke)(method, obj, std::ptr::null_mut(), &mut exception) };
 
     if !exception.is_null() || result.is_null() {
         return None;
@@ -192,9 +185,9 @@ fn read_ulong_property(
 /// Called from `install_all_hooks()` after IL2CPP is initialized. If the class or method cannot
 /// be resolved (e.g. after a game update), logs a warning and returns without crashing.
 pub fn install(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileManager",
-    ) else {
+    let Some(class) =
+        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileManager")
+    else {
         return;
     };
 

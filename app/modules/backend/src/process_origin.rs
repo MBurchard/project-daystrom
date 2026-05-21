@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Whether the game was launched via Daystrom's "Launch Game" button.
 static GAME_STARTED_BY_US: AtomicBool = AtomicBool::new(false);
@@ -188,8 +188,7 @@ mod tests {
         #[cfg(unix)]
         let child = std::process::Command::new("true").spawn().unwrap();
         #[cfg(windows)]
-        let child = std::process::Command::new("cmd")
-            .args(["/C", "exit", "0"]).spawn().unwrap();
+        let child = std::process::Command::new("cmd").args(["/C", "exit", "0"]).spawn().unwrap();
         register_launch(child, "106_OldName".to_string());
 
         update_stem("106_OldName", "106_NewName");
@@ -206,8 +205,7 @@ mod tests {
         #[cfg(unix)]
         let child = std::process::Command::new("true").spawn().unwrap();
         #[cfg(windows)]
-        let child = std::process::Command::new("cmd")
-            .args(["/C", "exit", "0"]).spawn().unwrap();
+        let child = std::process::Command::new("cmd").args(["/C", "exit", "0"]).spawn().unwrap();
         register_launch(child, "106_Nabor".to_string());
 
         update_stem("411_Unknown", "411_NewName");

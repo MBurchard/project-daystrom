@@ -1,6 +1,6 @@
 use std::ffi::c_char;
-use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
 use libloading::Library;
 use log::{debug, error};
@@ -8,7 +8,7 @@ use log::{debug, error};
 use crate::hook::engine;
 use crate::il2cpp::api::{self, Il2CppApi, Il2CppInitFn};
 
-/// Global IL2CPP API handle, initialised once after `il2cpp_init` completes.
+/// Global IL2CPP API handle, initialized once after `il2cpp_init` completes.
 pub static IL2CPP_API: OnceLock<Il2CppApi> = OnceLock::new();
 
 /// Original `il2cpp_init` function pointer (set by the hook installer).
@@ -20,7 +20,7 @@ static GAME_ASSEMBLY: OnceLock<Library> = OnceLock::new();
 
 /// Hook for `il2cpp_init`. Called once during game startup.
 ///
-/// Calls the original first (IL2CPP must initialise before we can use the reflection API),
+/// Calls the original first (IL2CPP must initialize before we can use the reflection API),
 /// then loads all IL2CPP API functions and installs the game hooks.
 extern "C" fn il2cpp_init_hook(domain_name: *const c_char) -> i64 {
     // Always call original first
@@ -78,22 +78,19 @@ pub fn install() -> Result<(), String> {
 fn load_game_assembly() -> Result<Library, String> {
     #[cfg(target_os = "macos")]
     {
-        let exe_path = macos_executable_path()
-            .ok_or("Could not determine executable path")?;
+        let exe_path = macos_executable_path().ok_or("Could not determine executable path")?;
         let lib_path = std::path::Path::new(&exe_path)
             .parent()
             .ok_or("Invalid executable path")?
             .join("../Frameworks/GameAssembly.dylib");
         debug!(target: "HookEngine", "Loading GameAssembly from {}", lib_path.display());
-        unsafe { Library::new(&lib_path) }
-            .map_err(|e| format!("Failed to load GameAssembly: {e}"))
+        unsafe { Library::new(&lib_path) }.map_err(|e| format!("Failed to load GameAssembly: {e}"))
     }
 
     #[cfg(target_os = "windows")]
     {
         debug!(target: "HookEngine", "Loading GameAssembly.dll");
-        unsafe { Library::new("GameAssembly.dll") }
-            .map_err(|e| format!("Failed to load GameAssembly.dll: {e}"))
+        unsafe { Library::new("GameAssembly.dll") }.map_err(|e| format!("Failed to load GameAssembly.dll: {e}"))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -104,8 +101,7 @@ fn load_game_assembly() -> Result<Library, String> {
 
 /// Resolve a symbol from the loaded library and return it as a raw pointer.
 fn find_symbol(lib: &Library, name: &str) -> Result<*const (), String> {
-    let c_name = std::ffi::CString::new(name)
-        .map_err(|_| format!("Invalid symbol name: {name}"))?;
+    let c_name = std::ffi::CString::new(name).map_err(|_| format!("Invalid symbol name: {name}"))?;
     let sym = unsafe { lib.get::<*const ()>(c_name.as_bytes_with_nul()) }
         .map_err(|e| format!("Symbol '{name}' not found: {e}"))?;
     Ok(*sym)

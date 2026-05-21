@@ -5,8 +5,7 @@ use crate::use_log;
 use_log!("GameDetect");
 
 /// Path to the Scopely launcher settings file, relative to `%LOCALAPPDATA%`.
-const LAUNCHER_SETTINGS_PATH: &str =
-    "Star Trek Fleet Command/launcher_settings.ini";
+const LAUNCHER_SETTINGS_PATH: &str = "Star Trek Fleet Command/launcher_settings.ini";
 
 /// Name of the game executable on Windows.
 const EXECUTABLE_NAME: &str = "prime.exe";
@@ -18,8 +17,7 @@ const LAUNCHER_EXECUTABLE: &str = "launcher.exe";
 const LAUNCHER_DIR: &str = "Star Trek Fleet Command";
 
 /// Registry uninstall key where the Scopely launcher registers itself.
-const UNINSTALL_REG_KEY: &str =
-    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Star Trek Fleet Command";
+const UNINSTALL_REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Star Trek Fleet Command";
 
 /// Read the game install directory from the Scopely launcher settings INI.
 ///
@@ -126,10 +124,7 @@ pub fn detect() -> Option<(PathBuf, PathBuf)> {
     let executable = install_dir.join(EXECUTABLE_NAME);
 
     if !executable.exists() {
-        log_warn!(
-            "Install directory found but executable missing: {}",
-            executable.display()
-        );
+        log_warn!("Install directory found but executable missing: {}", executable.display());
         return None;
     }
 

@@ -9,8 +9,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -113,9 +113,7 @@ pub fn subscribe() -> broadcast::Receiver<SettingsEvent> {
 /// Standard serde fails the entire document when a field has the wrong type (e.g. `scale = "hello"` when `u32`
 /// is expected). This deserializer catches the error and returns `None`, so one corrupt field does not destroy the
 /// rest of the settings.
-fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<T>, D::Error> {
+fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
     Ok(T::deserialize(deserializer).ok())
 }
 
@@ -137,19 +135,39 @@ pub struct HintSettings {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WindowSettings {
     /// Horizontal position of the window's top-left corner.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub x: Option<i32>,
     /// Vertical position of the window's top-left corner.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub y: Option<i32>,
     /// Window width.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub width: Option<u32>,
     /// Window height.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub height: Option<u32>,
     /// Whether the window was maximized when last seen.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub maximized: Option<bool>,
 }
 
@@ -169,25 +187,53 @@ pub struct UiSettings {
 #[ts(export)]
 pub struct GameUiSettings {
     /// UI scale percentage (50-200). Applied as a multiplier on the original scale factor.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub scale: Option<u32>,
     /// System view zoom distance (1000-3000). Controls the default camera distance when entering a system.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub system_zoom: Option<u32>,
     /// Ship names visibility distance (1000-3000). Controls how far ship names stay visible.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ship_names_visible: Option<u32>,
     /// Whether to auto-open the chat sidebar when the game starts.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub auto_open_sidebar: Option<bool>,
     /// Whether to auto-expand the job queue panel from compact to full view.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub auto_expand_job_queue: Option<bool>,
     /// Whether to skip the shop reveal sequence animation when opening loot boxes.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub skip_reveal_sequence: Option<bool>,
     /// Whether to skip the first interstitial popup (ad) after game start.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub skip_first_popup: Option<bool>,
 }
 
@@ -196,10 +242,18 @@ pub struct GameUiSettings {
 #[ts(export)]
 pub struct GameBannerSettings {
     /// Whether to suppress all toast banner notifications.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub disable_all: Option<bool>,
     /// List of specific banner type names to suppress (e.g. `["Victory", "Defeat"]`).
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub disabled_types: Option<Vec<String>>,
 }
 
@@ -208,19 +262,39 @@ pub struct GameBannerSettings {
 #[ts(export)]
 pub struct GameCargoViewSettings {
     /// Whether to auto-open cargo after selecting a target.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub enabled: Option<bool>,
     /// Whether hostile targets should auto-open cargo.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub show_for_hostiles: Option<bool>,
     /// Whether armada targets should auto-open cargo.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub show_for_armadas: Option<bool>,
     /// Whether player stations should auto-open cargo.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub show_for_stations: Option<bool>,
     /// Whether player ships should auto-open cargo.
-    #[serde(default, deserialize_with = "lenient_option", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub show_for_players: Option<bool>,
 }
 
@@ -313,10 +387,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
             skip_reveal_sequence: None,
             skip_first_popup: None,
         },
-        banners: GameBannerSettings {
-            disable_all: None,
-            disabled_types: None,
-        },
+        banners: GameBannerSettings { disable_all: None, disabled_types: None },
         cargo_view: GameCargoViewSettings::default_values(),
         shortcuts: BTreeMap::new(),
     },
@@ -369,9 +440,7 @@ fn load_from(path: &Path) -> AppSettings {
 /// Falls back to default when the file is missing, empty, or contains invalid TOML.
 /// Safe to call multiple times, later calls overwrite the in-memory state.
 pub fn load() {
-    let settings = settings_path()
-        .map(|p| load_from(&p))
-        .unwrap_or_default();
+    let settings = settings_path().map(|p| load_from(&p)).unwrap_or_default();
     *SETTINGS.lock().unwrap() = settings;
 }
 
@@ -403,7 +472,9 @@ fn save() {
         std::thread::sleep(SAVE_DEBOUNCE);
         SAVE_PENDING.store(false, Ordering::SeqCst);
         let settings = SETTINGS.lock().unwrap().clone();
-        if let Some(dir) = path.parent() && let Err(e) = fs::create_dir_all(dir) {
+        if let Some(dir) = path.parent()
+            && let Err(e) = fs::create_dir_all(dir)
+        {
             log_error!("Failed to create settings directory: {e}");
             return;
         }
@@ -493,13 +564,19 @@ pub fn save_window_state(x: i32, y: i32, width: u32, height: u32, maximized: boo
         let new = if maximized {
             // Preserve the last known normal bounds, only flip the flag.
             let prev = s.ui.window.clone().unwrap_or(WindowSettings {
-                x: Some(x), y: Some(y), width: Some(width), height: Some(height),
+                x: Some(x),
+                y: Some(y),
+                width: Some(width),
+                height: Some(height),
                 maximized: Some(false),
             });
             WindowSettings { maximized: Some(true), ..prev }
         } else {
             WindowSettings {
-                x: Some(x), y: Some(y), width: Some(width), height: Some(height),
+                x: Some(x),
+                y: Some(y),
+                width: Some(width),
+                height: Some(height),
                 maximized: Some(false),
             }
         };
@@ -549,9 +626,7 @@ pub fn set_game_settings(settings: GameSettings) {
             events.push(SettingsEvent::BannersDisableAll(s.game.banners.disable_all));
         }
         if s.game.banners.disabled_types != old.banners.disabled_types {
-            events.push(SettingsEvent::BannersDisabledTypes(
-                s.game.banners.disabled_types.clone(),
-            ));
+            events.push(SettingsEvent::BannersDisabledTypes(s.game.banners.disabled_types.clone()));
         }
         if s.game.ui.system_zoom != old.ui.system_zoom {
             events.push(SettingsEvent::SystemZoom(s.game.ui.system_zoom));
@@ -650,7 +725,10 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let settings = AppSettings {
-            ui: UiSettings { hints: HintSettings { minimize_to_tray: 42 }, window: None },
+            ui: UiSettings {
+                hints: HintSettings { minimize_to_tray: 42 },
+                window: None,
+            },
             ..Default::default()
         };
         let toml_str = toml::to_string_pretty(&settings).unwrap();
@@ -788,7 +866,10 @@ mod tests {
         let path = use_temp_path("save_load_rt");
 
         let original = AppSettings {
-            ui: UiSettings { hints: HintSettings { minimize_to_tray: 99 }, window: None },
+            ui: UiSettings {
+                hints: HintSettings { minimize_to_tray: 99 },
+                window: None,
+            },
             ..Default::default()
         };
         *SETTINGS.lock().unwrap() = original.clone();
@@ -1023,10 +1104,7 @@ mod tests {
 
         let ws = get_window_settings().unwrap();
         assert_eq!(ws.maximized, Some(true));
-        assert_eq!(
-            (ws.x, ws.y, ws.width, ws.height),
-            (Some(100), Some(200), Some(800), Some(600)),
-        );
+        assert_eq!((ws.x, ws.y, ws.width, ws.height), (Some(100), Some(200), Some(800), Some(600)),);
 
         // Wait for debounced save thread to complete before clean-up.
         flush_saves();
@@ -1061,11 +1139,16 @@ mod tests {
         // Same values again: should not trigger a disk write
         let changed = update(|s| {
             let new = WindowSettings {
-                x: Some(100), y: Some(200), width: Some(800), height: Some(600),
+                x: Some(100),
+                y: Some(200),
+                width: Some(800),
+                height: Some(600),
                 maximized: Some(false),
             };
             let changed = s.ui.window.as_ref() != Some(&new);
-            if changed { s.ui.window = Some(new); }
+            if changed {
+                s.ui.window = Some(new);
+            }
             changed
         });
         assert!(!changed);
@@ -1091,10 +1174,7 @@ mod tests {
 
         let loaded = load_from(&path);
         let ws = loaded.ui.window.expect("should have window section");
-        assert_eq!(
-            (ws.x, ws.y, ws.width, ws.height),
-            (Some(476), Some(412), Some(1329), Some(915)),
-        );
+        assert_eq!((ws.x, ws.y, ws.width, ws.height), (Some(476), Some(412), Some(1329), Some(915)),);
 
         // Clean-up
         SETTINGS.lock().unwrap().ui.window = None;

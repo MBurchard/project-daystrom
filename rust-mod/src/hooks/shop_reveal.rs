@@ -47,9 +47,7 @@ extern "C" fn hook_should_show(this: *mut Il2CppObject, ignore: bool) -> bool {
 ///
 /// Hooks `ShopSceneManager.ShouldShowRevealSequence` to allow skipping the loot box animation.
 pub fn install(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager",
-    ) else {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager") else {
         log::warn!(target: "ShopReveal", "ShopSceneManager not found");
         return;
     };
@@ -59,9 +57,7 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    match crate::hook::engine::install_hook(
-        "ShopReveal", ptr, hook_should_show as *const (),
-    ) {
+    match crate::hook::engine::install_hook("ShopReveal", ptr, hook_should_show as *const ()) {
         Ok(orig) => {
             ORIGINAL_FN.store(orig as *mut (), Relaxed);
             debug!(target: "ShopReveal", "ShouldShowRevealSequence hook installed");

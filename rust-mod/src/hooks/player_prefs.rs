@@ -99,13 +99,11 @@ const HASKEY_SUPPRESS_PREFIX: &[&str] = &[
 /// Checks both the raw key and, for uid-prefixed keys (`{uid}:suffix`),
 /// the suffix after the colon.
 fn haskey_suppressed(key: &str) -> bool {
-    is_suppressed(key)
-        || key.split_once(':').is_some_and(|(_, suffix)| is_suppressed(suffix))
+    is_suppressed(key) || key.split_once(':').is_some_and(|(_, suffix)| is_suppressed(suffix))
 }
 
 fn is_suppressed(key: &str) -> bool {
-    HASKEY_SUPPRESS.contains(&key)
-        || HASKEY_SUPPRESS_PREFIX.iter().any(|&p| key.starts_with(p))
+    HASKEY_SUPPRESS.contains(&key) || HASKEY_SUPPRESS_PREFIX.iter().any(|&p| key.starts_with(p))
 }
 
 // ---- Log helpers ----------------------------------------------------------
@@ -133,11 +131,7 @@ fn truncate_value(s: &str) -> std::borrow::Cow<'_, str> {
 /// If the key was routed (`Ok(true)`), the value is already stored and the original is not called.
 /// If unrouted (`Ok(false)`), the original is called to persist via plist/Registry.
 /// On panic (`Err`), the error is recorded and the original is called as fallback to prevent data loss.
-fn dispatch_set(
-    result: std::thread::Result<bool>,
-    hook: &HookInfo,
-    call_original: impl FnOnce(),
-) {
+fn dispatch_set(result: std::thread::Result<bool>, hook: &HookInfo, call_original: impl FnOnce()) {
     match result {
         Ok(true) => {}
         Ok(false) => call_original(),
@@ -154,24 +148,13 @@ fn dispatch_set(
 // the last argument.
 
 /// `static void SetString(string key, string value)`
-type SetStringFn = unsafe extern "C" fn(
-    *mut Il2CppString,
-    *mut Il2CppString,
-    *const MethodInfo,
-);
+type SetStringFn = unsafe extern "C" fn(*mut Il2CppString, *mut Il2CppString, *const MethodInfo);
 
 /// `static string GetString(string key, string defaultValue)`
-type GetString2Fn = unsafe extern "C" fn(
-    *mut Il2CppString,
-    *mut Il2CppString,
-    *const MethodInfo,
-) -> *mut Il2CppString;
+type GetString2Fn = unsafe extern "C" fn(*mut Il2CppString, *mut Il2CppString, *const MethodInfo) -> *mut Il2CppString;
 
 /// `static string GetString(string key)`
-type GetString1Fn = unsafe extern "C" fn(
-    *mut Il2CppString,
-    *const MethodInfo,
-) -> *mut Il2CppString;
+type GetString1Fn = unsafe extern "C" fn(*mut Il2CppString, *const MethodInfo) -> *mut Il2CppString;
 
 /// `static void SetInt(string key, int value)`
 type SetIntFn = unsafe extern "C" fn(*mut Il2CppString, i32, *const MethodInfo);
@@ -218,7 +201,6 @@ fn registry_blocked() -> bool {
     profile_store::should_block_registry()
 }
 
-
 // ---- Hook callbacks -------------------------------------------------------
 
 /// Hook for `PlayerPrefs.SetString(string key, string value)`.
@@ -226,13 +208,11 @@ fn registry_blocked() -> bool {
 /// Routed keys are written to the profile store only (Registry untouched).
 /// Unrouted keys pass through to the original and are logged for analysis.
 /// In panic, it always falls back to the original to prevent data loss.
-extern "C" fn hook_set_string(
-    key: *mut Il2CppString,
-    value: *mut Il2CppString,
-    method_info: *const MethodInfo,
-) {
+extern "C" fn hook_set_string(key: *mut Il2CppString, value: *mut Il2CppString, method_info: *const MethodInfo) {
     let orig_ptr = ORIGINAL_SET_STRING.load(Relaxed);
-    if orig_ptr.is_null() { return; }
+    if orig_ptr.is_null() {
+        return;
+    }
     let original: SetStringFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -282,7 +262,9 @@ extern "C" fn hook_get_string_2(
     method_info: *const MethodInfo,
 ) -> *mut Il2CppString {
     let orig_ptr = ORIGINAL_GET_STRING_2.load(Relaxed);
-    if orig_ptr.is_null() { return default_value; }
+    if orig_ptr.is_null() {
+        return default_value;
+    }
     let original: GetString2Fn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -340,12 +322,11 @@ extern "C" fn hook_get_string_2(
 /// Hook for `PlayerPrefs.GetString(string key)` (no default parameter).
 ///
 /// Same logic as `hook_get_string_2` but without the default value parameter.
-extern "C" fn hook_get_string_1(
-    key: *mut Il2CppString,
-    method_info: *const MethodInfo,
-) -> *mut Il2CppString {
+extern "C" fn hook_get_string_1(key: *mut Il2CppString, method_info: *const MethodInfo) -> *mut Il2CppString {
     let orig_ptr = ORIGINAL_GET_STRING_1.load(Relaxed);
-    if orig_ptr.is_null() { return std::ptr::null_mut(); }
+    if orig_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
     let original: GetString1Fn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -393,7 +374,9 @@ extern "C" fn hook_get_string_1(
 /// Hook for `PlayerPrefs.SetInt(string key, int value)`.
 extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *const MethodInfo) {
     let orig_ptr = ORIGINAL_SET_INT.load(Relaxed);
-    if orig_ptr.is_null() { return; }
+    if orig_ptr.is_null() {
+        return;
+    }
     let original: SetIntFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -425,13 +408,11 @@ extern "C" fn hook_set_int(key: *mut Il2CppString, value: i32, method_info: *con
 }
 
 /// Hook for `PlayerPrefs.GetInt(string key, int defaultValue)`.
-extern "C" fn hook_get_int(
-    key: *mut Il2CppString,
-    default_value: i32,
-    method_info: *const MethodInfo,
-) -> i32 {
+extern "C" fn hook_get_int(key: *mut Il2CppString, default_value: i32, method_info: *const MethodInfo) -> i32 {
     let orig_ptr = ORIGINAL_GET_INT.load(Relaxed);
-    if orig_ptr.is_null() { return default_value; }
+    if orig_ptr.is_null() {
+        return default_value;
+    }
     let original: GetIntFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -480,7 +461,9 @@ extern "C" fn hook_get_int(
 /// Hook for `PlayerPrefs.SetFloat(string key, float value)`.
 extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *const MethodInfo) {
     let orig_ptr = ORIGINAL_SET_FLOAT.load(Relaxed);
-    if orig_ptr.is_null() { return; }
+    if orig_ptr.is_null() {
+        return;
+    }
     let original: SetFloatFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -512,13 +495,11 @@ extern "C" fn hook_set_float(key: *mut Il2CppString, value: f32, method_info: *c
 }
 
 /// Hook for `PlayerPrefs.GetFloat(string key, float defaultValue)`.
-extern "C" fn hook_get_float(
-    key: *mut Il2CppString,
-    default_value: f32,
-    method_info: *const MethodInfo,
-) -> f32 {
+extern "C" fn hook_get_float(key: *mut Il2CppString, default_value: f32, method_info: *const MethodInfo) -> f32 {
     let orig_ptr = ORIGINAL_GET_FLOAT.load(Relaxed);
-    if orig_ptr.is_null() { return default_value; }
+    if orig_ptr.is_null() {
+        return default_value;
+    }
     let original: GetFloatFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -564,7 +545,9 @@ extern "C" fn hook_get_float(
 /// touching the Registry. Otherwise, falls through to the original.
 extern "C" fn hook_has_key(key: *mut Il2CppString, method_info: *const MethodInfo) -> i32 {
     let orig_ptr = ORIGINAL_HAS_KEY.load(Relaxed);
-    if orig_ptr.is_null() { return 0; }
+    if orig_ptr.is_null() {
+        return 0;
+    }
     let original: HasKeyFn = unsafe { std::mem::transmute(orig_ptr) };
 
     // Trace-only: pass through everything, log matched keys
@@ -686,56 +669,99 @@ fn install_single(
 /// Called from `install_all_hooks()` after IL2CPP is initialized. Uses the IL2CPP
 /// reflection API to resolve the methods, so no hardcoded RVAs are needed.
 pub fn install(api: &Il2CppApi) {
-    let Some(class) = resolver::resolve_class(
-        api, "UnityEngine.CoreModule", "UnityEngine", "PlayerPrefs",
-    ) else {
+    let Some(class) = resolver::resolve_class(api, "UnityEngine.CoreModule", "UnityEngine", "PlayerPrefs") else {
         warn!(target: "PlayerPrefs", "PlayerPrefs class not found, hooks skipped");
         return;
     };
 
     install_single(
-        class, api, "SetString", 2, "PlayerPrefs.SetString",
-        hook_set_string as *const (), &ORIGINAL_SET_STRING,
+        class,
+        api,
+        "SetString",
+        2,
+        "PlayerPrefs.SetString",
+        hook_set_string as *const (),
+        &ORIGINAL_SET_STRING,
     );
 
     install_single(
-        class, api, "GetString", 2, "PlayerPrefs.GetString/2",
-        hook_get_string_2 as *const (), &ORIGINAL_GET_STRING_2,
+        class,
+        api,
+        "GetString",
+        2,
+        "PlayerPrefs.GetString/2",
+        hook_get_string_2 as *const (),
+        &ORIGINAL_GET_STRING_2,
     );
 
     install_single(
-        class, api, "GetString", 1, "PlayerPrefs.GetString/1",
-        hook_get_string_1 as *const (), &ORIGINAL_GET_STRING_1,
+        class,
+        api,
+        "GetString",
+        1,
+        "PlayerPrefs.GetString/1",
+        hook_get_string_1 as *const (),
+        &ORIGINAL_GET_STRING_1,
     );
 
     install_single(
-        class, api, "SetInt", 2, "PlayerPrefs.SetInt",
-        hook_set_int as *const (), &ORIGINAL_SET_INT,
+        class,
+        api,
+        "SetInt",
+        2,
+        "PlayerPrefs.SetInt",
+        hook_set_int as *const (),
+        &ORIGINAL_SET_INT,
     );
 
     install_single(
-        class, api, "GetInt", 2, "PlayerPrefs.GetInt",
-        hook_get_int as *const (), &ORIGINAL_GET_INT,
+        class,
+        api,
+        "GetInt",
+        2,
+        "PlayerPrefs.GetInt",
+        hook_get_int as *const (),
+        &ORIGINAL_GET_INT,
     );
 
     install_single(
-        class, api, "SetFloat", 2, "PlayerPrefs.SetFloat",
-        hook_set_float as *const (), &ORIGINAL_SET_FLOAT,
+        class,
+        api,
+        "SetFloat",
+        2,
+        "PlayerPrefs.SetFloat",
+        hook_set_float as *const (),
+        &ORIGINAL_SET_FLOAT,
     );
 
     install_single(
-        class, api, "GetFloat", 2, "PlayerPrefs.GetFloat",
-        hook_get_float as *const (), &ORIGINAL_GET_FLOAT,
+        class,
+        api,
+        "GetFloat",
+        2,
+        "PlayerPrefs.GetFloat",
+        hook_get_float as *const (),
+        &ORIGINAL_GET_FLOAT,
     );
 
     install_single(
-        class, api, "HasKey", 1, "PlayerPrefs.HasKey",
-        hook_has_key as *const (), &ORIGINAL_HAS_KEY,
+        class,
+        api,
+        "HasKey",
+        1,
+        "PlayerPrefs.HasKey",
+        hook_has_key as *const (),
+        &ORIGINAL_HAS_KEY,
     );
 
     install_single(
-        class, api, "DeleteKey", 1, "PlayerPrefs.DeleteKey",
-        hook_delete_key as *const (), &ORIGINAL_DELETE_KEY,
+        class,
+        api,
+        "DeleteKey",
+        1,
+        "PlayerPrefs.DeleteKey",
+        hook_delete_key as *const (),
+        &ORIGINAL_DELETE_KEY,
     );
 }
 

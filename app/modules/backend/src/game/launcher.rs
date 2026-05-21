@@ -94,25 +94,20 @@ pub fn open_updater() -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
-            .arg(LAUNCHER_APP)
-            .spawn()
-            .map_err(|e| {
-                log_error!("Failed to open Scopely launcher: {e}");
-                "Failed to open launcher (see log for details)".to_string()
-            })?;
+        Command::new("open").arg(LAUNCHER_APP).spawn().map_err(|e| {
+            log_error!("Failed to open Scopely launcher: {e}");
+            "Failed to open launcher (see log for details)".to_string()
+        })?;
     }
 
     #[cfg(target_os = "windows")]
     {
         let launcher = super::windows::find_launcher()
             .ok_or_else(|| "Could not locate the Scopely launcher on this system".to_string())?;
-        Command::new(&launcher)
-            .spawn()
-            .map_err(|e| {
-                log_error!("Failed to open Scopely launcher: {e}");
-                "Failed to open launcher (see log for details)".to_string()
-            })?;
+        Command::new(&launcher).spawn().map_err(|e| {
+            log_error!("Failed to open Scopely launcher: {e}");
+            "Failed to open launcher (see log for details)".to_string()
+        })?;
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]

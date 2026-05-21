@@ -5,8 +5,8 @@
 //! `game-status` event. The store deduplicates: if an update doesn't change anything, no event
 //! is emitted.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::Emitter;
 
@@ -66,11 +66,7 @@ pub fn update(app: &tauri::AppHandle, updater: impl FnOnce(&mut GameStatus)) {
         updater(&mut status);
         crate::commands::recompute_derived(&mut status);
         INITIALIZED.store(true, Ordering::SeqCst);
-        if *status != old {
-            Some(status.clone())
-        } else {
-            None
-        }
+        if *status != old { Some(status.clone()) } else { None }
     };
 
     if let Some(payload) = changed {

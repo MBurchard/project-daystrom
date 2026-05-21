@@ -1,5 +1,9 @@
 use std::collections::HashMap;
-use std::{fs, path::{Path, PathBuf}, sync::Mutex};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use colored::Colorize;
 use log::{Level, LevelFilter};
@@ -75,9 +79,7 @@ pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
         .format(format_log)
         .targets([
             Target::new(TargetKind::Stdout),
-            Target::new(TargetKind::LogDir {
-                file_name: Some(LOG_FILE_NAME.into()),
-            }),
+            Target::new(TargetKind::LogDir { file_name: Some(LOG_FILE_NAME.into()) }),
         ])
         .build()
 }
@@ -86,7 +88,7 @@ pub fn build_plugin() -> TauriPlugin<tauri::Wry> {
 
 /// Minimal struct to extract only the `[log_levels.app]` section from settings.toml.
 ///
-/// Read independently of the settings module because the logger is initialised before `settings::load()`.
+/// Read independently of the settings module because the logger is initialized before `settings::load()`.
 #[derive(Default, Deserialize)]
 struct LogLevelSettings {
     #[serde(default)]
@@ -123,10 +125,11 @@ fn load_log_levels() -> Vec<(String, LevelFilter)> {
     let Ok(content) = fs::read_to_string(&path) else { return Vec::new() };
     let settings: LogLevelSettings = toml::from_str(&content).unwrap_or_default();
 
-    settings.log_levels.app.into_iter()
-        .filter_map(|(target, level_str)| {
-            Some((target, parse_level_filter(&level_str)?))
-        })
+    settings
+        .log_levels
+        .app
+        .into_iter()
+        .filter_map(|(target, level_str)| Some((target, parse_level_filter(&level_str)?)))
         .collect()
 }
 
@@ -195,10 +198,7 @@ fn init_runtime_rotation() {
     let today = time::OffsetDateTime::now_local()
         .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
         .date();
-    *ROTATION_STATE.lock().unwrap() = Some(RotationState {
-        current_date: today,
-        log_dir: dir,
-    });
+    *ROTATION_STATE.lock().unwrap() = Some(RotationState { current_date: today, log_dir: dir });
 }
 
 // ---- Log cleanup & rotation -----------------------------------------------------
@@ -224,15 +224,9 @@ fn rotate_logs_in(dir: &Path) {
                     let archive_path = dir.join(&archive_name);
 
                     if archive_path.exists() {
-                        eprintln!(
-                            "Log rotation: {archive_name} already exists, skipping {}",
-                            log_file.display()
-                        );
+                        eprintln!("Log rotation: {archive_name} already exists, skipping {}", log_file.display());
                     } else if let Err(e) = fs::rename(&log_file, &archive_path) {
-                        eprintln!(
-                            "Log rotation: failed to archive {} as {archive_name}: {e}",
-                            log_file.display()
-                        );
+                        eprintln!("Log rotation: failed to archive {} as {archive_name}: {e}", log_file.display());
                     }
                 }
             }
@@ -240,10 +234,7 @@ fn rotate_logs_in(dir: &Path) {
             None => {
                 // File exists but contains no valid timestamps — truncate it
                 if let Err(e) = fs::write(&log_file, "") {
-                    eprintln!(
-                        "Log rotation: failed to truncate {}: {e}",
-                        log_file.display()
-                    );
+                    eprintln!("Log rotation: failed to truncate {}: {e}", log_file.display());
                 }
             }
         }
@@ -374,11 +365,7 @@ fn copy_truncate_rotation(dir: &Path, time_suffix: Option<&str>) {
         return;
     }
 
-    if let Err(e) = fs::File::options()
-        .write(true)
-        .open(&log_file)
-        .and_then(|f| f.set_len(0))
-    {
+    if let Err(e) = fs::File::options().write(true).open(&log_file).and_then(|f| f.set_len(0)) {
         eprintln!("Runtime rotation: failed to truncate {}: {e}", log_file.display());
     }
 }
@@ -404,9 +391,11 @@ fn check_runtime_rotation() {
     }
 
     let date_fmt = time::macros::format_description!("[year]-[month]-[day]");
-    let last_time = state.current_date.format(&date_fmt).ok().and_then(|date_str| {
-        normalize_plugin_archives(&state.log_dir, &date_str)
-    });
+    let last_time = state
+        .current_date
+        .format(&date_fmt)
+        .ok()
+        .and_then(|date_str| normalize_plugin_archives(&state.log_dir, &date_str));
     copy_truncate_rotation(&state.log_dir, last_time.as_deref());
     cleanup_old_archives(&state.log_dir, today);
     state.current_date = today;
@@ -466,11 +455,7 @@ const FILE_PATH_WIDTH: usize = 30;
 ///
 /// For JS-originated logs, the logger name is embedded in the message as `name\x1Fmessage`. For Rust-originated
 /// logs, `record.target()` is used as the logger name.
-fn format_log(
-    callback: fern::FormatCallback,
-    message: &std::fmt::Arguments,
-    record: &log::Record,
-) {
+fn format_log(callback: fern::FormatCallback, message: &std::fmt::Arguments, record: &log::Record) {
     check_runtime_rotation();
 
     let timestamp = format_timestamp();
@@ -501,7 +486,8 @@ fn format_timestamp() -> String {
          [offset_hour sign:mandatory]:[offset_minute]",
     )
     .expect("invalid time format");
-    now.format(&format).unwrap_or_else(|_| "????-??-??T??:??:??.???+??:??".to_string())
+    now.format(&format)
+        .unwrap_or_else(|_| "????-??-??T??:??:??.???+??:??".to_string())
 }
 
 /// Colorize a log level string matching bit-log's color scheme:
@@ -890,7 +876,10 @@ mod tests {
 
         cleanup_old_archives(&dir, today_date());
 
-        assert!(!plugin_archive.exists(), "plugin-format archive older than 30 days should be deleted");
+        assert!(
+            !plugin_archive.exists(),
+            "plugin-format archive older than 30 days should be deleted"
+        );
     }
 
     #[test]
@@ -924,11 +913,7 @@ mod tests {
     fn normalize_renames_single_file() {
         let dir = test_dir("normalize_single");
         let date = "2026-01-15";
-        fs::write(
-            dir.join(format!("{LOG_FILE_NAME}_{date}_09-00-00.log")),
-            "log content",
-        )
-        .unwrap();
+        fs::write(dir.join(format!("{LOG_FILE_NAME}_{date}_09-00-00.log")), "log content").unwrap();
 
         let result = normalize_plugin_archives(&dir, date);
         assert_eq!(result.as_deref(), Some("09-00-00"));
@@ -982,16 +967,8 @@ mod tests {
         let dir = test_dir("normalize_other_dates");
         let target = "2026-01-15";
         let other = "2026-01-14";
-        fs::write(
-            dir.join(format!("{LOG_FILE_NAME}_{target}_09-00-00.log")),
-            "target",
-        )
-        .unwrap();
-        fs::write(
-            dir.join(format!("{LOG_FILE_NAME}_{other}_12-00-00.log")),
-            "other",
-        )
-        .unwrap();
+        fs::write(dir.join(format!("{LOG_FILE_NAME}_{target}_09-00-00.log")), "target").unwrap();
+        fs::write(dir.join(format!("{LOG_FILE_NAME}_{other}_12-00-00.log")), "other").unwrap();
 
         normalize_plugin_archives(&dir, target);
 

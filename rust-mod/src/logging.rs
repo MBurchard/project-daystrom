@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
+use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use chrono::{Local, NaiveDate};
@@ -21,7 +21,7 @@ const TAIL_READ_SIZE: u64 = 4096;
 /// Environment variable that determines which profile the mod operates on.
 const PROFILE_ENV_VAR: &str = "DAYSTROM_PROFILE";
 
-/// Global logger instance, initialised once via `init()`.
+/// Global logger instance, initialized once via `init()`.
 static LOGGER: ModLogger = ModLogger;
 
 /// Channel sender for the background writer thread.
@@ -130,10 +130,7 @@ fn rotate_log_file(dir: &Path, base_name: &str, today: NaiveDate) {
 
     match last_log_date(&log_file) {
         Some(last_date) if last_date < today => {
-            let archive = dir.join(format!(
-                "{base_name}_{}.log",
-                last_date.format("%Y-%m-%d")
-            ));
+            let archive = dir.join(format!("{base_name}_{}.log", last_date.format("%Y-%m-%d")));
             if archive.exists() {
                 // Archive for that date already exists, truncate instead
                 let _ = fs::write(&log_file, "");
@@ -151,7 +148,7 @@ fn rotate_log_file(dir: &Path, base_name: &str, today: NaiveDate) {
 
 /// Delete archived log files older than [`MAX_LOG_AGE_DAYS`].
 ///
-/// Recognises archives named `{prefix}_YYYY-MM-DD.log` for any prefix starting with `mod`.
+/// Recognizes archives named `{prefix}_YYYY-MM-DD.log` for any prefix starting with `mod`.
 fn cleanup_old_archives(dir: &Path, today: NaiveDate) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -189,7 +186,7 @@ fn cleanup_old_archives(dir: &Path, today: NaiveDate) {
 /// Background thread that receives log lines and control messages.
 ///
 /// Drains all queued messages before flushing, which naturally batches writes during bursts.
-/// Handles date-based rotation, archive cleanup, and live log file renaming.
+/// Handles date-based rotation, archive clean-up, and live log file renaming.
 fn writer_thread(rx: mpsc::Receiver<LogMessage>, dir: PathBuf, mut base_name: String) {
     let mut current_date = Local::now().date_naive();
     let mut writer = open_log_writer(&dir, &base_name);
@@ -298,8 +295,7 @@ fn parse_level_filter(s: &str) -> Option<LevelFilter> {
 /// Returns an empty map when the file is missing, unreadable, or contains no overrides.
 /// Invalid level strings are silently skipped.
 fn load_log_levels() -> HashMap<String, LevelFilter> {
-    let Some(path) = dirs::data_dir()
-        .map(|d| d.join(TAURI_IDENTIFIER).join("settings.toml")) else {
+    let Some(path) = dirs::data_dir().map(|d| d.join(TAURI_IDENTIFIER).join("settings.toml")) else {
         return HashMap::new();
     };
     let Ok(content) = fs::read_to_string(&path) else {
@@ -307,10 +303,11 @@ fn load_log_levels() -> HashMap<String, LevelFilter> {
     };
     let settings: LogLevelSettings = toml::from_str(&content).unwrap_or_default();
 
-    settings.log_levels.game.into_iter()
-        .filter_map(|(target, level_str)| {
-            Some((target, parse_level_filter(&level_str)?))
-        })
+    settings
+        .log_levels
+        .game
+        .into_iter()
+        .filter_map(|(target, level_str)| Some((target, parse_level_filter(&level_str)?)))
         .collect()
 }
 
@@ -334,7 +331,8 @@ impl Log for ModLogger {
     /// Checks per-target level overrides from `[log_levels.game]` in settings.toml.
     /// Targets without an explicit override use the default level (Info).
     fn enabled(&self, metadata: &Metadata) -> bool {
-        let max_level = TARGET_LEVELS.get()
+        let max_level = TARGET_LEVELS
+            .get()
             .and_then(|levels| levels.get(metadata.target()).copied())
             .unwrap_or(LevelFilter::Info);
         metadata.level() <= max_level
@@ -361,10 +359,7 @@ impl Log for ModLogger {
         let file = record.file().unwrap_or("unknown");
         let line = record.line().unwrap_or(0);
 
-        let formatted = format!(
-            "{now} {level:<5} [{component:<20}] ({file:<30}: {line:>4}): {}",
-            record.args()
-        );
+        let formatted = format!("{now} {level:<5} [{component:<20}] ({file:<30}: {line:>4}): {}", record.args());
 
         let _ = sender.send(LogMessage::Line(formatted));
     }
@@ -375,7 +370,7 @@ impl Log for ModLogger {
 
 // ---- Public API -----------------------------------------------------------
 
-/// Initialise the mod logger as the global `log` logger.
+/// Initialize the mod logger as the global `log` logger.
 ///
 /// Reads `DAYSTROM_PROFILE` to determine the initial log file name. Runs startup log rotation,
 /// spawns the background writer thread, then registers the logger.
@@ -406,7 +401,7 @@ pub fn init() {
     let levels = TARGET_LEVELS.get_or_init(load_log_levels);
 
     // The global max level must be the most permissive of the default (Info) and any per-target override.
-    // Otherwise the `log` crate's compile-time/static filter would discard records before they even reach `enabled()`.
+    // Otherwise, the `log` crate's compile-time/static filter would discard records before they even reach `enabled()`.
     let max_override = levels.values().copied().max().unwrap_or(LevelFilter::Off);
     let effective_max = std::cmp::max(LevelFilter::Info, max_override);
 
@@ -451,7 +446,9 @@ mod tests {
 
     /// Standard log line template for test data.
     fn log_line(date: &str, msg: &str) -> String {
-        format!("{date}T22:00:00.000+01:00 INFO  [Mod                 ] (lib.rs                        :   18): {msg}\n")
+        format!(
+            "{date}T22:00:00.000+01:00 INFO  [Mod                 ] (lib.rs                        :   18): {msg}\n"
+        )
     }
 
     // -- log_file_path --
@@ -607,8 +604,14 @@ mod tests {
         let writer_dir = dir.clone();
         let handle = thread::spawn(move || writer_thread(rx, writer_dir, "mod".to_string()));
 
-        tx.send(LogMessage::Line("2026-03-16T22:00:00.000+01:00 INFO  first message".to_string())).unwrap();
-        tx.send(LogMessage::Line("2026-03-16T22:00:01.000+01:00 INFO  second message".to_string())).unwrap();
+        tx.send(LogMessage::Line(
+            "2026-03-16T22:00:00.000+01:00 INFO  first message".to_string(),
+        ))
+        .unwrap();
+        tx.send(LogMessage::Line(
+            "2026-03-16T22:00:01.000+01:00 INFO  second message".to_string(),
+        ))
+        .unwrap();
         drop(tx);
         handle.join().unwrap();
 
@@ -658,26 +661,28 @@ mod tests {
 
     #[test]
     fn parse_level_filter_valid_levels() {
-        assert_eq!(parse_level_filter("off"), Some(LevelFilter::Off));
-        assert_eq!(parse_level_filter("error"), Some(LevelFilter::Error));
-        assert_eq!(parse_level_filter("warn"), Some(LevelFilter::Warn));
-        assert_eq!(parse_level_filter("info"), Some(LevelFilter::Info));
-        assert_eq!(parse_level_filter("debug"), Some(LevelFilter::Debug));
-        assert_eq!(parse_level_filter("trace"), Some(LevelFilter::Trace));
+        assert!(matches!(parse_level_filter("off"), Some(LevelFilter::Off)));
+        assert!(matches!(parse_level_filter("error"), Some(LevelFilter::Error)));
+        assert!(matches!(parse_level_filter("warn"), Some(LevelFilter::Warn)));
+        assert!(matches!(parse_level_filter("info"), Some(LevelFilter::Info)));
+        assert!(matches!(parse_level_filter("debug"), Some(LevelFilter::Debug)));
+        assert!(matches!(parse_level_filter("trace"), Some(LevelFilter::Trace)));
     }
 
     #[test]
     fn parse_level_filter_case_insensitive() {
-        assert_eq!(parse_level_filter("DEBUG"), Some(LevelFilter::Debug));
-        assert_eq!(parse_level_filter("Info"), Some(LevelFilter::Info));
-        assert_eq!(parse_level_filter("TRACE"), Some(LevelFilter::Trace));
+        let cases = [("DEBUG", LevelFilter::Debug), ("Info", LevelFilter::Info), ("TRACE", LevelFilter::Trace)];
+
+        for (input, expected) in cases {
+            assert_eq!(parse_level_filter(input), Some(expected));
+        }
     }
 
     #[test]
     fn parse_level_filter_invalid() {
-        assert_eq!(parse_level_filter(""), None);
-        assert_eq!(parse_level_filter("invalid"), None);
-        assert_eq!(parse_level_filter("Debu"), None);
+        for input in ["", "invalid", "Debu"] {
+            assert_eq!(parse_level_filter(input), None);
+        }
     }
 
     // ---- LogLevelSettings deserialization tests ----------------------------

@@ -165,9 +165,7 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
 /// computed root canvas scale factor by the user's scale setting. Only the root
 /// canvas is affected.
 pub fn install(api: &Il2CppApi) {
-    let Some(sm_class) = resolver::resolve_class(
-        api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager",
-    ) else {
+    let Some(sm_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") else {
         return;
     };
 
@@ -179,9 +177,7 @@ pub fn install(api: &Il2CppApi) {
         warn!(target: "UiScale", "Could not resolve ScreenManager.m_canvasRootScaler");
     }
 
-    if let Some(cs_class) = resolver::resolve_class(
-        api, "UnityEngine.UI", "UnityEngine.UI", "CanvasScaler",
-    ) {
+    if let Some(cs_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.UI", "CanvasScaler") {
         if let Some(offset) = resolver::resolve_field_offset(api, cs_class, "m_ScaleFactor") {
             OFFSET_SCALE_FACTOR.store(offset, Relaxed);
             debug!(target: "UiScale", "CanvasScaler.m_ScaleFactor offset: {offset:#x}");
@@ -192,9 +188,7 @@ pub fn install(api: &Il2CppApi) {
         warn!(target: "UiScale", "CanvasScaler class not found");
     }
 
-    let Some(update_method) =
-        resolver::resolve_method(api, sm_class, "UpdateCanvasRootScaleFactor", 0)
-    else {
+    let Some(update_method) = resolver::resolve_method(api, sm_class, "UpdateCanvasRootScaleFactor", 0) else {
         return;
     };
     let update_target = unsafe { (*update_method).method_pointer };
