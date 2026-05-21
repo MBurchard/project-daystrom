@@ -264,17 +264,9 @@ fn get_max_width(mgr: *mut Il2CppObject) -> f32 {
 
 /// Helper to resolve a method pointer, install a hook, and store the original.
 fn install_hook(api: &Il2CppApi, class: *mut Il2CppClass, name: &str, hook_fn: *const (), original: &AtomicPtr<()>) {
-    let Some(ptr) = tracker::resolve_fn(api, class, name, 0) else {
-        log::warn!(target: "ChatFrame", "{name} not found");
-        return;
-    };
-    match crate::hook::engine::install_hook(name, ptr, hook_fn) {
-        Ok(orig) => {
-            original.store(orig as *mut (), Relaxed);
-            debug!(target: "ChatFrame", "{name} hook installed");
-        }
-        Err(e) => log::warn!(target: "ChatFrame", "Failed to hook {name}: {e}"),
-    }
+    tracker::install_resolved_hook(api, class, name, 0, name, hook_fn, |orig| {
+        original.store(orig as *mut (), Relaxed)
+    });
 }
 
 /// Install chat sidebar hooks.
@@ -294,14 +286,8 @@ pub fn install(api: &Il2CppApi) {
     install_hook(api, frame_mgr_class, "OnEnable", hook_mgr_enable as *const (), &ORIG_MGR_ENABLE);
 
     // Resolve ResizeSideFrame and GetMaxSideFrameWidth (called during restore, not hooked).
-    if let Some(ptr) = tracker::resolve_fn(api, frame_mgr_class, "ResizeSideFrame", 1) {
-        RESIZE_FN.store(ptr as *mut (), Relaxed);
-        debug!(target: "ChatFrame", "ResizeSideFrame resolved");
-    }
-    if let Some(ptr) = tracker::resolve_fn(api, frame_mgr_class, "GetMaxSideFrameWidth", 0) {
-        MAX_WIDTH_FN.store(ptr as *mut (), Relaxed);
-        debug!(target: "ChatFrame", "GetMaxSideFrameWidth resolved");
-    }
+    resolver::resolve_method_pointer_into(api, frame_mgr_class, "ResizeSideFrame", 1, &RESIZE_FN);
+    resolver::resolve_method_pointer_into(api, frame_mgr_class, "GetMaxSideFrameWidth", 0, &MAX_WIDTH_FN);
 
     // ---- ChatPreviewController ----
     let Some(chat_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController")
@@ -310,12 +296,7 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    if let Some(offset) = resolver::resolve_field_offset(api, chat_class, "_focusedPanel") {
-        OFFSET_FOCUSED_PANEL.store(offset, Relaxed);
-        debug!(target: "ChatFrame", "ChatPreviewController._focusedPanel offset: {offset:#x}");
-    } else {
-        log::warn!(target: "ChatFrame", "Could not resolve ChatPreviewController._focusedPanel");
-    }
+    resolver::resolve_field_offset_into(api, chat_class, "_focusedPanel", &OFFSET_FOCUSED_PANEL);
 
     install_hook(
         api,
@@ -328,12 +309,7 @@ pub fn install(api: &Il2CppApi) {
     install_hook(api, chat_class, "Update", hook_chat_update as *const (), &ORIG_CHAT_UPDATE);
 
     // Resolve OnSidePanelButtonClicked (called during restore, not hooked).
-    if let Some(ptr) = tracker::resolve_fn(api, chat_class, "OnSidePanelButtonClicked", 0) {
-        CLICK_FN.store(ptr as *mut (), Relaxed);
-        debug!(target: "ChatFrame", "OnSidePanelButtonClicked resolved");
-    } else {
-        log::warn!(target: "ChatFrame", "OnSidePanelButtonClicked not found");
-    }
+    resolver::resolve_method_pointer_into(api, chat_class, "OnSidePanelButtonClicked", 0, &CLICK_FN);
 
     // ---- ChatService (different assembly) ----
     let Some(chat_service_class) = resolver::resolve_class(
@@ -346,15 +322,13 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    if let Some(ptr) = tracker::resolve_fn(api, chat_service_class, "HandleMessageReceived", 1) {
-        match crate::hook::engine::install_hook("HandleMessageReceived", ptr, hook_msg_received as *const ()) {
-            Ok(orig) => {
-                ORIG_MSG_RECEIVED.store(orig as *mut (), Relaxed);
-                debug!(target: "ChatFrame", "HandleMessageReceived hook installed");
-            }
-            Err(e) => log::warn!(target: "ChatFrame", "Failed to hook HandleMessageReceived: {e}"),
-        }
-    } else {
-        log::warn!(target: "ChatFrame", "HandleMessageReceived not found");
-    }
+    tracker::install_resolved_hook(
+        api,
+        chat_service_class,
+        "HandleMessageReceived",
+        1,
+        "HandleMessageReceived",
+        hook_msg_received as *const (),
+        |orig| ORIG_MSG_RECEIVED.store(orig as *mut (), Relaxed),
+    );
 }

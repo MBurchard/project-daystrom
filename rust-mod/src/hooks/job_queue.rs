@@ -141,33 +141,21 @@ pub fn install(api: &Il2CppApi) {
     };
 
     // Resolve field offset dynamically via IL2CPP reflection.
-    if let Some(offset) = resolver::resolve_field_offset(api, class, "_listCollapsed") {
-        OFFSET_LIST_COLLAPSED.store(offset, Relaxed);
-        debug!(target: "JobQueue", "JobQueuePanelViewController._listCollapsed offset: {offset:#x}");
-    } else {
-        log::warn!(target: "JobQueue", "Could not resolve _listCollapsed");
-    }
+    resolver::resolve_field_offset_into(api, class, "_listCollapsed", &OFFSET_LIST_COLLAPSED);
 
     // Hook RegenerateLists: non-virtual, class-specific method that fires when the panel
     // rebuilds its job list. Unlike OnEnable (inherited from the generic ViewController<T>),
     // this resolves to a concrete method pointer and is safe to hook.
-    if let Some(ptr) = tracker::resolve_fn(api, class, "RegenerateLists", 0) {
-        match crate::hook::engine::install_hook("JobQueue.RegenerateLists", ptr, hook_regenerate_lists as *const ()) {
-            Ok(orig) => {
-                ORIG_REGENERATE.store(orig as *mut (), Relaxed);
-                debug!(target: "JobQueue", "RegenerateLists hook installed");
-            }
-            Err(e) => log::warn!(target: "JobQueue", "Failed to hook RegenerateLists: {e}"),
-        }
-    } else {
-        log::warn!(target: "JobQueue", "RegenerateLists not found");
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "RegenerateLists",
+        0,
+        "JobQueue.RegenerateLists",
+        hook_regenerate_lists as *const (),
+        |orig| ORIG_REGENERATE.store(orig as *mut (), Relaxed),
+    );
 
     // Resolve OnContractExpandButtonClickEventHandler (called during expand, not hooked).
-    if let Some(ptr) = tracker::resolve_fn(api, class, "OnContractExpandButtonClickEventHandler", 0) {
-        EXPAND_FN.store(ptr as *mut (), Relaxed);
-        debug!(target: "JobQueue", "OnContractExpandButtonClickEventHandler resolved");
-    } else {
-        log::warn!(target: "JobQueue", "OnContractExpandButtonClickEventHandler not found");
-    }
+    resolver::resolve_method_pointer_into(api, class, "OnContractExpandButtonClickEventHandler", 0, &EXPAND_FN);
 }

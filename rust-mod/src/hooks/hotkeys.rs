@@ -55,8 +55,8 @@ static ORIG_INITIALIZE_ACTIONS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 /// Tracked `ShortcutsManager` instance (captured in the InitializeActions hook).
 static SHORTCUTS_MANAGER: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Resolved `ShortcutsManager.LoadBindings()` method pointer (for `runtime_invoke`).
-static LOAD_BINDINGS_METHOD: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// Resolved `ShortcutsManager.LoadBindings()` MethodInfo (for `runtime_invoke`).
+static LOAD_BINDINGS_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Function pointer for `ScreenManager.get_IsInputFocused()` (static).
 static IS_INPUT_FOCUSED_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -783,32 +783,20 @@ fn install_shortcuts_hook(api: &Il2CppApi) {
     };
 
     // Resolve _actions field offset for reading the InputActionAsset in the post-hook.
-    if let Some(offset) = resolver::resolve_field_offset(api, class, "_actions") {
-        OFFSET_ACTIONS.store(offset, Relaxed);
-        debug!(target: "Hotkeys", "ShortcutsManager._actions offset: {offset:#x}");
-    } else {
-        warn!(target: "Hotkeys", "Could not resolve ShortcutsManager._actions, binding dump disabled");
-    }
+    resolver::resolve_field_offset_into(api, class, "_actions", &OFFSET_ACTIONS);
 
     // Resolve LoadBindings for runtime reloads after conflict resolution.
-    if let Some(method) = resolver::resolve_method(api, class, "LoadBindings", 0) {
-        LOAD_BINDINGS_METHOD.store(method as *mut (), Relaxed);
-        debug!(target: "Hotkeys", "ShortcutsManager.LoadBindings resolved");
-    } else {
-        warn!(target: "Hotkeys", "ShortcutsManager.LoadBindings not found, runtime reload disabled");
-    }
+    resolver::resolve_method_into(api, class, "LoadBindings", 0, &LOAD_BINDINGS_METHOD);
 
-    let Some(ptr) = tracker::resolve_fn(api, class, "InitializeActions", 0) else {
-        warn!(target: "Hotkeys", "InitializeActions not found");
-        return;
-    };
-    match engine::install_hook("InitializeActions", ptr, hook_initialize_actions as *const ()) {
-        Ok(orig) => {
-            ORIG_INITIALIZE_ACTIONS.store(orig as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "ShortcutsManager.InitializeActions hooked (post-hook)");
-        }
-        Err(e) => warn!(target: "Hotkeys", "Failed to hook InitializeActions: {e}"),
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "InitializeActions",
+        0,
+        "InitializeActions",
+        hook_initialize_actions as *const (),
+        |orig| ORIG_INITIALIZE_ACTIONS.store(orig as *mut (), Relaxed),
+    );
 }
 
 /// Hook `Input.GetKeyDownInt(KeyCode)` and resolve `ScreenManager.IsInputFocused`.
@@ -840,22 +828,13 @@ fn install_input(api: &Il2CppApi) -> bool {
 
     // IsInputFocused is optional; main action and future keys still work without it.
     if let Some(sm_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") {
-        if let Some(ptr) = tracker::resolve_fn(api, sm_class, "get_IsInputFocused", 0) {
-            IS_INPUT_FOCUSED_FN.store(ptr as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "ScreenManager.IsInputFocused resolved");
-        } else {
-            warn!(target: "Hotkeys", "get_IsInputFocused not found, input focus guard disabled");
-        }
+        resolver::resolve_method_pointer_into(api, sm_class, "get_IsInputFocused", 0, &IS_INPUT_FOCUSED_FN);
     }
 
     // EventSystem: deselect UI after handling the main action to prevent Unity's Submit action.
     if let Some(es_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem") {
-        if let Some(ptr) = tracker::resolve_fn(api, es_class, "get_current", 0) {
-            EVENT_SYSTEM_CURRENT_FN.store(ptr as *mut (), Relaxed);
-        }
-        if let Some(ptr) = tracker::resolve_fn(api, es_class, "SetSelectedGameObject", 1) {
-            SET_SELECTED_GO_FN.store(ptr as *mut (), Relaxed);
-        }
+        resolver::resolve_method_pointer_into(api, es_class, "get_current", 0, &EVENT_SYSTEM_CURRENT_FN);
+        resolver::resolve_method_pointer_into(api, es_class, "SetSelectedGameObject", 1, &SET_SELECTED_GO_FN);
         if !EVENT_SYSTEM_CURRENT_FN.load(Relaxed).is_null() && !SET_SELECTED_GO_FN.load(Relaxed).is_null() {
             debug!(target: "Hotkeys", "EventSystem deselect resolved");
         } else {
@@ -877,58 +856,31 @@ fn install_input(api: &Il2CppApi) -> bool {
 /// - `GenericRewardsScreenViewController` (slots 1 + 3, inherited by ShipScrapping and RewardPreview)
 /// - `FirstTimeSpenderScreenViewController` (slot 2, own override)
 fn install_reward_tracking(api: &Il2CppApi) {
-    // Subclass definitions: (slot, namespace, class name, label).
-    let subclasses: [(usize, &str, &str, &str); 4] = [
-        (
-            0,
-            "Digit.Prime.Missions.UI",
-            "AnimatedRewardsScreenViewController",
-            "AnimatedRewards",
-        ),
-        (
-            1,
-            "Digit.Prime.Ships",
-            "ShipScrappingRewardsScreenViewController",
-            "ShipScrapping",
-        ),
-        (
-            2,
-            "Digit.Prime.SharedFeatures",
-            "FirstTimeSpenderScreenViewController",
-            "FirstTimeSpender",
-        ),
-        (
-            3,
-            "Digit.Prime.SharedFeatures",
-            "RewardPreviewMultipleListViewController",
-            "RewardPreview",
-        ),
+    // Subclass definitions: (slot, namespace, class name).
+    let subclasses: [(usize, &str, &str); 4] = [
+        (0, "Digit.Prime.Missions.UI", "AnimatedRewardsScreenViewController"),
+        (1, "Digit.Prime.Ships", "ShipScrappingRewardsScreenViewController"),
+        (2, "Digit.Prime.SharedFeatures", "FirstTimeSpenderScreenViewController"),
+        (3, "Digit.Prime.SharedFeatures", "RewardPreviewMultipleListViewController"),
     ];
 
     // Resolve each subclass: store its Il2CppClass pointer and OnCollectClicked.
-    for &(slot, ns, name, label) in &subclasses {
+    for &(slot, ns, name) in &subclasses {
         let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", ns, name) else {
             warn!(target: "Hotkeys", "{name} not found");
             continue;
         };
         REWARD_TARGETS[slot].class.store(class as *mut (), Relaxed);
 
-        if let Some(ptr) = tracker::resolve_fn(api, class, "OnCollectClicked", 0) {
-            REWARD_TARGETS[slot].on_collect.store(ptr as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "{label}: OnCollectClicked resolved");
-        } else {
-            warn!(target: "Hotkeys", "{label}: OnCollectClicked not found");
-        }
+        resolver::resolve_method_pointer_into(api, class, "OnCollectClicked", 0, &REWARD_TARGETS[slot].on_collect);
     }
 
     // Resolve IsActive from UIBehaviour (shared, only need it once from any resolved class).
     for target in &REWARD_TARGETS {
         let class = target.class.load(Relaxed);
         if !class.is_null()
-            && let Some(ptr) = tracker::resolve_fn(api, class as *mut Il2CppClass, "IsActive", 0)
+            && resolver::resolve_method_pointer_into(api, class as *mut Il2CppClass, "IsActive", 0, &IS_ACTIVE_FN)
         {
-            IS_ACTIVE_FN.store(ptr as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "IsActive resolved (from UIBehaviour)");
             break;
         }
     }
@@ -937,24 +889,24 @@ fn install_reward_tracking(api: &Il2CppApi) {
     let animated_class = REWARD_TARGETS[0].class.load(Relaxed);
     if !animated_class.is_null() {
         let class = animated_class as *mut Il2CppClass;
-        if let Some(ptr) = tracker::resolve_fn(api, class, "AboutToShow", 0) {
-            match engine::install_hook("RewardAnimatedShow", ptr, hook_animated_show as *const ()) {
-                Ok(orig) => {
-                    ORIG_ANIMATED_SHOW.store(orig as *mut (), Relaxed);
-                    debug!(target: "Hotkeys", "AnimatedRewards AboutToShow hook installed");
-                }
-                Err(e) => warn!(target: "Hotkeys", "Failed to hook AnimatedRewards AboutToShow: {e}"),
-            }
-        }
-        if let Some(ptr) = tracker::resolve_fn(api, class, "AboutToHide", 0) {
-            match engine::install_hook("RewardAnimatedHide", ptr, hook_animated_hide as *const ()) {
-                Ok(orig) => {
-                    ORIG_ANIMATED_HIDE.store(orig as *mut (), Relaxed);
-                    debug!(target: "Hotkeys", "AnimatedRewards AboutToHide hook installed");
-                }
-                Err(e) => warn!(target: "Hotkeys", "Failed to hook AnimatedRewards AboutToHide: {e}"),
-            }
-        }
+        tracker::install_resolved_hook(
+            api,
+            class,
+            "AboutToShow",
+            0,
+            "RewardAnimatedShow",
+            hook_animated_show as *const (),
+            |orig| ORIG_ANIMATED_SHOW.store(orig as *mut (), Relaxed),
+        );
+        tracker::install_resolved_hook(
+            api,
+            class,
+            "AboutToHide",
+            0,
+            "RewardAnimatedHide",
+            hook_animated_hide as *const (),
+            |orig| ORIG_ANIMATED_HIDE.store(orig as *mut (), Relaxed),
+        );
     }
 
     // Hook GenericRewardsScreenViewController.AboutToShow/Hide (shared by slots 1, 3).
@@ -968,47 +920,47 @@ fn install_reward_tracking(api: &Il2CppApi) {
         return;
     };
 
-    if let Some(ptr) = tracker::resolve_fn(api, base_class, "AboutToShow", 0) {
-        match engine::install_hook("RewardBaseShow", ptr, hook_base_reward_show as *const ()) {
-            Ok(orig) => {
-                ORIG_BASE_SHOW.store(orig as *mut (), Relaxed);
-                debug!(target: "Hotkeys", "Base reward AboutToShow hook installed");
-            }
-            Err(e) => warn!(target: "Hotkeys", "Failed to hook base reward AboutToShow: {e}"),
-        }
-    }
-    if let Some(ptr) = tracker::resolve_fn(api, base_class, "AboutToHide", 0) {
-        match engine::install_hook("RewardBaseHide", ptr, hook_base_reward_hide as *const ()) {
-            Ok(orig) => {
-                ORIG_BASE_HIDE.store(orig as *mut (), Relaxed);
-                debug!(target: "Hotkeys", "Base reward AboutToHide hook installed");
-            }
-            Err(e) => warn!(target: "Hotkeys", "Failed to hook base reward AboutToHide: {e}"),
-        }
-    }
+    tracker::install_resolved_hook(
+        api,
+        base_class,
+        "AboutToShow",
+        0,
+        "RewardBaseShow",
+        hook_base_reward_show as *const (),
+        |orig| ORIG_BASE_SHOW.store(orig as *mut (), Relaxed),
+    );
+    tracker::install_resolved_hook(
+        api,
+        base_class,
+        "AboutToHide",
+        0,
+        "RewardBaseHide",
+        hook_base_reward_hide as *const (),
+        |orig| ORIG_BASE_HIDE.store(orig as *mut (), Relaxed),
+    );
 
     // Hook FirstTimeSpenderScreenViewController.AboutToShow/Hide (slot 2, own override).
     let fts_class = REWARD_TARGETS[2].class.load(Relaxed);
     if !fts_class.is_null() {
         let class = fts_class as *mut Il2CppClass;
-        if let Some(ptr) = tracker::resolve_fn(api, class, "AboutToShow", 0) {
-            match engine::install_hook("RewardFtsShow", ptr, hook_fts_show as *const ()) {
-                Ok(orig) => {
-                    ORIG_FTS_SHOW.store(orig as *mut (), Relaxed);
-                    debug!(target: "Hotkeys", "FirstTimeSpender AboutToShow hook installed");
-                }
-                Err(e) => warn!(target: "Hotkeys", "Failed to hook FirstTimeSpender AboutToShow: {e}"),
-            }
-        }
-        if let Some(ptr) = tracker::resolve_fn(api, class, "AboutToHide", 0) {
-            match engine::install_hook("RewardFtsHide", ptr, hook_fts_hide as *const ()) {
-                Ok(orig) => {
-                    ORIG_FTS_HIDE.store(orig as *mut (), Relaxed);
-                    debug!(target: "Hotkeys", "FirstTimeSpender AboutToHide hook installed");
-                }
-                Err(e) => warn!(target: "Hotkeys", "Failed to hook FirstTimeSpender AboutToHide: {e}"),
-            }
-        }
+        tracker::install_resolved_hook(
+            api,
+            class,
+            "AboutToShow",
+            0,
+            "RewardFtsShow",
+            hook_fts_show as *const (),
+            |orig| ORIG_FTS_SHOW.store(orig as *mut (), Relaxed),
+        );
+        tracker::install_resolved_hook(
+            api,
+            class,
+            "AboutToHide",
+            0,
+            "RewardFtsHide",
+            hook_fts_hide as *const (),
+            |orig| ORIG_FTS_HIDE.store(orig as *mut (), Relaxed),
+        );
     }
 }
 
@@ -1025,22 +977,17 @@ fn install_widget_collect_tracking(api: &Il2CppApi) {
         return;
     };
 
-    if let Some(ptr) = tracker::resolve_fn(api, class, "OnCollectButtonClicked", 0) {
-        MISSIONS_POPOUT_ON_COLLECT.store(ptr as *mut (), Relaxed);
-        debug!(target: "Hotkeys", "MissionsPopout: OnCollectButtonClicked resolved");
-    } else {
-        warn!(target: "Hotkeys", "MissionsPopout: OnCollectButtonClicked not found");
-    }
+    resolver::resolve_method_pointer_into(api, class, "OnCollectButtonClicked", 0, &MISSIONS_POPOUT_ON_COLLECT);
 
-    if let Some(ptr) = tracker::resolve_fn(api, class, "Awake", 0) {
-        match engine::install_hook("MissionsPopoutAwake", ptr, hook_missions_popout_awake as *const ()) {
-            Ok(orig) => {
-                ORIG_MISSIONS_POPOUT_AWAKE.store(orig as *mut (), Relaxed);
-                debug!(target: "Hotkeys", "MissionsPopout Awake hook installed");
-            }
-            Err(e) => warn!(target: "Hotkeys", "Failed to hook MissionsPopout Awake: {e}"),
-        }
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "Awake",
+        0,
+        "MissionsPopoutAwake",
+        hook_missions_popout_awake as *const (),
+        |orig| ORIG_MISSIONS_POPOUT_AWAKE.store(orig as *mut (), Relaxed),
+    );
 }
 
 /// Hook `ScreenManager.Update()` for per-frame key checks.

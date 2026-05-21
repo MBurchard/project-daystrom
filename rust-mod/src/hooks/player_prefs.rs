@@ -1,10 +1,10 @@
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 
-use crate::hook::engine;
 use crate::hook::safety::HookInfo;
+use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -647,21 +647,9 @@ fn install_single(
     replacement: *const (),
     original: &AtomicPtr<()>,
 ) {
-    let Some(method) = resolver::resolve_method(api, class, method_name, param_count) else {
-        warn!(target: "PlayerPrefs", "{display_name} method not found, hook skipped");
-        return;
-    };
-
-    let target = unsafe { (*method).method_pointer };
-    match engine::install_hook(display_name, target, replacement) {
-        Ok(orig) => {
-            original.store(orig as *mut (), Relaxed);
-            debug!(target: "PlayerPrefs", "{display_name} hook installed");
-        }
-        Err(e) => {
-            error!(target: "PlayerPrefs", "Failed to hook {display_name}: {e}");
-        }
-    }
+    tracker::install_resolved_hook(api, class, method_name, param_count, display_name, replacement, |orig| {
+        original.store(orig as *mut (), Relaxed)
+    });
 }
 
 /// Install PlayerPrefs.GetString and SetString logging hooks.

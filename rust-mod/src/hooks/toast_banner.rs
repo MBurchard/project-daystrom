@@ -91,7 +91,7 @@ static ORIG_ARE_TOASTS_ALLOWED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 static DISABLE_ALL: AtomicBool = AtomicBool::new(false);
 
 /// Bitfield of disabled ToastState values. Bit N is set when ToastState N is disabled.
-/// All 58 values (0-57) fit in a u64 bitfield.
+/// All 58 values (0-57) fit in a u64.
 static DISABLED_BITS: AtomicU64 = AtomicU64::new(0);
 
 /// Bitfield tracking which allowed ToastState values have already been logged.
@@ -115,8 +115,8 @@ fn state_name(value: u32) -> &'static str {
         .unwrap_or("Unknown")
 }
 
-/// Convert human-readable ToastState names into a u64 bitfield for O(1) lookup.
-fn toast_state_bits(names: &[String]) -> u64 {
+/// Convert human-readable ToastState names into the bitfield used in the hot path.
+fn toast_state_bits_for_names(names: &[String]) -> u64 {
     let mut bits: u64 = 0;
     for name in names {
         if let Some(&(_, value)) = TOAST_STATES.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
@@ -135,7 +135,7 @@ pub fn on_settings_changed() {
     DISABLE_ALL.store(crate::settings::disable_all_banners(), Relaxed);
 
     let names = crate::settings::disabled_banner_types();
-    let bits = toast_state_bits(&names);
+    let bits = toast_state_bits_for_names(&names);
     DISABLED_BITS.store(bits, Relaxed);
     // Reset dedup bits so the new state is logged on next occurrence.
     ALLOWED_LOGGED_BITS.store(0, Relaxed);
@@ -218,12 +218,7 @@ extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2Cp
 pub fn install(api: &Il2CppApi) {
     // Resolve Toast field offset for reading the toast state in the hook.
     if let Some(toast_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "Toast") {
-        if let Some(offset) = resolver::resolve_field_offset(api, toast_class, "<State>k__BackingField") {
-            TOAST_STATE_OFFSET.store(offset, Relaxed);
-            debug!(target: "ToastBanner", "Toast.<State>k__BackingField offset: {offset:#x}");
-        } else {
-            log::warn!(target: "ToastBanner", "Could not resolve Toast.<State>k__BackingField");
-        }
+        resolver::resolve_field_offset_into(api, toast_class, "<State>k__BackingField", &TOAST_STATE_OFFSET);
     } else {
         log::warn!(target: "ToastBanner", "Toast class not found");
     }
@@ -233,21 +228,15 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    if let Some(ptr) = tracker::resolve_fn(api, class, "AreToastsAllowed", 1) {
-        match crate::hook::engine::install_hook(
-            "ToastBanner.AreToastsAllowed",
-            ptr,
-            hook_are_toasts_allowed as *const (),
-        ) {
-            Ok(orig) => {
-                ORIG_ARE_TOASTS_ALLOWED.store(orig as *mut (), Relaxed);
-                debug!(target: "ToastBanner", "AreToastsAllowed hook installed");
-            }
-            Err(e) => log::warn!(target: "ToastBanner", "Failed to hook AreToastsAllowed: {e}"),
-        }
-    } else {
-        log::warn!(target: "ToastBanner", "AreToastsAllowed not found");
-    }
+    tracker::install_resolved_hook(
+        api,
+        class,
+        "AreToastsAllowed",
+        1,
+        "ToastBanner.AreToastsAllowed",
+        hook_are_toasts_allowed as *const (),
+        |orig| ORIG_ARE_TOASTS_ALLOWED.store(orig as *mut (), Relaxed),
+    );
 }
 
 // ---- Tests ----------------------------------------------------------------
@@ -284,7 +273,7 @@ mod tests {
     #[test]
     fn bitfield_conversion() {
         let names = vec!["Victory".to_string(), "Defeat".to_string(), "Unknown".to_string()];
-        let bits = toast_state_bits(&names);
+        let bits = toast_state_bits_for_names(&names);
         // Victory=10, Defeat=11
         assert_ne!(bits & (1 << 10), 0, "Victory bit not set");
         assert_ne!(bits & (1 << 11), 0, "Defeat bit not set");
