@@ -172,6 +172,8 @@ extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
 /// `Show` (animation in progress).
 /// This matches the `IsShownOrShowing` property on `VisibilityController`.
 unsafe fn is_viewer_visible(instance: *const ()) -> bool {
+    // FIXME: Direct field reads mirror VisibilityController.IsShownOrShowing. Prefer invoking that property if it
+    // proves stable across the relevant viewer subclasses.
     let ctrl_offset = OFFSET_VIS_CTRL.load(Relaxed);
     let state_offset = OFFSET_VIS_STATE.load(Relaxed);
     if ctrl_offset == 0 || state_offset == 0 {

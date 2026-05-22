@@ -130,6 +130,8 @@ fn should_open_for(kind: CargoTargetKind) -> bool {
 }
 
 fn classify_target(prescan: *mut Il2CppObject) -> Option<CargoTargetKind> {
+    // FIXME: Classification starts from direct field reads on PreScanTargetWidget/BattleTargetData. Check the dump
+    // for equivalent getters before relying on these offsets long-term.
     let battle_target_offset = OFFSET_BATTLE_TARGET_DATA.load(Relaxed);
     let target_fleet_offset = OFFSET_TARGET_FLEET_DEPLOYED_DATA.load(Relaxed);
     if battle_target_offset == 0 || target_fleet_offset == 0 {

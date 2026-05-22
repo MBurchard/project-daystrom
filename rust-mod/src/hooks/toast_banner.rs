@@ -178,6 +178,8 @@ extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2Cp
         if state_offset == 0 {
             return true;
         }
+        // FIXME: Direct backing-field read from Toast. Check the dump for a State getter before relying on this
+        // offset long-term.
         let state_value = unsafe { tracker::read_i32(toast as *const (), state_offset) };
         if state_value < 0 {
             return true;

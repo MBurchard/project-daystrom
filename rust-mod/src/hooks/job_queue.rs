@@ -26,6 +26,8 @@ static OFFSET_LIST_COLLAPSED: AtomicUsize = AtomicUsize::new(0);
 // ---- State ----------------------------------------------------------------
 
 /// Tracked JobQueuePanelViewController instance (set by the RegenerateLists hook).
+/// FIXME: This cached UI object can become stale after panel lifecycle changes. Add lifecycle clearing or replace
+/// it with a current-instance lookup if the dump exposes one.
 static JOB_QUEUE_PANEL: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Resolved method info for `OnContractExpandButtonClickEventHandler()`.
@@ -107,6 +109,8 @@ fn try_expand() {
         debug!(target: "JobQueue", "Auto-expand skipped: _listCollapsed offset not resolved");
         return;
     }
+    // FIXME: Direct field read from the cached panel. Check the dump for a stable collapsed-state getter before
+    // keeping this as the long-term implementation.
     let collapsed = unsafe {
         let ptr = (panel as *mut u8).add(collapsed_offset) as *const bool;
         ptr.read()
