@@ -8,12 +8,14 @@ pub(crate) mod tracker;
 
 mod cargo_view;
 pub(crate) mod chat_frame;
+mod fleet_scanner;
 pub(crate) mod hotkeys;
 pub mod il2cpp_init;
 mod interstitial;
 pub(crate) mod job_queue;
 mod main_action;
 pub(crate) mod main_thread;
+pub(crate) mod navigation_view;
 mod player_prefs;
 mod shop_reveal;
 pub(crate) mod system_zoom;
@@ -88,6 +90,7 @@ pub fn install_all_hooks() {
     system_zoom::install(api);
     shop_reveal::install(api);
     interstitial::install(api);
+    fleet_scanner::install(api);
 
     debug!(target: "HookEngine", "Hook installation complete");
 }

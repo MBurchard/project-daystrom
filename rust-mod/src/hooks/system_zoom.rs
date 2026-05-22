@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering:
 use log::{debug, warn};
 
 use crate::hook::safety::HookInfo;
+use crate::hooks::navigation_view;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
@@ -173,7 +174,12 @@ fn apply_settings_update(system_zoom: u32, ship_names_visible: u32) {
         return;
     }
 
-    // Only apply if we're currently in a system view.
+    // The shared navigation view state is the source of truth for live system zoom updates.
+    if !navigation_view::is_viewing_system() {
+        return;
+    }
+
+    // Keep the cached NavigationZoom instance honest; it can become stale across navigation lifecycle changes.
     let depth = read_depth(this);
     if depth != NODE_DEPTH_SOLAR_SYSTEM {
         return;
