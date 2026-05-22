@@ -44,9 +44,13 @@ const FALLBACK_TIMEOUT: Duration = Duration::from_secs(3);
 // ---- State ----------------------------------------------------------------
 
 /// Tracked UIFrameManager instance (set by the OnEnable hook).
+/// FIXME: This cached UI object is used later for live restore/resize. Add lifecycle clearing or replace it with
+/// a current-instance lookup if the dump exposes one.
 static FRAME_MGR: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Tracked ChatPreviewController instance (set by the AboutToShow hook).
+/// FIXME: This cached UI object is used later for live restore. Add lifecycle clearing or replace it with a
+/// current-instance lookup if the dump exposes one.
 static CHAT_PREVIEW: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Resolved method info for `ChatPreviewController.OnSidePanelButtonClicked()`.
@@ -233,6 +237,8 @@ fn try_restore() {
         debug!(target: "ChatFrame", "Auto-open skipped: _focusedPanel offset not resolved");
         return;
     }
+    // FIXME: Direct field write into ChatPreviewController. Check the dump for a stable tab-selection API before
+    // keeping this as the long-term implementation.
     unsafe {
         let ptr = (chat as *mut u8).add(panel_offset) as *mut i32;
         ptr.write(TAB_ALLIANCE);

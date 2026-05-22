@@ -20,6 +20,8 @@ static ORIGINAL_FN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Cached pointer to the root `CanvasScaler` instance.
 /// Set on the first hook call, used for live updates from WebSocket.
+/// FIXME: This cached Unity object can become stale across UI lifecycle changes. Prefer a lifecycle clear or a
+/// safe game/Unity API if one is available in the dump.
 static CACHED_SCALER: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// The game's original `m_ScaleFactor` value (stored as f32 bits).
@@ -81,6 +83,8 @@ unsafe fn read_scale_factor(scaler: *mut Il2CppObject) -> f32 {
 /// # Safety
 /// Caller must ensure `scaler` points to a valid CanvasScaler instance.
 unsafe fn write_scale_factor(scaler: *mut Il2CppObject, value: f32) {
+    // FIXME: Direct field writes cannot be protected from stale object pointers. Re-check whether CanvasScaler
+    // exposes a stable setter/API we can invoke without changing the game's scaling semantics.
     let offset = OFFSET_SCALE_FACTOR.load(Relaxed);
     if offset == 0 {
         return;

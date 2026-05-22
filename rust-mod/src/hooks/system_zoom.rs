@@ -50,6 +50,8 @@ static OVERRIDE_ZOOM_LIMITS_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr:
 static SET_DISTANCE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Cached NavigationZoom instance for live settings updates.
+/// FIXME: This cached Unity object can become stale after navigation lifecycle changes. Prefer lifecycle clearing
+/// or a current-instance lookup before live settings updates if the dump exposes one.
 static CACHED_NAV_ZOOM: AtomicPtr<Il2CppObject> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Latest system zoom setting, updated from the main-thread settings executor.
@@ -101,6 +103,8 @@ fn depth_name(depth: i32) -> &'static str {
 
 /// Log the current zoom state of a NavigationZoom instance.
 fn log_zoom_state(this: *mut Il2CppObject, context: &str) {
+    // FIXME: These diagnostic reads are direct field reads. If this hook becomes unstable after game updates,
+    // prefer getters/properties from the dump or remove nonessential diagnostics.
     let depth = read_depth(this);
     let minimum = read_field(this, &OFFSET_MINIMUM);
     let middle = read_field(this, &OFFSET_MIDDLE);
