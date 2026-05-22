@@ -55,6 +55,77 @@ pub struct MethodInfo {
     pub method_pointer: *const (),
 }
 
+// ---- Unity value types -----------------------------------------------------
+
+/// Unity `Vector3` value type.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Vector3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+// ---- IL2CPP collections ----------------------------------------------------
+
+/// Minimal IL2CPP array layout for object/value access through `List<T>`.
+#[repr(C)]
+pub struct Il2CppArray<T> {
+    _object_header: [*const (); 2],
+    _bounds: *mut (),
+    max_length: usize,
+    vector: [T; 0],
+}
+
+impl<T: Copy> Il2CppArray<T> {
+    /// Read an item from the inline array storage.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must reference a valid IL2CPP array and `index` must be within the array's allocated range.
+    pub unsafe fn get(&self, index: usize) -> Option<T> {
+        if index >= self.max_length {
+            return None;
+        }
+        let ptr = self.vector.as_ptr();
+        Some(unsafe { *ptr.add(index) })
+    }
+}
+
+/// Minimal `System.Collections.Generic.List<T>` layout.
+#[repr(C)]
+pub struct Il2CppList<T> {
+    _object_header: [*const (); 2],
+    items: *mut Il2CppArray<T>,
+    size: i32,
+    _version: i32,
+}
+
+impl<T: Copy> Il2CppList<T> {
+    /// Number of initialized items.
+    pub fn len(&self) -> usize {
+        self.size.max(0) as usize
+    }
+
+    /// Returns `true` when the list contains no initialized items.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Read an initialized list item.
+    ///
+    /// # Safety
+    ///
+    /// The list and backing array must be valid IL2CPP objects.
+    pub unsafe fn get(&self, index: usize) -> Option<T> {
+        if index >= self.len() || self.items.is_null() {
+            return None;
+        }
+        unsafe { (&*self.items).get(index) }
+    }
+}
+
 // ---- IL2CPP String --------------------------------------------------------
 
 /// IL2CPP string object (UTF-16 encoded, length-prefixed).
@@ -84,7 +155,7 @@ impl Il2CppString {
         }
         let len = il2cpp_str.length as usize;
         // Chars start right after the length field (offset of length + 4 bytes for the i32)
-        let chars_offset = std::mem::offset_of!(Self, length) + std::mem::size_of::<i32>();
+        let chars_offset = std::mem::offset_of!(Self, length) + size_of::<i32>();
         let chars_ptr = unsafe { (ptr as *const u8).add(chars_offset) } as *const u16;
         let slice = unsafe { std::slice::from_raw_parts(chars_ptr, len) };
         String::from_utf16(slice).ok()
@@ -168,5 +239,90 @@ mod tests {
         };
         let result = unsafe { Il2CppString::to_rust_string(&fake as *const _ as *const Il2CppString) };
         assert_eq!(result, Some(String::new()));
+    }
+
+    #[test]
+    fn il2cpp_array_reads_items_with_bounds_check() {
+        #[repr(C)]
+        struct FakeArray {
+            header: [*const (); 2],
+            bounds: *mut (),
+            max_length: usize,
+            vector: [i32; 3],
+        }
+
+        let fake = FakeArray {
+            header: [std::ptr::null(); 2],
+            bounds: std::ptr::null_mut(),
+            max_length: 3,
+            vector: [10, 20, 30],
+        };
+        let array = unsafe { &*(&fake as *const FakeArray as *const Il2CppArray<i32>) };
+
+        assert_eq!(unsafe { array.get(0) }, Some(10));
+        assert_eq!(unsafe { array.get(2) }, Some(30));
+        assert_eq!(unsafe { array.get(3) }, None);
+    }
+
+    #[test]
+    fn il2cpp_list_reads_initialized_items_only() {
+        #[repr(C)]
+        struct FakeArray {
+            header: [*const (); 2],
+            bounds: *mut (),
+            max_length: usize,
+            vector: [i32; 3],
+        }
+
+        #[repr(C)]
+        struct FakeList {
+            header: [*const (); 2],
+            items: *mut Il2CppArray<i32>,
+            size: i32,
+            version: i32,
+        }
+
+        let mut fake_array = FakeArray {
+            header: [std::ptr::null(); 2],
+            bounds: std::ptr::null_mut(),
+            max_length: 3,
+            vector: [10, 20, 30],
+        };
+        let fake_list = FakeList {
+            header: [std::ptr::null(); 2],
+            items: (&mut fake_array as *mut FakeArray).cast::<Il2CppArray<i32>>(),
+            size: 2,
+            version: 0,
+        };
+        let list = unsafe { &*(&fake_list as *const FakeList as *const Il2CppList<i32>) };
+
+        assert_eq!(list.len(), 2);
+        assert!(!list.is_empty());
+        assert_eq!(unsafe { list.get(0) }, Some(10));
+        assert_eq!(unsafe { list.get(1) }, Some(20));
+        assert_eq!(unsafe { list.get(2) }, None);
+    }
+
+    #[test]
+    fn il2cpp_list_negative_size_is_empty() {
+        #[repr(C)]
+        struct FakeList {
+            header: [*const (); 2],
+            items: *mut Il2CppArray<i32>,
+            size: i32,
+            version: i32,
+        }
+
+        let fake_list = FakeList {
+            header: [std::ptr::null(); 2],
+            items: std::ptr::null_mut(),
+            size: -1,
+            version: 0,
+        };
+        let list = unsafe { &*(&fake_list as *const FakeList as *const Il2CppList<i32>) };
+
+        assert_eq!(list.len(), 0);
+        assert!(list.is_empty());
+        assert_eq!(unsafe { list.get(0) }, None);
     }
 }
