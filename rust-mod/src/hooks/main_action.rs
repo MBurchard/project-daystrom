@@ -3,16 +3,42 @@
 //! Called from the shared `ScreenManager.Update()` hook when the configured main action key is pressed.
 //! If a viewer widget is active, executes the primary action: Engage (ships), Mine (nodes), or Warp (star systems).
 
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, trace, warn};
 
 use crate::hook::safety::HookInfo;
+use crate::hooks::fleet_bar;
 use crate::hooks::tracker::{self, instance_tracker};
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
+
+const LOG_TARGET: &str = "MainAction";
+
+// Values from Digit.Prime.Navigation.InputInteractionType.
+const INPUT_TAP_LOCATION_PLANNING_PATH: i32 = 4;
+const INPUT_TAP_EMPTY_SPACE: i32 = 5;
+const INPUT_TAP_PVE: i32 = 6;
+const INPUT_TAP_NPC_MINING: i32 = 7;
+const INPUT_TAP_NPC_STATIONARY: i32 = 8;
+const INPUT_TAP_HOSTILE: i32 = 9;
+const INPUT_TAP_PLAYER_STATION: i32 = 10;
+const INPUT_SCAN_LOADING: i32 = 11;
+const INPUT_SCAN_LOADED: i32 = 12;
+const INPUT_TAP_MY_STATION: i32 = 13;
+const INPUT_TAP_ALLIANCE_STATION: i32 = 14;
+const INPUT_TAP_MINE: i32 = 15;
+const INPUT_TAP_HOME_PLANET: i32 = 16;
+const INPUT_TAP_SYSTEM_PLANET: i32 = 17;
+const INPUT_TAP_STAR: i32 = 18;
+const INPUT_TAP_ALLIANCE_STARBASE: i32 = 20;
+const INPUT_TAP_DEEP_SPACE_RELAY: i32 = 23;
+const INPUT_TAP_PVP_CAPTURE_NODE: i32 = 24;
+const INPUT_TAP_PVP_CAPTURED_NODE: i32 = 25;
+const INPUT_TAP_ISOGEN_VAULT: i32 = 26;
+const INPUT_TAP_TERRITORY_CAPTURE_SERVICE: i32 = 27;
 
 // ---- Dynamically resolved field offsets -----------------------------------
 
@@ -27,6 +53,12 @@ static OFFSET_QUEUE_BUTTON: AtomicUsize = AtomicUsize::new(0);
 
 /// `ScanEngageButtonsWidget._engageButton` (GenericButtonWidget).
 static OFFSET_ENGAGE_BUTTON: AtomicUsize = AtomicUsize::new(0);
+
+/// `NavigationInteractionUIContext.ValidNavigationInput`.
+static OFFSET_NAV_VALID_INPUT: AtomicUsize = AtomicUsize::new(0);
+
+/// `NavigationInteractionUIContext.ShowSetCourseArm`.
+static OFFSET_NAV_SHOW_SET_COURSE_ARM: AtomicUsize = AtomicUsize::new(0);
 
 // ---- Instance trackers (generated) ----------------------------------------
 
@@ -87,8 +119,23 @@ static GET_NAV_CONTEXT_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::
 /// MethodInfo for `NavigationInteractionUIContext.ShouldDisableSetCourse()`.
 static SHOULD_DISABLE_SET_COURSE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// MethodInfo for `NavigationInteractionUIContext.get_InputInteractionType()`.
+static GET_INPUT_INTERACTION_TYPE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
 /// Per-hook error tracking and deactivation state.
-static HOOK_INFO: HookInfo = HookInfo::new("MainAction");
+static HOOK_INFO: HookInfo = HookInfo::new(LOG_TARGET);
+
+/// Whether PreScan Awake/OnDestroy hooks have been installed.
+static PRESCAN_HOOKS_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the Mining Awake hook has been installed.
+static MINING_AWAKE_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the StarNode Awake hook has been installed.
+static STARNODE_AWAKE_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the navigation controller lifecycle hooks have been installed.
+static NAV_CONTROLLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 // ---- Type aliases ---------------------------------------------------------
 
@@ -167,18 +214,18 @@ extern "C" fn hook_viewer_destroy(this: *mut Il2CppObject) {
 fn is_viewer_visible(instance: *const ()) -> bool {
     let method = IS_SHOWN_OR_SHOWING_METHOD.load(Relaxed);
     if method.is_null() {
-        debug!(target: "MainAction", "Skipped: viewer visibility method unresolved");
+        debug!(target: LOG_TARGET, "Skipped: viewer visibility method unresolved");
         return false;
     }
 
     let ctrl_offset = OFFSET_VIS_CTRL.load(Relaxed);
     if ctrl_offset == 0 {
-        debug!(target: "MainAction", "Skipped: viewer visibility controller offset unresolved");
+        debug!(target: LOG_TARGET, "Skipped: viewer visibility controller offset unresolved");
         return false;
     }
     let vis_ctrl = unsafe { tracker::read_ptr(instance, ctrl_offset) };
     if vis_ctrl.is_null() {
-        debug!(target: "MainAction", "Skipped: viewer visibility controller unavailable");
+        debug!(target: LOG_TARGET, "Skipped: viewer visibility controller unavailable");
         return false;
     }
 
@@ -227,6 +274,8 @@ pub fn check() -> bool {
         return true;
     }
 
+    debug!(target: LOG_TARGET, "{}", fleet_bar::describe_selected_fleet());
+
     false
 }
 
@@ -269,7 +318,7 @@ fn try_normal_engage(prescan: *mut ()) -> bool {
         }
     }
 
-    debug!(target: "MainAction", "Executing: engaging target");
+    debug!(target: LOG_TARGET, "Executing: engaging target");
     invoke::void(
         method,
         scan_widget as *mut Il2CppObject,
@@ -297,7 +346,7 @@ fn try_queue_attack(prescan: *mut ()) -> bool {
         return false; // Queue full.
     }
 
-    debug!(target: "MainAction", "Executing: queueing attack");
+    debug!(target: LOG_TARGET, "Executing: queueing attack");
     invoke::void(
         method,
         prescan as *mut Il2CppObject,
@@ -329,7 +378,7 @@ fn try_mine(mining: *mut ()) -> bool {
     if method.is_null() {
         return false;
     }
-    debug!(target: "MainAction", "Executing: mining node");
+    debug!(target: LOG_TARGET, "Executing: mining node");
     invoke::void(method, mining as *mut Il2CppObject, "MiningObjectViewerWidget.MineClicked")
 }
 
@@ -339,7 +388,7 @@ fn try_warp(starnode: *mut ()) -> bool {
     if method.is_null() {
         return false;
     }
-    debug!(target: "MainAction", "Executing: initiating warp");
+    debug!(target: LOG_TARGET, "Executing: initiating warp");
     invoke::void(method, starnode as *mut Il2CppObject, "StarNodeObjectViewerWidget.InitiateWarp")
 }
 
@@ -349,18 +398,18 @@ fn try_warp(starnode: *mut ()) -> bool {
 fn try_set_course() -> bool {
     let method = ON_SET_COURSE_METHOD.load(Relaxed);
     if method.is_null() {
-        debug!(target: "MainAction", "Skipped: set course method unresolved");
+        debug!(target: LOG_TARGET, "Skipped: set course method unresolved");
         return false;
     }
     let nav = nav_controller::get();
     if nav.is_null() {
-        debug!(target: "MainAction", "Skipped: navigation controller unavailable");
+        debug!(target: LOG_TARGET, "Skipped: navigation controller unavailable");
         return false;
     }
     if !can_submit_set_course(nav) {
         return false;
     }
-    debug!(target: "MainAction", "Executing: setting course");
+    debug!(target: LOG_TARGET, "Executing: setting course");
     invoke::void(
         method,
         nav as *mut Il2CppObject,
@@ -371,7 +420,7 @@ fn try_set_course() -> bool {
 fn can_submit_set_course(nav: *mut ()) -> bool {
     let context_method = GET_NAV_CONTEXT_METHOD.load(Relaxed);
     if context_method.is_null() {
-        debug!(target: "MainAction", "Skipped: navigation context method unresolved");
+        debug!(target: LOG_TARGET, "Skipped: navigation context method unresolved");
         return false;
     }
 
@@ -380,13 +429,27 @@ fn can_submit_set_course(nav: *mut ()) -> bool {
         nav as *mut Il2CppObject,
         "NavigationInteractionUIViewController.get_CanvasContext",
     ) else {
-        debug!(target: "MainAction", "Skipped: navigation context unavailable");
+        debug!(target: LOG_TARGET, "Skipped: navigation context unavailable");
         return false;
     };
 
+    if !read_context_bool(context, &OFFSET_NAV_VALID_INPUT, "ValidNavigationInput").unwrap_or(false) {
+        debug!(target: LOG_TARGET, "Skipped: navigation input invalid");
+        return false;
+    }
+
+    if !read_context_bool(context, &OFFSET_NAV_SHOW_SET_COURSE_ARM, "ShowSetCourseArm").unwrap_or(false) {
+        debug!(target: LOG_TARGET, "Skipped: set course arm hidden");
+        return false;
+    }
+
+    if !has_set_course_interaction(context) {
+        return false;
+    }
+
     let should_disable_method = SHOULD_DISABLE_SET_COURSE_METHOD.load(Relaxed);
     if should_disable_method.is_null() {
-        debug!(target: "MainAction", "Skipped: set course state method unresolved");
+        debug!(target: LOG_TARGET, "Skipped: set course state method unresolved");
         return false;
     }
 
@@ -397,11 +460,67 @@ fn can_submit_set_course(nav: *mut ()) -> bool {
     )
     .unwrap_or(true);
     if disabled {
-        debug!(target: "MainAction", "Skipped: set course disabled by navigation context");
+        debug!(target: LOG_TARGET, "Skipped: set course disabled by navigation context");
         return false;
     }
 
     true
+}
+
+fn has_set_course_interaction(context: *mut Il2CppObject) -> bool {
+    let method = GET_INPUT_INTERACTION_TYPE_METHOD.load(Relaxed);
+    if method.is_null() {
+        debug!(target: LOG_TARGET, "Skipped: input interaction type method unresolved");
+        return false;
+    }
+
+    let interaction_type =
+        invoke::i32(method, context, "NavigationInteractionUIContext.get_InputInteractionType").unwrap_or(0);
+    if !is_set_course_interaction(interaction_type) {
+        debug!(target: LOG_TARGET, "Skipped: unsupported set course interaction type {interaction_type}");
+        return false;
+    }
+
+    true
+}
+
+fn is_set_course_interaction(interaction_type: i32) -> bool {
+    matches!(
+        interaction_type,
+        INPUT_TAP_LOCATION_PLANNING_PATH
+            | INPUT_TAP_EMPTY_SPACE
+            | INPUT_TAP_PVE
+            | INPUT_TAP_NPC_MINING
+            | INPUT_TAP_NPC_STATIONARY
+            | INPUT_TAP_HOSTILE
+            | INPUT_TAP_PLAYER_STATION
+            | INPUT_SCAN_LOADING
+            | INPUT_SCAN_LOADED
+            | INPUT_TAP_MY_STATION
+            | INPUT_TAP_ALLIANCE_STATION
+            | INPUT_TAP_MINE
+            | INPUT_TAP_HOME_PLANET
+            | INPUT_TAP_SYSTEM_PLANET
+            | INPUT_TAP_STAR
+            | INPUT_TAP_ALLIANCE_STARBASE
+            | INPUT_TAP_DEEP_SPACE_RELAY
+            | INPUT_TAP_PVP_CAPTURE_NODE
+            | INPUT_TAP_PVP_CAPTURED_NODE
+            | INPUT_TAP_ISOGEN_VAULT
+            | INPUT_TAP_TERRITORY_CAPTURE_SERVICE
+    )
+}
+
+fn read_context_bool(context: *mut Il2CppObject, offset: &AtomicUsize, field_name: &str) -> Option<bool> {
+    let offset = offset.load(Relaxed);
+    if offset == 0 {
+        debug!(target: LOG_TARGET, "Skipped: navigation context field unresolved: {field_name}");
+        return None;
+    }
+
+    // Safety: `context` comes from NavigationInteractionUIViewController.get_CanvasContext(), and `offset`
+    // is resolved from the IL2CPP metadata for the requested NavigationInteractionUIContext field.
+    Some(unsafe { *((context as *const u8).add(offset) as *const bool) })
 }
 
 fn resolve_required_method(
@@ -415,7 +534,7 @@ fn resolve_required_method(
     if resolver::resolve_method_into(api, class, method_name, param_count, target) {
         true
     } else {
-        warn!(target: "MainAction", "{feature} unavailable: method {method_name} not resolved");
+        warn!(target: LOG_TARGET, "{feature} unavailable: method {method_name} not resolved");
         false
     }
 }
@@ -430,7 +549,7 @@ fn resolve_required_field(
     if resolver::resolve_field_offset_into(api, class, field_name, target) {
         true
     } else {
-        warn!(target: "MainAction", "{feature} unavailable: field {field_name} not resolved");
+        warn!(target: LOG_TARGET, "{feature} unavailable: field {field_name} not resolved");
         false
     }
 }
@@ -442,29 +561,44 @@ fn resolve_required_field(
 /// Resolves viewer classes, hooks Awake/OnDestroy for instance tracking, and resolves action methods.
 /// Called from `hotkeys::install()`.
 pub fn install(api: &Il2CppApi) {
+    fleet_bar::install(api);
+
+    if is_ready() {
+        return;
+    }
+
     // Resolve shared visibility offsets (used by all viewer types).
     // _visibilityController is inherited from ObjectViewerBaseWidget; resolving on any
     // concrete subclass works because IL2CPP traverses the class hierarchy.
-    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController")
+    if method_missing(&IS_SHOWN_OR_SHOWING_METHOD)
+        && let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController")
         && !resolver::resolve_method_into(api, c, "get_IsShownOrShowing", 0, &IS_SHOWN_OR_SHOWING_METHOD)
         && !resolver::resolve_method_into(api, c, "IsShownOrShowing", 0, &IS_SHOWN_OR_SHOWING_METHOD)
     {
         warn!(
-            target: "MainAction",
+            target: LOG_TARGET,
             "Viewer actions unavailable: VisibilityController.IsShownOrShowing not resolved"
         );
     }
 
     // PreScanTargetWidget has its own OnDestroy override, so installing both hooks is safe.
-    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget") {
+    if should_resolve_prescan()
+        && let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget")
+    {
         // Resolve _visibilityController offset on a concrete viewer subclass.
-        resolve_required_field(api, c, "_visibilityController", &OFFSET_VIS_CTRL, "Viewer actions");
+        resolve_required_field_if_missing(api, c, "_visibilityController", &OFFSET_VIS_CTRL, "Viewer actions");
 
-        resolve_required_field(api, c, "_scanEngageButtonsWidget", &OFFSET_SCAN_ENGAGE, "Engage action");
+        resolve_required_field_if_missing(api, c, "_scanEngageButtonsWidget", &OFFSET_SCAN_ENGAGE, "Engage action");
 
-        resolve_required_field(api, c, "_addToQueueButtonWidget", &OFFSET_QUEUE_BUTTON, "Queue attack action");
+        resolve_required_field_if_missing(
+            api,
+            c,
+            "_addToQueueButtonWidget",
+            &OFFSET_QUEUE_BUTTON,
+            "Queue attack action",
+        );
 
-        resolve_required_method(
+        resolve_required_method_if_missing(
             api,
             c,
             "OnAddToQueueClickedEventHandler",
@@ -476,12 +610,222 @@ pub fn install(api: &Il2CppApi) {
         // Hook Awake/OnDestroy manually with class-dispatching hooks instead of prescan::install().
         // PreScanStationTargetWidget (player bases) inherits these methods, so a single hook pair
         // catches both widget types. The hooks dispatch to separate trackers based on the IL2CPP class.
-        tracker::install_resolved_hook(api, c, "Awake", 0, "PreScanAwake", hook_prescan_awake as *const (), |orig| {
-            ORIG_PRESCAN_AWAKE.store(orig as *mut (), Relaxed)
-        });
-        tracker::install_resolved_hook(
+        install_prescan_hooks_once(api, c);
+    }
+
+    // Resolve PreScanStationTargetWidget class pointer for runtime dispatch in the Awake hook.
+    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanStationTargetWidget")
+    {
+        STATION_CLASS.store(c as *mut (), Relaxed);
+        trace!(target: LOG_TARGET, "PreScanStationTargetWidget class resolved for dispatch");
+    } else {
+        warn!(target: LOG_TARGET, "PreScanStationTargetWidget class not found, station dispatch disabled");
+    }
+
+    // ScanEngageButtonsWidget.OnEngageButtonClicked (no tracking needed, reached via
+    // PreScanTargetWidget._scanEngageButtonsWidget field).
+    if should_resolve_scan_engage()
+        && let Some(c) =
+            resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "ScanEngageButtonsWidget")
+    {
+        resolve_required_method_if_missing(api, c, "OnEngageButtonClicked", 0, &ON_ENGAGE_METHOD, "Engage action");
+
+        resolve_required_method_if_missing(api, c, "IsActive", 0, &IS_ACTIVE_METHOD, "Engage action");
+
+        resolve_required_field_if_missing(api, c, "_engageButton", &OFFSET_ENGAGE_BUTTON, "Engage action");
+    }
+
+    // GenericButtonWidget.get_Interactable (needed for queue button state check).
+    if method_missing(&GET_INTERACTABLE_METHOD)
+        && let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget")
+    {
+        resolve_required_method_if_missing(
             api,
             c,
+            "get_Interactable",
+            0,
+            &GET_INTERACTABLE_METHOD,
+            "Queue attack action",
+        );
+    }
+
+    // MiningObjectViewerWidget and StarNodeObjectViewerWidget share the base class OnDestroy,
+    // so we hook Awake individually and OnDestroy once via the shared viewer hook.
+    if (method_missing(&MINE_CLICKED_METHOD)
+        || !MINING_AWAKE_INSTALLED.load(Relaxed)
+        || ORIG_VIEWER_DESTROY.load(Relaxed).is_null())
+        && let Some(c) =
+            resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "MiningObjectViewerWidget")
+    {
+        install_mining_awake_once(api, c);
+        install_shared_destroy(api, c);
+        resolve_required_method_if_missing(api, c, "MineClicked", 0, &MINE_CLICKED_METHOD, "Mine action");
+    }
+
+    if (method_missing(&INITIATE_WARP_METHOD) || !STARNODE_AWAKE_INSTALLED.load(Relaxed))
+        && let Some(c) =
+            resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "StarNodeObjectViewerWidget")
+    {
+        install_starnode_awake_once(api, c);
+        resolve_required_method_if_missing(api, c, "InitiateWarp", 0, &INITIATE_WARP_METHOD, "Warp action");
+    }
+
+    // NavigationInteractionUIViewController: fallback "Set Course" when no viewer is open.
+    if should_resolve_nav_controller()
+        && let Some(c) = resolver::resolve_class(
+            api,
+            "Assembly-CSharp",
+            "Digit.Prime.Navigation",
+            "NavigationInteractionUIViewController",
+        )
+    {
+        install_nav_controller_once(api, c);
+        resolve_required_method_if_missing(
+            api,
+            c,
+            "get_CanvasContext",
+            0,
+            &GET_NAV_CONTEXT_METHOD,
+            "Set Course action",
+        );
+        resolve_required_method_if_missing(
+            api,
+            c,
+            "OnSetCourseButtonClick",
+            0,
+            &ON_SET_COURSE_METHOD,
+            "Set Course action",
+        );
+    }
+
+    if should_resolve_nav_context()
+        && let Some(c) = resolver::resolve_class(
+            api,
+            "Assembly-CSharp",
+            "Digit.Prime.Navigation",
+            "NavigationInteractionUIContext",
+        )
+    {
+        resolve_required_method_if_missing(
+            api,
+            c,
+            "ShouldDisableSetCourse",
+            0,
+            &SHOULD_DISABLE_SET_COURSE_METHOD,
+            "Set Course action",
+        );
+        resolve_required_method_if_missing(
+            api,
+            c,
+            "get_InputInteractionType",
+            0,
+            &GET_INPUT_INTERACTION_TYPE_METHOD,
+            "Set Course action",
+        );
+        resolve_required_field_if_missing(api, c, "ValidNavigationInput", &OFFSET_NAV_VALID_INPUT, "Set Course action");
+        resolve_required_field_if_missing(
+            api,
+            c,
+            "ShowSetCourseArm",
+            &OFFSET_NAV_SHOW_SET_COURSE_ARM,
+            "Set Course action",
+        );
+    }
+}
+
+fn is_ready() -> bool {
+    viewer_tracking_ready()
+        && combat_actions_ready()
+        && mining_action_ready()
+        && warp_action_ready()
+        && set_course_action_ready()
+}
+
+fn viewer_tracking_ready() -> bool {
+    !method_missing(&IS_SHOWN_OR_SHOWING_METHOD)
+        && !field_missing(&OFFSET_VIS_CTRL)
+        && PRESCAN_HOOKS_INSTALLED.load(Relaxed)
+        && MINING_AWAKE_INSTALLED.load(Relaxed)
+        && STARNODE_AWAKE_INSTALLED.load(Relaxed)
+        && !ORIG_VIEWER_DESTROY.load(Relaxed).is_null()
+}
+
+fn combat_actions_ready() -> bool {
+    !field_missing(&OFFSET_SCAN_ENGAGE)
+        && !field_missing(&OFFSET_QUEUE_BUTTON)
+        && !field_missing(&OFFSET_ENGAGE_BUTTON)
+        && !method_missing(&ON_QUEUE_METHOD)
+        && !method_missing(&ON_ENGAGE_METHOD)
+        && !method_missing(&IS_ACTIVE_METHOD)
+        && !method_missing(&GET_INTERACTABLE_METHOD)
+}
+
+fn mining_action_ready() -> bool {
+    !method_missing(&MINE_CLICKED_METHOD)
+}
+
+fn warp_action_ready() -> bool {
+    !method_missing(&INITIATE_WARP_METHOD)
+}
+
+fn set_course_action_ready() -> bool {
+    !method_missing(&GET_NAV_CONTEXT_METHOD)
+        && !method_missing(&ON_SET_COURSE_METHOD)
+        && !method_missing(&SHOULD_DISABLE_SET_COURSE_METHOD)
+        && !method_missing(&GET_INPUT_INTERACTION_TYPE_METHOD)
+        && !field_missing(&OFFSET_NAV_VALID_INPUT)
+        && !field_missing(&OFFSET_NAV_SHOW_SET_COURSE_ARM)
+        && NAV_CONTROLLER_INSTALLED.load(Relaxed)
+}
+
+fn should_resolve_prescan() -> bool {
+    field_missing(&OFFSET_VIS_CTRL)
+        || field_missing(&OFFSET_SCAN_ENGAGE)
+        || field_missing(&OFFSET_QUEUE_BUTTON)
+        || method_missing(&ON_QUEUE_METHOD)
+        || !PRESCAN_HOOKS_INSTALLED.load(Relaxed)
+}
+
+fn should_resolve_scan_engage() -> bool {
+    method_missing(&ON_ENGAGE_METHOD) || method_missing(&IS_ACTIVE_METHOD) || field_missing(&OFFSET_ENGAGE_BUTTON)
+}
+
+fn should_resolve_nav_controller() -> bool {
+    method_missing(&GET_NAV_CONTEXT_METHOD)
+        || method_missing(&ON_SET_COURSE_METHOD)
+        || !NAV_CONTROLLER_INSTALLED.load(Relaxed)
+}
+
+fn should_resolve_nav_context() -> bool {
+    method_missing(&SHOULD_DISABLE_SET_COURSE_METHOD)
+        || method_missing(&GET_INPUT_INTERACTION_TYPE_METHOD)
+        || field_missing(&OFFSET_NAV_VALID_INPUT)
+        || field_missing(&OFFSET_NAV_SHOW_SET_COURSE_ARM)
+}
+
+fn install_prescan_hooks_once(api: &Il2CppApi, class: *mut Il2CppClass) {
+    if PRESCAN_HOOKS_INSTALLED.load(Relaxed) {
+        return;
+    }
+
+    let mut awake_installed = !ORIG_PRESCAN_AWAKE.load(Relaxed).is_null();
+    if !awake_installed {
+        awake_installed = tracker::install_resolved_hook(
+            api,
+            class,
+            "Awake",
+            0,
+            "PreScanAwake",
+            hook_prescan_awake as *const (),
+            |orig| ORIG_PRESCAN_AWAKE.store(orig as *mut (), Relaxed),
+        );
+    }
+
+    let mut destroy_installed = !ORIG_PRESCAN_DESTROY.load(Relaxed).is_null();
+    if !destroy_installed {
+        destroy_installed = tracker::install_resolved_hook(
+            api,
+            class,
             "OnDestroy",
             0,
             "PreScanDestroy",
@@ -490,74 +834,64 @@ pub fn install(api: &Il2CppApi) {
         );
     }
 
-    // Resolve PreScanStationTargetWidget class pointer for runtime dispatch in the Awake hook.
-    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanStationTargetWidget")
-    {
-        STATION_CLASS.store(c as *mut (), Relaxed);
-        trace!(target: "MainAction", "PreScanStationTargetWidget class resolved for dispatch");
-    } else {
-        warn!(target: "MainAction", "PreScanStationTargetWidget class not found, station dispatch disabled");
+    if awake_installed && destroy_installed {
+        PRESCAN_HOOKS_INSTALLED.store(true, Relaxed);
+    }
+}
+
+fn install_mining_awake_once(api: &Il2CppApi, class: *mut Il2CppClass) {
+    if !MINING_AWAKE_INSTALLED.load(Relaxed) && mining::install_awake(api, class, "Mining") {
+        MINING_AWAKE_INSTALLED.store(true, Relaxed);
+    }
+}
+
+fn install_starnode_awake_once(api: &Il2CppApi, class: *mut Il2CppClass) {
+    if !STARNODE_AWAKE_INSTALLED.load(Relaxed) && starnode::install_awake(api, class, "StarNode") {
+        STARNODE_AWAKE_INSTALLED.store(true, Relaxed);
+    }
+}
+
+fn install_nav_controller_once(api: &Il2CppApi, class: *mut Il2CppClass) {
+    if !NAV_CONTROLLER_INSTALLED.load(Relaxed) && nav_controller::install(api, class, "NavController") {
+        NAV_CONTROLLER_INSTALLED.store(true, Relaxed);
+    }
+}
+
+fn method_missing(target: &AtomicPtr<MethodInfo>) -> bool {
+    target.load(Relaxed).is_null()
+}
+
+fn field_missing(target: &AtomicUsize) -> bool {
+    target.load(Relaxed) == 0
+}
+
+fn resolve_required_method_if_missing(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+    target: &AtomicPtr<MethodInfo>,
+    feature: &str,
+) -> bool {
+    if !method_missing(target) {
+        return true;
     }
 
-    // ScanEngageButtonsWidget.OnEngageButtonClicked (no tracking needed, reached via
-    // PreScanTargetWidget._scanEngageButtonsWidget field).
-    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "ScanEngageButtonsWidget") {
-        resolve_required_method(api, c, "OnEngageButtonClicked", 0, &ON_ENGAGE_METHOD, "Engage action");
+    resolve_required_method(api, class, method_name, param_count, target, feature)
+}
 
-        resolve_required_method(api, c, "IsActive", 0, &IS_ACTIVE_METHOD, "Engage action");
-
-        resolve_required_field(api, c, "_engageButton", &OFFSET_ENGAGE_BUTTON, "Engage action");
+fn resolve_required_field_if_missing(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    field_name: &str,
+    target: &AtomicUsize,
+    feature: &str,
+) -> bool {
+    if !field_missing(target) {
+        return true;
     }
 
-    // GenericButtonWidget.get_Interactable (needed for queue button state check).
-    if let Some(c) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget") {
-        resolve_required_method(api, c, "get_Interactable", 0, &GET_INTERACTABLE_METHOD, "Queue attack action");
-    }
-
-    // MiningObjectViewerWidget and StarNodeObjectViewerWidget share the base class OnDestroy,
-    // so we hook Awake individually and OnDestroy once via the shared viewer hook.
-    if let Some(c) =
-        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "MiningObjectViewerWidget")
-    {
-        mining::install_awake(api, c, "Mining");
-        install_shared_destroy(api, c);
-        resolve_required_method(api, c, "MineClicked", 0, &MINE_CLICKED_METHOD, "Mine action");
-    }
-
-    if let Some(c) =
-        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.ObjectViewer", "StarNodeObjectViewerWidget")
-    {
-        starnode::install_awake(api, c, "StarNode");
-        resolve_required_method(api, c, "InitiateWarp", 0, &INITIATE_WARP_METHOD, "Warp action");
-    }
-
-    // NavigationInteractionUIViewController: fallback "Set Course" when no viewer is open.
-    if let Some(c) = resolver::resolve_class(
-        api,
-        "Assembly-CSharp",
-        "Digit.Prime.Navigation",
-        "NavigationInteractionUIViewController",
-    ) {
-        nav_controller::install(api, c, "NavController");
-        resolve_required_method(api, c, "get_CanvasContext", 0, &GET_NAV_CONTEXT_METHOD, "Set Course action");
-        resolve_required_method(api, c, "OnSetCourseButtonClick", 0, &ON_SET_COURSE_METHOD, "Set Course action");
-    }
-
-    if let Some(c) = resolver::resolve_class(
-        api,
-        "Assembly-CSharp",
-        "Digit.Prime.Navigation",
-        "NavigationInteractionUIContext",
-    ) {
-        resolve_required_method(
-            api,
-            c,
-            "ShouldDisableSetCourse",
-            0,
-            &SHOULD_DISABLE_SET_COURSE_METHOD,
-            "Set Course action",
-        );
-    }
+    resolve_required_field(api, class, field_name, target, feature)
 }
 
 /// Install the shared OnDestroy hook for ObjectViewerBaseWidget subclasses.
@@ -613,6 +947,13 @@ mod tests {
     #[test]
     fn try_warp_returns_false_without_fn() {
         assert!(!try_warp(std::ptr::null_mut()));
+    }
+
+    #[test]
+    fn set_course_interactions_include_empty_space_and_reject_hidden_state() {
+        assert!(is_set_course_interaction(INPUT_TAP_EMPTY_SPACE));
+        assert!(is_set_course_interaction(INPUT_TAP_LOCATION_PLANNING_PATH));
+        assert!(!is_set_course_interaction(0));
     }
 
     #[test]
