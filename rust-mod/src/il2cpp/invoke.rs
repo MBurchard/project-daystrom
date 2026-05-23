@@ -59,23 +59,10 @@ pub fn static_bool(method: *const MethodInfo, label: &str) -> Option<bool> {
     unsafe { unbox_value(result) }
 }
 
-/// Invoke a no-argument IL2CPP static method returning an object reference.
-pub fn static_object(method: *const MethodInfo, label: &str) -> Option<*mut Il2CppObject> {
-    let result = invoke_static_raw(method, label)?;
-    (!result.is_null()).then_some(result)
-}
-
 /// Invoke an IL2CPP instance method with one `bool` argument and no return value.
 pub fn void_bool(method: *const MethodInfo, object: *mut Il2CppObject, arg: bool, label: &str) -> bool {
     let mut arg = arg;
     let mut args = [(&mut arg as *mut bool).cast::<Il2CppObject>()];
-    invoke_raw_with_args(method, object, args.as_mut_ptr(), label).is_some()
-}
-
-/// Invoke an IL2CPP instance method with one object argument and no return value.
-pub fn void_object(method: *const MethodInfo, object: *mut Il2CppObject, arg: *mut Il2CppObject, label: &str) -> bool {
-    let mut arg = arg;
-    let mut args = [(&mut arg as *mut *mut Il2CppObject).cast::<Il2CppObject>()];
     invoke_raw_with_args(method, object, args.as_mut_ptr(), label).is_some()
 }
 

@@ -39,9 +39,13 @@ static ORIGINAL_UPDATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// through the hook and sees consumed keys as not pressed.
 static ORIGINAL_GET_KEY_DOWN: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Set to `true` after we handle the main action key in a frame. Our `GetKeyDownInt` hook returns `false` for
-/// that key while this flag is set, preventing the game from also processing it.
-static MAIN_ACTION_CONSUMED: AtomicBool = AtomicBool::new(false);
+/// Whether `Input.GetKeyDownInt` has been hooked successfully.
+static GET_KEY_DOWN_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// KeyCode consumed by our hotkey system in the current frame. 0 = none.
+///
+/// Our `GetKeyDownInt` hook returns `false` for this key, preventing the game from also processing it.
+static CONSUMED_KEYCODE: AtomicI32 = AtomicI32::new(0);
 
 /// Unity KeyCode for the main action shortcut. 0 = disabled. Updated from settings, read per frame.
 static MAIN_ACTION_KEYCODE: AtomicI32 = AtomicI32::new(KEYCODE_SPACE);
@@ -60,12 +64,6 @@ static LOAD_BINDINGS_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::nu
 
 /// Method info for `ScreenManager.get_IsInputFocused()` (static).
 static IS_INPUT_FOCUSED_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Method info for `EventSystem.get_current()` (static, returns instance).
-static EVENT_SYSTEM_CURRENT_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Method info for `EventSystem.SetSelectedGameObject(GameObject)`.
-static SET_SELECTED_GO_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Method info for `IsActive() -> bool` (from UIBehaviour, shared by all UI widgets).
 pub(super) static IS_ACTIVE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
@@ -104,7 +102,8 @@ static REWARD_TARGETS: [RewardTarget; 4] =
 // ---- Widget collect tracking ------------------------------------------------
 //
 // Widgets with a single collect button that should be triggerable via ESC. Unlike the reward ViewControllers, these
-// are Widget<T> subclasses that persist for the entire session and use OnEnable/OnDisable for visibility.
+// are Widget<T> subclasses that persist for the entire session, so we track the instance once and gate collection
+// through UIBehaviour.IsActive.
 
 /// Tracked instance of `MissionsNotificationPopoutWidget`.
 static MISSIONS_POPOUT_INSTANCE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -167,33 +166,6 @@ pub(super) fn is_input_focused() -> bool {
         return false;
     }
     invoke::static_bool(ptr, "ScreenManager.get_IsInputFocused").unwrap_or(false)
-}
-
-/// Deselect the EventSystem's current selection.
-///
-/// Unity's `StandaloneInputModule` treats Space/Enter as "Submit", clicking whatever UI element is selected.
-/// Calling this after we handle Space prevents that side effect.
-fn deselect_event_system() {
-    let current_fn_ptr = EVENT_SYSTEM_CURRENT_FN.load(Relaxed);
-    if current_fn_ptr.is_null() {
-        return;
-    }
-    let Some(event_system) = invoke::static_object(current_fn_ptr, "EventSystem.get_current") else {
-        return;
-    };
-    if event_system.is_null() {
-        return;
-    }
-    let set_fn_ptr = SET_SELECTED_GO_FN.load(Relaxed);
-    if set_fn_ptr.is_null() {
-        return;
-    }
-    invoke::void_object(
-        set_fn_ptr,
-        event_system,
-        std::ptr::null_mut(),
-        "EventSystem.SetSelectedGameObject",
-    );
 }
 
 // ---- ShortcutsManager hook ------------------------------------------------
@@ -339,7 +311,7 @@ fn parse_default_bindings(manager: *mut Il2CppObject) {
 /// If a key has been consumed by our hotkey system in this frame, it returns `false` so the game's own shortcut
 /// system does not also react to it.
 extern "C" fn hook_get_key_down(key: i32) -> bool {
-    if key == MAIN_ACTION_KEYCODE.load(Relaxed) && MAIN_ACTION_CONSUMED.load(Relaxed) {
+    if key != 0 && key == CONSUMED_KEYCODE.load(Relaxed) {
         return false;
     }
     let orig_ptr = ORIGINAL_GET_KEY_DOWN.load(Relaxed);
@@ -358,7 +330,7 @@ extern "C" fn hook_get_key_down(key: i32) -> bool {
 /// the game's own update logic runs.
 extern "C" fn hook_update(this: *mut Il2CppObject) {
     // Reset consumption flags at the start of each frame.
-    MAIN_ACTION_CONSUMED.store(false, Relaxed);
+    CONSUMED_KEYCODE.store(0, Relaxed);
 
     HOOK_INFO.run(super::main_thread::drain_tasks);
 
@@ -368,13 +340,12 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
     }
 
     HOOK_INFO.run(|| {
-        if key_down(KEYCODE_ESCAPE) {
-            collect_reward_screen();
+        if key_down(KEYCODE_ESCAPE) && collect_reward_screen() {
+            CONSUMED_KEYCODE.store(KEYCODE_ESCAPE, Relaxed);
         }
         let main_kc = MAIN_ACTION_KEYCODE.load(Relaxed);
         if main_kc != 0 && key_down(main_kc) && !is_input_focused() && super::main_action::check() {
-            MAIN_ACTION_CONSUMED.store(true, Relaxed);
-            deselect_event_system();
+            CONSUMED_KEYCODE.store(main_kc, Relaxed);
         }
     });
 
@@ -501,8 +472,8 @@ extern "C" fn hook_missions_popout_awake(this: *mut Il2CppObject) {
 /// Find the first active collect screen and trigger its collect button.
 ///
 /// Checks reward screen ViewControllers (slots 0-3) and widget-based collect screens (MissionsNotificationPopout).
-/// The first active instance wins.
-fn collect_reward_screen() {
+/// The first active instance wins. Returns `true` only when a collect action was actually invoked.
+fn collect_reward_screen() -> bool {
     let is_active_ptr = IS_ACTIVE_FN.load(Relaxed);
 
     // Helper: check IsActive on an instance. Returns true if unresolved (optimistic).
@@ -530,8 +501,7 @@ fn collect_reward_screen() {
         }
 
         debug!(target: "Hotkeys", "ESC: collecting reward screen");
-        invoke_void_noargs(on_collect_ptr, instance, "RewardsScreenViewController.OnCollectClicked");
-        return;
+        return invoke_void_noargs(on_collect_ptr, instance, "RewardsScreenViewController.OnCollectClicked");
     }
 
     // Widget-based collect screens.
@@ -542,7 +512,7 @@ fn collect_reward_screen() {
             let on_collect_ptr = MISSIONS_POPOUT_ON_COLLECT.load(Relaxed);
             if !on_collect_ptr.is_null() {
                 debug!(target: "Hotkeys", "ESC: collecting missions popout");
-                invoke_void_noargs(
+                return invoke_void_noargs(
                     on_collect_ptr,
                     instance,
                     "MissionsNotificationPopoutWidget.OnCollectButtonClicked",
@@ -550,6 +520,7 @@ fn collect_reward_screen() {
             }
         }
     }
+    false
 }
 
 #[cfg(not(test))]
@@ -597,6 +568,7 @@ fn invoke_void_noargs(method: *const MethodInfo, instance: *mut Il2CppObject, _l
 fn event_code_to_input_path(code: &str) -> Option<String> {
     let suffix = match code {
         "Space" => "space",
+        // FIXME: Verify STFC's InputActionAsset path for NumpadEnter before splitting it from Enter.
         "Enter" | "NumpadEnter" => "enter",
         "Tab" => "tab",
         "Backspace" => "backspace",
@@ -629,6 +601,7 @@ fn event_code_to_input_path(code: &str) -> Option<String> {
 fn event_code_to_keycode(code: &str) -> i32 {
     match code {
         "Space" => 32,
+        // FIXME: Verify STFC/Unity KeyCode for NumpadEnter before splitting it from Enter.
         "Enter" | "NumpadEnter" => 13,
         "Tab" => 9,
         "Backspace" => 8,
@@ -653,7 +626,7 @@ fn event_code_to_keycode(code: &str) -> i32 {
         }
         s if s.starts_with("F") && s[1..].parse::<u32>().is_ok() => {
             let n: u32 = s[1..].parse().unwrap();
-            if (1..=15).contains(&n) { 281 + (n as i32 - 1) } else { 0 } // Unity F1=282..F15=296
+            if (1..=15).contains(&n) { 282 + (n as i32 - 1) } else { 0 } // Unity F1=282..F15=296
         }
         // Mouse buttons: Mouse3-6 = side/extra buttons (Mouse0-2 are left/right/middle, reserved).
         // Unity KeyCode: Mouse0=323, Mouse1=324, ..., Mouse6=329.
@@ -802,10 +775,18 @@ fn install_shortcuts_hook(api: &Il2CppApi) {
     };
 
     // Resolve _actions field offset for reading the InputActionAsset in the post-hook.
-    resolver::resolve_field_offset_into(api, class, "_actions", &OFFSET_ACTIONS);
+    if OFFSET_ACTIONS.load(Relaxed) == 0 {
+        resolver::resolve_field_offset_into(api, class, "_actions", &OFFSET_ACTIONS);
+    }
 
     // Resolve LoadBindings for runtime reloads after conflict resolution.
-    resolver::resolve_method_into(api, class, "LoadBindings", 0, &LOAD_BINDINGS_METHOD);
+    if LOAD_BINDINGS_METHOD.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, class, "LoadBindings", 0, &LOAD_BINDINGS_METHOD);
+    }
+
+    if !ORIG_INITIALIZE_ACTIONS.load(Relaxed).is_null() {
+        return;
+    }
 
     tracker::install_resolved_hook(
         api,
@@ -823,42 +804,36 @@ fn install_shortcuts_hook(api: &Il2CppApi) {
 /// GetKeyDownInt is hooked (not just resolved) so consumed keys can be suppressed for the game's own code.
 /// Returns `false` if the hook cannot be installed (remaining hooks would be useless).
 fn install_input(api: &Il2CppApi) -> bool {
-    let Some(input_class) = resolver::resolve_class(api, "UnityEngine.InputLegacyModule", "UnityEngine", "Input")
-    else {
-        warn!(target: "Hotkeys", "Input class not found, hotkeys disabled");
-        return false;
-    };
+    if !GET_KEY_DOWN_HOOK_INSTALLED.load(Relaxed) {
+        let Some(input_class) = resolver::resolve_class(api, "UnityEngine.InputLegacyModule", "UnityEngine", "Input")
+        else {
+            warn!(target: "Hotkeys", "Input class not found, hotkeys disabled");
+            return false;
+        };
 
-    let Some(ptr) = tracker::resolve_fn(api, input_class, "GetKeyDownInt", 1) else {
-        warn!(target: "Hotkeys", "Input.GetKeyDownInt not found, hotkeys disabled");
-        return false;
-    };
+        let Some(ptr) = tracker::resolve_fn(api, input_class, "GetKeyDownInt", 1) else {
+            warn!(target: "Hotkeys", "Input.GetKeyDownInt not found, hotkeys disabled");
+            return false;
+        };
 
-    match engine::install_hook("GetKeyDownInt", ptr, hook_get_key_down as *const ()) {
-        Ok(original) => {
-            ORIGINAL_GET_KEY_DOWN.store(original as *mut (), Relaxed);
-            debug!(target: "Hotkeys", "Input.GetKeyDownInt hooked");
-        }
-        Err(e) => {
-            warn!(target: "Hotkeys", "Failed to hook GetKeyDownInt, falling back to direct call: {e}");
-            ORIGINAL_GET_KEY_DOWN.store(ptr as *mut (), Relaxed);
+        match engine::install_hook("GetKeyDownInt", ptr, hook_get_key_down as *const ()) {
+            Ok(original) => {
+                ORIGINAL_GET_KEY_DOWN.store(original as *mut (), Relaxed);
+                GET_KEY_DOWN_HOOK_INSTALLED.store(true, Relaxed);
+                debug!(target: "Hotkeys", "Input.GetKeyDownInt hooked");
+            }
+            Err(e) => {
+                warn!(target: "Hotkeys", "Failed to hook GetKeyDownInt, falling back to direct call: {e}");
+                ORIGINAL_GET_KEY_DOWN.store(ptr as *mut (), Relaxed);
+            }
         }
     }
 
     // IsInputFocused is optional; main action and future keys still work without it.
-    if let Some(sm_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") {
+    if IS_INPUT_FOCUSED_FN.load(Relaxed).is_null()
+        && let Some(sm_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager")
+    {
         resolver::resolve_method_into(api, sm_class, "get_IsInputFocused", 0, &IS_INPUT_FOCUSED_FN);
-    }
-
-    // EventSystem: deselect UI after handling the main action to prevent Unity's Submit action.
-    if let Some(es_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem") {
-        resolver::resolve_method_into(api, es_class, "get_current", 0, &EVENT_SYSTEM_CURRENT_FN);
-        resolver::resolve_method_into(api, es_class, "SetSelectedGameObject", 1, &SET_SELECTED_GO_FN);
-        if !EVENT_SYSTEM_CURRENT_FN.load(Relaxed).is_null() && !SET_SELECTED_GO_FN.load(Relaxed).is_null() {
-            debug!(target: "Hotkeys", "EventSystem deselect resolved");
-        } else {
-            warn!(target: "Hotkeys", "EventSystem partially resolved, UI deselect may not work");
-        }
     }
 
     true
@@ -908,23 +883,21 @@ fn install_reward_tracking(api: &Il2CppApi) {
     let animated_class = REWARD_TARGETS[0].class.load(Relaxed);
     if !animated_class.is_null() {
         let class = animated_class as *mut Il2CppClass;
-        tracker::install_resolved_hook(
+        install_hook_if_missing(
             api,
             class,
             "AboutToShow",
-            0,
             "RewardAnimatedShow",
-            hook_animated_show as *const (),
-            |orig| ORIG_ANIMATED_SHOW.store(orig as *mut (), Relaxed),
+            hook_animated_show,
+            &ORIG_ANIMATED_SHOW,
         );
-        tracker::install_resolved_hook(
+        install_hook_if_missing(
             api,
             class,
             "AboutToHide",
-            0,
             "RewardAnimatedHide",
-            hook_animated_hide as *const (),
-            |orig| ORIG_ANIMATED_HIDE.store(orig as *mut (), Relaxed),
+            hook_animated_hide,
+            &ORIG_ANIMATED_HIDE,
         );
     }
 
@@ -939,54 +912,36 @@ fn install_reward_tracking(api: &Il2CppApi) {
         return;
     };
 
-    tracker::install_resolved_hook(
+    install_hook_if_missing(
         api,
         base_class,
         "AboutToShow",
-        0,
         "RewardBaseShow",
-        hook_base_reward_show as *const (),
-        |orig| ORIG_BASE_SHOW.store(orig as *mut (), Relaxed),
+        hook_base_reward_show,
+        &ORIG_BASE_SHOW,
     );
-    tracker::install_resolved_hook(
+    install_hook_if_missing(
         api,
         base_class,
         "AboutToHide",
-        0,
         "RewardBaseHide",
-        hook_base_reward_hide as *const (),
-        |orig| ORIG_BASE_HIDE.store(orig as *mut (), Relaxed),
+        hook_base_reward_hide,
+        &ORIG_BASE_HIDE,
     );
 
     // Hook FirstTimeSpenderScreenViewController.AboutToShow/Hide (slot 2, own override).
     let fts_class = REWARD_TARGETS[2].class.load(Relaxed);
     if !fts_class.is_null() {
         let class = fts_class as *mut Il2CppClass;
-        tracker::install_resolved_hook(
-            api,
-            class,
-            "AboutToShow",
-            0,
-            "RewardFtsShow",
-            hook_fts_show as *const (),
-            |orig| ORIG_FTS_SHOW.store(orig as *mut (), Relaxed),
-        );
-        tracker::install_resolved_hook(
-            api,
-            class,
-            "AboutToHide",
-            0,
-            "RewardFtsHide",
-            hook_fts_hide as *const (),
-            |orig| ORIG_FTS_HIDE.store(orig as *mut (), Relaxed),
-        );
+        install_hook_if_missing(api, class, "AboutToShow", "RewardFtsShow", hook_fts_show, &ORIG_FTS_SHOW);
+        install_hook_if_missing(api, class, "AboutToHide", "RewardFtsHide", hook_fts_hide, &ORIG_FTS_HIDE);
     }
 }
 
 /// Install tracking for widget-based collect screens.
 ///
 /// These are `Widget<T>` subclasses with a single collect button that should be triggerable via ESC.
-/// They persist for the session and use OnEnable/OnDisable for visibility.
+/// They persist for the session, so `Awake` tracking is enough; collection is gated via `IsActive`.
 fn install_widget_collect_tracking(api: &Il2CppApi) {
     // MissionsNotificationPopoutWidget
     let Some(class) =
@@ -998,14 +953,13 @@ fn install_widget_collect_tracking(api: &Il2CppApi) {
 
     resolver::resolve_method_into(api, class, "OnCollectButtonClicked", 0, &MISSIONS_POPOUT_ON_COLLECT);
 
-    tracker::install_resolved_hook(
+    install_hook_if_missing(
         api,
         class,
         "Awake",
-        0,
         "MissionsPopoutAwake",
-        hook_missions_popout_awake as *const (),
-        |orig| ORIG_MISSIONS_POPOUT_AWAKE.store(orig as *mut (), Relaxed),
+        hook_missions_popout_awake,
+        &ORIG_MISSIONS_POPOUT_AWAKE,
     );
 }
 
@@ -1014,6 +968,10 @@ fn install_widget_collect_tracking(api: &Il2CppApi) {
 /// Falls back to `LateUpdate()` if `Update` is not found (Update may not appear in the IL2CPP dump if it's
 /// compiler-generated).
 fn install_update_hook(api: &Il2CppApi) {
+    if !ORIGINAL_UPDATE.load(Relaxed).is_null() {
+        return;
+    }
+
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") else {
         return;
     };
@@ -1041,6 +999,23 @@ fn install_update_hook(api: &Il2CppApi) {
             error!(target: "Hotkeys", "Failed to hook ScreenManager.{name}: {e}");
         }
     }
+}
+
+fn install_hook_if_missing(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    hook_name: &str,
+    hook: extern "C" fn(*mut Il2CppObject),
+    original: &'static AtomicPtr<()>,
+) -> bool {
+    if !original.load(Relaxed).is_null() {
+        return true;
+    }
+
+    tracker::install_resolved_hook(api, class, method_name, 0, hook_name, hook as *const (), |orig| {
+        original.store(orig as *mut (), Relaxed)
+    })
 }
 
 // ---- Tests ----------------------------------------------------------------
@@ -1074,6 +1049,14 @@ mod tests {
     }
 
     #[test]
+    fn event_code_to_keycode_maps_function_keys() {
+        assert_eq!(event_code_to_keycode("F1"), 282);
+        assert_eq!(event_code_to_keycode("F2"), 283);
+        assert_eq!(event_code_to_keycode("F15"), 296);
+        assert_eq!(event_code_to_keycode("F16"), 0);
+    }
+
+    #[test]
     fn key_down_returns_false_when_fn_not_resolved() {
         assert!(!key_down(KEYCODE_ESCAPE));
     }
@@ -1084,14 +1067,25 @@ mod tests {
     }
 
     #[test]
-    fn deselect_event_system_noop_when_unresolved() {
-        // Should not panic when function pointers are null.
-        deselect_event_system();
+    fn consumed_keycode_starts_empty() {
+        assert_eq!(CONSUMED_KEYCODE.load(Relaxed), 0);
+    }
+
+    extern "C" fn fake_get_key_down_true(_: i32) -> bool {
+        true
     }
 
     #[test]
-    fn space_consumed_starts_false() {
-        assert!(!MAIN_ACTION_CONSUMED.load(Relaxed));
+    fn hook_get_key_down_suppresses_consumed_key_only() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        ORIGINAL_GET_KEY_DOWN.store(fake_get_key_down_true as *mut (), Relaxed);
+        CONSUMED_KEYCODE.store(KEYCODE_ESCAPE, Relaxed);
+
+        assert!(!hook_get_key_down(KEYCODE_ESCAPE));
+        assert!(hook_get_key_down(KEYCODE_SPACE));
+
+        CONSUMED_KEYCODE.store(0, Relaxed);
+        ORIGINAL_GET_KEY_DOWN.store(std::ptr::null_mut(), Relaxed);
     }
 
     #[test]
@@ -1099,7 +1093,7 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         reset_reward_targets();
         // Should not panic when all slots are empty.
-        collect_reward_screen();
+        assert!(!collect_reward_screen());
     }
 
     #[test]
@@ -1188,7 +1182,7 @@ mod tests {
         let fake = 0xDEAD_0005usize as *mut ();
         REWARD_TARGETS[0].instance.store(fake, Relaxed);
         // on_collect is null, should skip without crash.
-        collect_reward_screen();
+        assert!(!collect_reward_screen());
 
         reset_reward_targets();
     }
@@ -1232,7 +1226,7 @@ mod tests {
             .on_collect
             .store(&collect_2 as *const MethodInfo as *mut MethodInfo, Relaxed);
 
-        collect_reward_screen();
+        assert!(collect_reward_screen());
         assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), 0);
 
         reset_reward_targets();
@@ -1254,7 +1248,7 @@ mod tests {
             .on_collect
             .store(&collect_2 as *const MethodInfo as *mut MethodInfo, Relaxed);
 
-        collect_reward_screen();
+        assert!(collect_reward_screen());
         assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), 2);
 
         reset_reward_targets();
@@ -1293,7 +1287,7 @@ mod tests {
             .on_collect
             .store(&collect_2 as *const MethodInfo as *mut MethodInfo, Relaxed);
 
-        collect_reward_screen();
+        assert!(!collect_reward_screen());
         // IsActive is global, returns false for ALL instances. Neither should be called.
         assert_eq!(COLLECT_CALLED_SLOT.load(Relaxed), -1);
 

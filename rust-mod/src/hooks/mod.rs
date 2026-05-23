@@ -4,10 +4,14 @@ use std::time::{Duration, Instant};
 
 use log::{debug, info};
 
+const TRACE_LOG_TARGET: &str = "Trace";
+const LOG_TARGET: &str = "HookEngine";
+
 pub(crate) mod tracker;
 
 mod cargo_view;
 pub(crate) mod chat_frame;
+mod fleet_bar;
 mod fleet_scanner;
 pub(crate) mod hotkeys;
 pub mod il2cpp_init;
@@ -65,7 +69,7 @@ pub fn trace_log(op: &str, key: &str, detail: &str) {
     if !should_log(op, key) {
         return;
     }
-    info!(target: "Trace", "{op} \"{key}\" {detail}");
+    info!(target: TRACE_LOG_TARGET, "{op} \"{key}\" {detail}");
 }
 
 // ---- Hook installation ----------------------------------------------------
@@ -92,5 +96,5 @@ pub fn install_all_hooks() {
     interstitial::install(api);
     fleet_scanner::install(api);
 
-    debug!(target: "HookEngine", "Hook installation complete");
+    debug!(target: LOG_TARGET, "Hook installation complete");
 }
