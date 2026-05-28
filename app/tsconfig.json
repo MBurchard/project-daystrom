@@ -1,8 +1,22 @@
 {
-  "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" },
-    { "path": "./tsconfig.typecheck.json" }
+  "extends": ["../tsconfig.base.json", "@vue/tsconfig/tsconfig.dom.json"],
+  "compilerOptions": {
+    "paths": {
+      "@app/*": ["./modules/app/src/*"],
+      "@generated/*": ["./modules/app/src/generated/*"],
+      "@resources/*": ["./resources/*"]
+    },
+    "types": ["node", "vite/client", "vitest"]
+  },
+  "include": [
+    "modules/app/src/**/*.ts",
+    "modules/app/src/**/*.vue",
+    "vite.config.ts",
+    "vitest.config.ts"
   ],
-  "files": []
+  "exclude": [
+    "node_modules",
+    "dist",
+    "coverage"
+  ]
 }
