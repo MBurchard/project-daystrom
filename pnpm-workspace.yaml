@@ -8,3 +8,6 @@ packages:
   - scripts
 allowBuilds:
   esbuild: true
+
+overrides:
+  '@typescript-eslint/rule-tester': ^8.60.0
