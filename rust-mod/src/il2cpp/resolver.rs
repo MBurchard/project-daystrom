@@ -53,6 +53,23 @@ pub fn resolve_class(api: &Il2CppApi, assembly: &str, namespace: &str, class_nam
     }
 }
 
+/// Assemblies that ship the PrimeServer classes, ordered by how recent game builds package them.
+const PRIME_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-CSharp", "Assembly-CSharp-firstpass"];
+
+/// Resolve a class from a PrimeServer namespace, searching the known Prime assemblies in order.
+///
+/// Different game builds place these classes in different assemblies, so this returns the first match.
+pub fn resolve_prime_class(api: &Il2CppApi, namespace: &str, class_name: &str) -> Option<*mut Il2CppClass> {
+    PRIME_ASSEMBLIES
+        .iter()
+        .find_map(|assembly| resolve_class(api, assembly, namespace, class_name))
+}
+
+/// Resolve a class from the `Digit.PrimeServer.Models` namespace across the known Prime assemblies.
+pub fn resolve_prime_model_class(api: &Il2CppApi, class_name: &str) -> Option<*mut Il2CppClass> {
+    resolve_prime_class(api, "Digit.PrimeServer.Models", class_name)
+}
+
 /// Resolve a field's byte offset within an IL2CPP class by name.
 ///
 /// Returns the offset suitable for pointer arithmetic on object instances.

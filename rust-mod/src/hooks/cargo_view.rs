@@ -7,12 +7,13 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, warn};
 
-use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
+
+use super::target_viewer::{self, TargetViewerEvent};
 
 // ---- Dynamically resolved field offsets -----------------------------------
 
@@ -26,9 +27,6 @@ static OFFSET_REWARDS_BUTTON_WIDGET: AtomicUsize = AtomicUsize::new(0);
 static OFFSET_TARGET_FLEET_DEPLOYED_DATA: AtomicUsize = AtomicUsize::new(0);
 
 // ---- Dynamically resolved functions ---------------------------------------
-
-/// Original trampoline for `PreScanTargetWidget.ShowWithFleet(FleetPlayerData)`.
-static ORIG_SHOW_WITH_FLEET: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// `RewardsButtonWidget._rewardsController`.
 static OFFSET_REWARDS_CONTROLLER: AtomicUsize = AtomicUsize::new(0);
@@ -51,15 +49,6 @@ const DEPLOYED_FLEET_TYPE_PLAYER: i32 = 1;
 const DEPLOYED_FLEET_TYPE_MARAUDER: i32 = 2;
 const HULL_TYPE_ARMADA_TARGET: i32 = 5;
 
-/// Assemblies to search for PrimeServer model classes.
-const MODEL_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-CSharp", "Assembly-CSharp-firstpass"];
-
-static HOOK_INFO: HookInfo = HookInfo::new("CargoView");
-
-// ---- Type aliases ----------------------------------------------------------
-
-type ShowWithFleetFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CargoTargetKind {
     Station,
@@ -69,16 +58,10 @@ enum CargoTargetKind {
     Other,
 }
 
-// ---- Hook -----------------------------------------------------------------
+// ---- Target viewer event --------------------------------------------------
 
-extern "C" fn hook_show_with_fleet(this: *mut Il2CppObject, fleet: *mut Il2CppObject) {
-    let orig = ORIG_SHOW_WITH_FLEET.load(Relaxed);
-    if !orig.is_null() {
-        let f: ShowWithFleetFn = unsafe { std::mem::transmute(orig) };
-        unsafe { f(this, fleet) };
-    }
-
-    HOOK_INFO.run(|| maybe_open_cargo(this));
+pub(crate) fn on_target_viewer_show(event: TargetViewerEvent) {
+    maybe_open_cargo(event.prescan);
 }
 
 fn maybe_open_cargo(prescan: *mut Il2CppObject) {
@@ -174,6 +157,9 @@ fn get_hull_type(fleet: *mut Il2CppObject) -> Option<i32> {
 
 /// Install cargo auto-open hooks.
 pub fn install(api: &Il2CppApi) {
+    target_viewer::install(api);
+    target_viewer::subscribe_show_with_fleet(on_target_viewer_show);
+
     let Some(prescan_class) =
         resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget")
     else {
@@ -183,16 +169,6 @@ pub fn install(api: &Il2CppApi) {
 
     resolve_offset(api, prescan_class, "_battleTargetData", &OFFSET_BATTLE_TARGET_DATA);
     resolve_offset(api, prescan_class, "_rewardsButtonWidget", &OFFSET_REWARDS_BUTTON_WIDGET);
-
-    tracker::install_resolved_hook(
-        api,
-        prescan_class,
-        "ShowWithFleet",
-        1,
-        "CargoViewShowWithFleet",
-        hook_show_with_fleet as *const (),
-        |orig| ORIG_SHOW_WITH_FLEET.store(orig as *mut (), Relaxed),
-    );
 
     if let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "RewardsButtonWidget") {
         resolve_offset(api, class, "_rewardsController", &OFFSET_REWARDS_CONTROLLER);
@@ -206,34 +182,24 @@ pub fn install(api: &Il2CppApi) {
         warn!(target: "CargoView", "VisibilityController class not found");
     }
 
-    if let Some(class) = resolve_model_class(api, "BattleTargetData") {
+    if let Some(class) = resolver::resolve_prime_model_class(api, "BattleTargetData") {
         resolve_offset(api, class, "TargetFleetDeployedData", &OFFSET_TARGET_FLEET_DEPLOYED_DATA);
     } else {
         warn!(target: "CargoView", "BattleTargetData class not found");
     }
 
-    if let Some(class) = resolve_model_class(api, "FleetDeployedData") {
+    if let Some(class) = resolver::resolve_prime_model_class(api, "FleetDeployedData") {
         resolve_fn(api, class, "get_FleetType", 0, &GET_FLEET_TYPE_FN);
         resolve_fn(api, class, "get_Hull", 0, &GET_HULL_FN);
     } else {
         warn!(target: "CargoView", "FleetDeployedData class not found");
     }
 
-    if let Some(class) = resolve_model_class(api, "HullSpec") {
+    if let Some(class) = resolver::resolve_prime_model_class(api, "HullSpec") {
         resolve_fn(api, class, "get_Type", 0, &GET_HULL_TYPE_FN);
     } else {
         warn!(target: "CargoView", "HullSpec class not found");
     }
-}
-
-fn resolve_model_class(api: &Il2CppApi, class_name: &str) -> Option<*mut Il2CppClass> {
-    for assembly in MODEL_ASSEMBLIES {
-        if let Some(class) = resolver::resolve_class(api, assembly, "Digit.PrimeServer.Models", class_name) {
-            debug!(target: "CargoView", "{class_name} class found in assembly '{assembly}'");
-            return Some(class);
-        }
-    }
-    None
 }
 
 fn resolve_offset(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {

@@ -1,7 +1,7 @@
 //! Fleet scanner store, pending queue, and change formatting.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use log::{debug, trace};
 
@@ -11,6 +11,7 @@ use crate::il2cpp::types::Vector3;
 const MAX_PENDING_FLEET_EVENTS: usize = 1000;
 
 pub(super) static FLEET_STORE: Mutex<Option<FleetStore>> = Mutex::new(None);
+pub(super) static OWN_FLEET_STORE: LazyLock<Mutex<HashMap<i64, Fleet>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(super) static PENDING_FLEET_EVENTS: Mutex<VecDeque<PendingFleetEvent>> = Mutex::new(VecDeque::new());
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -51,26 +52,37 @@ pub(super) fn drain_pending_fleet_events() -> Vec<PendingFleetEvent> {
     queue.drain(..).collect()
 }
 
-// ---- Store mutations -------------------------------------------------------
+/// Return all hostile fleets from the current viewed-system store.
+pub(super) fn hostile_fleets() -> Vec<Fleet> {
+    let guard = FLEET_STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(store) = guard.as_ref() else {
+        return Vec::new();
+    };
 
-/// Reset the store while preserving why the reset happened in logs.
-pub(super) fn reset_fleet_store(reason: &str) {
-    let mut guard = FLEET_STORE.lock().unwrap_or_else(|e| e.into_inner());
-    let current_system_id = guard.as_ref().and_then(|store| store.system_id);
-    *guard = Some(FleetStore::default());
-
-    if let Some(current_system_id) = current_system_id {
-        debug!(
-            target: "FleetScanner",
-            "Fleet store reset: reason={reason}, system={current_system_id}",
-        );
-    }
+    store
+        .fleets
+        .values()
+        .filter(|fleet| fleet.kind == FleetKind::Hostile)
+        .cloned()
+        .collect()
 }
+
+/// Return one known own fleet snapshot by ID.
+pub(super) fn own_fleet(fleet_id: i64) -> Option<Fleet> {
+    OWN_FLEET_STORE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&fleet_id)
+        .cloned()
+}
+
+// ---- Store mutations -------------------------------------------------------
 
 /// Replace or upsert the viewed-system store from an enter-system fleet batch.
 pub(super) fn store_enter_fleets(system_id: i64, fleets: Vec<Fleet>) -> StoreEnterResult {
     let mut guard = FLEET_STORE.lock().unwrap_or_else(|e| e.into_inner());
     let current_system_id = guard.as_ref().and_then(|store| store.system_id);
+    let fleets = fleets.into_iter().filter(is_viewed_system_fleet).collect::<Vec<_>>();
 
     if current_system_id != Some(system_id) {
         let mut fleet_map = HashMap::with_capacity(fleets.len());
@@ -118,6 +130,7 @@ pub(super) fn store_enter_fleets(system_id: i64, fleets: Vec<Fleet>) -> StoreEnt
             let changed_fields = diff_fleet(existing, &fleet);
             if changed_fields.is_empty() {
                 unchanged += 1;
+                *existing = fleet;
             } else {
                 *existing = fleet.clone();
                 updated += 1;
@@ -160,15 +173,16 @@ pub(super) fn store_update_fleets(system_id: i64, fleets: Vec<Fleet>) -> StoreUp
     let mut ignored_fleet_ids = Vec::new();
 
     for mut fleet in fleets {
+        if !is_viewed_system_fleet(&fleet) {
+            continue;
+        }
+
         if let Some(existing) = store.fleets.get_mut(&fleet.id) {
             fleet.system_id = fleet.system_id.or(existing.system_id);
-            let snapshot_changed = existing != &fleet;
             let changed_fields = diff_fleet(existing, &fleet);
             if changed_fields.is_empty() {
                 unchanged += 1;
-                if snapshot_changed {
-                    *existing = fleet;
-                }
+                *existing = fleet;
             } else {
                 *existing = fleet.clone();
                 updated += 1;
@@ -266,6 +280,79 @@ pub(super) fn store_remove_fleets(system_id: i64, fleets: Vec<FleetRef>) -> Stor
     }
 }
 
+/// Insert or update own fleets in the global own-fleet store.
+pub(super) fn store_own_fleets(fleets: &[Fleet]) -> Vec<FleetStoreChange> {
+    let mut store = OWN_FLEET_STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut changes = Vec::new();
+
+    for fleet in fleets.iter().filter(|fleet| fleet.kind == FleetKind::Own) {
+        let mut fleet = fleet.clone();
+        if let Some(existing) = store.get_mut(&fleet.id) {
+            // A systemless own update is not a leave signal; keep the last known system until an explicit dispose.
+            fleet.system_id = fleet.system_id.or(existing.system_id);
+            let changed_fields = diff_fleet(existing, &fleet);
+            if changed_fields.is_empty() {
+                *existing = fleet;
+            } else {
+                *existing = fleet.clone();
+                changes.push(FleetStoreChange {
+                    action: FleetStoreAction::Updated,
+                    fleet,
+                    changed_fields,
+                });
+            }
+        } else {
+            store.insert(fleet.id, fleet.clone());
+            changes.push(FleetStoreChange {
+                action: FleetStoreAction::Inserted,
+                fleet,
+                changed_fields: Vec::new(),
+            });
+        }
+    }
+
+    changes
+}
+
+/// Invalidate live system data for own fleets that are no longer locally deployed.
+pub(super) fn invalidate_own_fleet_refs(fleets: &[FleetRef]) -> Vec<FleetStoreChange> {
+    let mut store = OWN_FLEET_STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut changes = Vec::new();
+
+    for fleet_ref in fleets {
+        let Some(existing) = store.get_mut(&fleet_ref.id) else {
+            continue;
+        };
+
+        let mut invalidated = existing.clone();
+        invalidated.observed_at = std::time::Instant::now();
+        invalidated.system_id = None;
+        invalidated.system_position = None;
+        invalidated.travel_direction = None;
+        invalidated.time_since_last_update = None;
+        invalidated.movement_state = FleetMovementState::Unknown;
+
+        let changed_fields = diff_fleet(existing, &invalidated);
+        if changed_fields.is_empty() {
+            *existing = invalidated;
+            continue;
+        }
+
+        *existing = invalidated.clone();
+        changes.push(FleetStoreChange {
+            action: FleetStoreAction::Updated,
+            fleet: invalidated,
+            changed_fields,
+        });
+    }
+
+    changes
+}
+
+fn is_viewed_system_fleet(fleet: &Fleet) -> bool {
+    fleet.kind != FleetKind::Own
+}
+
 // ---- Change logging --------------------------------------------------------
 
 /// Emit fleet changes at debug level.
@@ -277,6 +364,18 @@ pub(super) fn log_fleet_changes(summary: &str, changes: &[FleetStoreChange]) {
 pub(super) fn trace_fleet_changes(summary: &str, changes: &[FleetStoreChange]) {
     let message = format_fleet_changes(summary, changes);
     trace!(target: "FleetScanner", "{message}");
+}
+
+pub(super) fn is_movement_only_update(changes: &[FleetStoreChange]) -> bool {
+    !changes.is_empty()
+        && changes.iter().all(|change| {
+            change.action == FleetStoreAction::Updated
+                && !change.changed_fields.is_empty()
+                && change
+                    .changed_fields
+                    .iter()
+                    .all(|field| matches!(field.name, "position" | "direction" | "age"))
+        })
 }
 
 /// Format and emit a debug fleet-change block.
@@ -303,27 +402,6 @@ fn format_fleet_changes(summary: &str, changes: &[FleetStoreChange]) -> String {
     message
 }
 
-/// Treat player-only movement/details as trace noise for now.
-pub(super) fn is_player_only_update(changes: &[FleetStoreChange]) -> bool {
-    !changes.is_empty()
-        && changes
-            .iter()
-            .all(|change| change.action == FleetStoreAction::Updated && change.fleet.kind == FleetKind::Player)
-}
-
-/// Treat pure movement timing updates as trace noise.
-pub(super) fn is_movement_only_update(changes: &[FleetStoreChange]) -> bool {
-    !changes.is_empty()
-        && changes.iter().all(|change| {
-            change.action == FleetStoreAction::Updated
-                && !change.changed_fields.is_empty()
-                && change
-                    .changed_fields
-                    .iter()
-                    .all(|field| matches!(field.name, "position" | "direction" | "age"))
-        })
-}
-
 /// Format one inserted, updated, or vanished fleet detail line.
 fn format_fleet_change(change: &FleetStoreChange) -> String {
     let action = match change.action {
@@ -334,9 +412,10 @@ fn format_fleet_change(change: &FleetStoreChange) -> String {
     let fleet = &change.fleet;
 
     let mut message = format!(
-        "Fleet {action}: id={}, kind={:?}, combat_class={:?}, ship={}, hull={}, fleet_type={}, level={}, strength={}",
+        "Fleet {action}: id={}, kind={:?}, movement={:?}, combat_class={:?}, ship={}, hull={}, fleet_type={}, level={}, strength={}",
         fleet.id,
         fleet.kind,
+        fleet.movement_state,
         fleet.combat_class,
         format_optional_str(&fleet.hull_name),
         format_hull_label(&fleet.hull_name, fleet.hull_type),
@@ -372,6 +451,9 @@ fn diff_fleet(old: &Fleet, new: &Fleet) -> Vec<FleetFieldChange> {
 
     push_field_change(&mut changes, "system", old.system_id, new.system_id, format_optional_i64);
     push_field_change(&mut changes, "kind", old.kind, new.kind, |value| format!("{value:?}"));
+    push_field_change(&mut changes, "movement", old.movement_state, new.movement_state, |value| {
+        format!("{value:?}")
+    });
     push_field_change(&mut changes, "combat_class", old.combat_class, new.combat_class, |value| {
         format!("{value:?}")
     });

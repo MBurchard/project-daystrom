@@ -1,5 +1,8 @@
 //! Owned fleet scanner data model.
 
+use std::fmt;
+use std::time::Instant;
+
 use crate::il2cpp::types::Vector3;
 
 // ---- Game enum values ------------------------------------------------------
@@ -47,9 +50,10 @@ impl PendingFleetEvent {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(super) struct Fleet {
     pub(super) id: i64,
+    pub(super) observed_at: Instant,
     pub(super) system_id: Option<i64>,
     pub(super) kind: FleetKind,
     pub(super) combat_class: CombatClass,
@@ -65,6 +69,35 @@ pub(super) struct Fleet {
     pub(super) max_warp_speed: Option<f32>,
     pub(super) travel_direction: Option<Vector3>,
     pub(super) time_since_last_update: Option<f32>,
+    pub(super) movement_state: FleetMovementState,
+}
+
+impl fmt::Debug for Fleet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Fleet")
+            .field("id", &self.id)
+            .field("system_id", &self.system_id)
+            .field("kind", &self.kind)
+            .field("combat_class", &self.combat_class)
+            .field("fleet_type", &self.fleet_type)
+            .field("hull_type", &self.hull_type)
+            .field("hull_name", &self.hull_name)
+            .field("local_player", &self.local_player)
+            .field("system_position", &self.system_position)
+            .field("strength", &self.strength)
+            .field("level", &self.level)
+            .field("mining", &self.mining)
+            .field("max_impulse_speed", &self.max_impulse_speed)
+            .field("max_warp_speed", &self.max_warp_speed)
+            .field("travel_direction", &self.travel_direction)
+            .field("time_since_last_update", &self.time_since_last_update)
+            .field("movement_state", &self.movement_state)
+            .field(
+                "observed_age",
+                &format_args!("{:.2}s", self.observed_at.elapsed().as_secs_f32()),
+            )
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +112,14 @@ pub(super) enum FleetKind {
     Challenge,
     Other(i32),
     Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FleetMovementState {
+    Unknown,
+    Stopped,
+    Impulsing,
+    Warping,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,7 +234,6 @@ pub(super) fn classify_fleet(local_player: bool, fleet_type: Option<i32>, hull_t
         Some(DEPLOYED_FLEET_TYPE_HOSTILE) if hull_type == Some(HULL_TYPE_ARMADA_TARGET) => FleetKind::Armada,
         Some(DEPLOYED_FLEET_TYPE_HOSTILE) => FleetKind::Hostile,
         Some(DEPLOYED_FLEET_TYPE_NPC_INSTANTIATED) => FleetKind::Npc,
-        // FIXME: Sentinel likely represents hunter fleets; verify against live data before renaming the kind.
         Some(DEPLOYED_FLEET_TYPE_SENTINEL) => FleetKind::Sentinel,
         Some(DEPLOYED_FLEET_TYPE_ALLIANCE) => FleetKind::Alliance,
         Some(DEPLOYED_FLEET_TYPE_CHALLENGE) => FleetKind::Challenge,

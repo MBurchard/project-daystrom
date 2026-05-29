@@ -67,7 +67,6 @@ pub fn void_bool(method: *const MethodInfo, object: *mut Il2CppObject, arg: bool
 }
 
 /// Invoke an IL2CPP instance method with one `i64` argument returning `bool`.
-#[allow(dead_code)]
 pub fn bool_i64(method: *const MethodInfo, object: *mut Il2CppObject, arg: i64, label: &str) -> Option<bool> {
     let mut arg = arg;
     let mut args = [(&mut arg as *mut i64).cast::<Il2CppObject>()];

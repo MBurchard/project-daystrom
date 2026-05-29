@@ -23,6 +23,7 @@ pub(crate) mod navigation_view;
 mod player_prefs;
 mod shop_reveal;
 pub(crate) mod system_zoom;
+mod target_viewer;
 pub(crate) mod toast_banner;
 pub(crate) mod ui_scale;
 mod user_profile;
