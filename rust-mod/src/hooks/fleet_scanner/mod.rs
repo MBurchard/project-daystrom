@@ -19,8 +19,20 @@ use crate::il2cpp::types::*;
 mod model;
 mod store;
 
+use super::fleet_bar;
+use super::target_viewer::{self, TargetViewerEvent};
 use model::*;
 use store::*;
+
+const LOG_TARGET: &str = "FleetScanner";
+const INTERCEPT_EPSILON: f32 = 1.0e-5;
+const DEPLOYED_STATE_IDLE: i32 = 0;
+const DEPLOYED_STATE_MOVING: i32 = 1;
+const DEPLOYED_STATE_WARPING: i32 = 2;
+const DEPLOYED_STATE_BATTLING: i32 = 3;
+const DEPLOYED_STATE_RECALL: i32 = 4;
+const DEPLOYED_STATE_DOCKED: i32 = 5;
+const DEPLOYED_STATE_PRE_BATTLE: i32 = 6;
 
 // ---- Dynamically resolved functions ---------------------------------------
 
@@ -63,6 +75,9 @@ static GET_FLEET_TRAVEL_DIRECTION_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std
 /// `FleetDeployedData.get_TimeSinceLastUpdate()`.
 static GET_FLEET_TIME_SINCE_LAST_UPDATE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// `FleetDeployedData.get_CurrentState()`.
+static GET_FLEET_CURRENT_STATE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
 /// `HullSpec.get_Type()`.
 static GET_HULL_TYPE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -72,6 +87,18 @@ static GET_HULL_NAME_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_m
 /// `NodeAddress.get_System()`.
 static GET_NODE_ADDRESS_SYSTEM_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// `NavigationManager.CanSelectPoi(long) -> bool`.
+static NAVIGATION_MANAGER_CAN_SELECT_POI_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
+/// `NavigationManager.SelectPoi(long) -> bool`.
+static NAVIGATION_MANAGER_SELECT_POI_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
+/// `CourseData.get_FleetID()`.
+static GET_COURSE_FLEET_ID_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
+/// `CourseData.get_SystemPosition()`.
+static GET_COURSE_SYSTEM_POSITION_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
 // ---- Original trampolines --------------------------------------------------
 
 static ORIG_FLEETS_ENTER_SYSTEM: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -79,20 +106,24 @@ static ORIG_FLEETS_EXIT_SYSTEM: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mu
 static ORIG_FLEETS_DISPOSED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_FLEETS_UPDATED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_FLEET_STATE_CHANGE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_COURSE_END: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_DID_CHANGE_VIEW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_LEAVE_NAVIGATION_VIEW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_NAVIGATION_MANAGER_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_NAVIGATION_MANAGER_DISABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Assemblies to search for PrimeServer model classes.
-const MODEL_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-CSharp", "Assembly-CSharp-firstpass"];
+static NAVIGATION_MANAGER_INSTANCE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-static HOOK_INFO: HookInfo = HookInfo::new("FleetScanner");
+static HOOK_INFO: HookInfo = HookInfo::new(LOG_TARGET);
 
 // ---- Type aliases ----------------------------------------------------------
 
 type FleetsSystemFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
 type FleetEventFn = unsafe extern "C" fn(*mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
+type CourseEventFn = unsafe extern "C" fn(*mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
 type ViewChangedFn = unsafe extern "C" fn(*mut Il2CppObject, *const MethodInfo);
 type NoParamEventFn = unsafe extern "C" fn(*const MethodInfo);
+type ActionFn = unsafe extern "C" fn(*mut Il2CppObject);
 
 // ---- Hooks ----------------------------------------------------------------
 
@@ -111,7 +142,7 @@ extern "C" fn hook_fleets_enter_system(
     HOOK_INFO.run(|| process_enter_system(address, fleets));
 }
 
-/// Observe fleet batches that leave a system and clear the viewed store when relevant.
+/// Observe fleet batches that leave a system and remove those fleets from the viewed store when relevant.
 extern "C" fn hook_fleets_exit_system(
     address: *mut Il2CppObject,
     fleets: *mut Il2CppList<*mut Il2CppObject>,
@@ -123,7 +154,7 @@ extern "C" fn hook_fleets_exit_system(
         unsafe { original(address, fleets, method_info) };
     }
 
-    HOOK_INFO.run(|| process_exit_system(address));
+    HOOK_INFO.run(|| process_exit_system(address, fleets));
 }
 
 /// Observe disposed fleets and remove matching owned snapshots.
@@ -159,6 +190,17 @@ extern "C" fn hook_fleet_state_change(fleets: *mut Il2CppList<*mut Il2CppObject>
     HOOK_INFO.run(|| process_fleets_updated("fleet_state_change", fleets));
 }
 
+/// Observe finished courses for diagnostics.
+extern "C" fn hook_course_end(courses: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
+    let orig = ORIG_COURSE_END.load(Relaxed);
+    if !orig.is_null() {
+        let original: CourseEventFn = unsafe { std::mem::transmute(orig) };
+        unsafe { original(courses, method_info) };
+    }
+
+    HOOK_INFO.run(|| process_course_end(courses));
+}
+
 /// Observe concrete navigation view changes and set the viewed system.
 extern "C" fn hook_did_change_view(address: *mut Il2CppObject, method_info: *const MethodInfo) {
     let orig = ORIG_DID_CHANGE_VIEW.load(Relaxed);
@@ -181,12 +223,396 @@ extern "C" fn hook_leave_navigation_view(method_info: *const MethodInfo) {
     HOOK_INFO.run(|| clear_viewed_system("leave_navigation_view"));
 }
 
+/// Track the NavigationManager instance while it is enabled and usable for POI selection.
+extern "C" fn hook_navigation_manager_enable(this: *mut Il2CppObject) {
+    let orig = ORIG_NAVIGATION_MANAGER_ENABLE.load(Relaxed);
+    if !orig.is_null() {
+        let original: ActionFn = unsafe { std::mem::transmute(orig) };
+        unsafe { original(this) };
+    }
+
+    HOOK_INFO.run(|| {
+        NAVIGATION_MANAGER_INSTANCE.store(this as *mut (), Relaxed);
+        trace!(target: LOG_TARGET, "NavigationManager tracked for target selection");
+    });
+}
+
+/// Release the tracked NavigationManager when it is disabled, which Unity runs before destroying it.
+extern "C" fn hook_navigation_manager_disable(this: *mut Il2CppObject) {
+    let orig = ORIG_NAVIGATION_MANAGER_DISABLE.load(Relaxed);
+    if !orig.is_null() {
+        let original: ActionFn = unsafe { std::mem::transmute(orig) };
+        unsafe { original(this) };
+    }
+
+    HOOK_INFO.run(|| {
+        if NAVIGATION_MANAGER_INSTANCE
+            .compare_exchange(this as *mut (), std::ptr::null_mut(), Relaxed, Relaxed)
+            .is_ok()
+        {
+            trace!(target: LOG_TARGET, "NavigationManager instance released on disable");
+        }
+    });
+}
+
 // ---- Processing ------------------------------------------------------------
+
+/// Select the hostile that can be intercepted fastest from the current fleet scan.
+///
+/// Returns `true` only when the target was selected in game.
+pub(crate) fn try_select_next_hostile() -> bool {
+    let Some(system_id) = navigation_view::current_viewed_system_id() else {
+        debug!(target: LOG_TARGET, "Skipped: no viewed system for hostile selection");
+        return false;
+    };
+
+    let Some(selected_fleet) = fleet_bar::selected_fleet() else {
+        debug!(target: LOG_TARGET, "Skipped: selected fleet unavailable for hostile selection");
+        return false;
+    };
+
+    let Some(fleet_id) = selected_fleet.id else {
+        debug!(target: LOG_TARGET, "Skipped: selected fleet ID unavailable, {selected_fleet}");
+        return false;
+    };
+
+    if selected_fleet.system_id != Some(system_id) {
+        debug!(
+            target: LOG_TARGET,
+            "Skipped: selected fleet is not in viewed system, viewed_system={system_id}, {selected_fleet}",
+        );
+        return false;
+    }
+
+    let Some(own_fleet) = own_fleet(fleet_id) else {
+        debug!(
+            target: LOG_TARGET,
+            "Skipped: selected own fleet snapshot unavailable, viewed_system={system_id}, {selected_fleet}",
+        );
+        return false;
+    };
+    let hostiles = hostile_fleets();
+
+    let Some(selection) = select_fastest_intercept(&own_fleet, &hostiles) else {
+        debug!(
+            target: LOG_TARGET,
+            "Skipped: no interceptable hostile found, own_fleet={:?}, hostiles={}",
+            own_fleet,
+            hostiles.len(),
+        );
+        return false;
+    };
+
+    select_hostile_target(&selection, &own_fleet, hostiles.len())
+}
+
+#[derive(Clone, Copy, Debug)]
+struct InterceptSelection<'a> {
+    hostile: &'a Fleet,
+    time_seconds: f32,
+    intercept_position: Vector3,
+}
+
+fn select_hostile_target(selection: &InterceptSelection<'_>, own_fleet: &Fleet, hostile_count: usize) -> bool {
+    let manager = NAVIGATION_MANAGER_INSTANCE.load(Relaxed) as *mut Il2CppObject;
+    if manager.is_null() {
+        debug!(target: LOG_TARGET, "Skipped: NavigationManager instance unavailable for hostile selection");
+        return false;
+    }
+
+    let can_select = invoke::bool_i64(
+        NAVIGATION_MANAGER_CAN_SELECT_POI_METHOD.load(Relaxed),
+        manager,
+        selection.hostile.id,
+        "NavigationManager.CanSelectPoi",
+    )
+    .unwrap_or(false);
+    if !can_select {
+        debug!(
+            target: LOG_TARGET,
+            "Skipped: NavigationManager rejects hostile selection, hostile={:?}, hostiles={hostile_count}",
+            selection.hostile,
+        );
+        return false;
+    }
+
+    let selected = invoke::bool_i64(
+        NAVIGATION_MANAGER_SELECT_POI_METHOD.load(Relaxed),
+        manager,
+        selection.hostile.id,
+        "NavigationManager.SelectPoi",
+    )
+    .unwrap_or(false);
+
+    trace!(
+        target: LOG_TARGET,
+        "Selected hostile for intercept: selected={selected}, own_position_mode={}, own_fleet={own_fleet:?}, hostile={:?}, hostiles={hostile_count}, intercept_time={:.2}s, intercept_position={}",
+        position_mode(own_fleet.movement_state),
+        selection.hostile,
+        selection.time_seconds,
+        format_vector3(selection.intercept_position),
+    );
+
+    selected
+}
+
+pub(crate) fn on_target_viewer_show(event: TargetViewerEvent) {
+    let Some(target_fleet_id) = event.fleet_id else {
+        trace!(target: LOG_TARGET, "Target viewer shown without readable fleet ID");
+        return;
+    };
+
+    let Some(system_id) = navigation_view::current_viewed_system_id() else {
+        debug!(
+            target: LOG_TARGET,
+            "Target viewer intercept skipped: no viewed system, target_fleet_id={target_fleet_id}",
+        );
+        return;
+    };
+
+    let Some(selected_fleet) = fleet_bar::selected_fleet() else {
+        debug!(
+            target: LOG_TARGET,
+            "Target viewer intercept skipped: selected fleet unavailable, target_fleet_id={target_fleet_id}",
+        );
+        return;
+    };
+
+    let Some(own_fleet_id) = selected_fleet.id else {
+        debug!(
+            target: LOG_TARGET,
+            "Target viewer intercept skipped: selected fleet ID unavailable, target_fleet_id={target_fleet_id}, {selected_fleet}",
+        );
+        return;
+    };
+
+    if selected_fleet.system_id != Some(system_id) {
+        debug!(
+            target: LOG_TARGET,
+            "Target viewer intercept skipped: selected fleet is not in viewed system, target_fleet_id={target_fleet_id}, viewed_system={system_id}, {selected_fleet}",
+        );
+        return;
+    }
+
+    let Some(own_fleet) = own_fleet(own_fleet_id) else {
+        debug!(
+            target: LOG_TARGET,
+            "Target viewer intercept skipped: selected own fleet snapshot unavailable, target_fleet_id={target_fleet_id}, {selected_fleet}",
+        );
+        return;
+    };
+    let hostiles = hostile_fleets();
+
+    let Some(target_fleet) = hostiles.iter().find(|fleet| fleet.id == target_fleet_id) else {
+        trace!(
+            target: LOG_TARGET,
+            "Target viewer intercept skipped: target fleet not found as hostile in scanner store, target_fleet_id={target_fleet_id}, own_fleet={:?}, hostiles={}",
+            own_fleet,
+            hostiles.len(),
+        );
+        return;
+    };
+
+    let Some(selection) = intercept_selection_for_hostile(target_fleet, &own_fleet) else {
+        debug!(
+            target: LOG_TARGET,
+            "Target viewer intercept skipped: target hostile is not interceptable, own_fleet={:?}, hostile={target_fleet:?}",
+            own_fleet,
+        );
+        return;
+    };
+
+    trace!(
+        target: LOG_TARGET,
+        "Target viewer intercept diagnostic: own_position_mode={}, hostile_position_mode={}, own_fleet={:?}, hostile={:?}, hostiles={}, intercept_time={:.2}s, intercept_position={}",
+        position_mode(own_fleet.movement_state),
+        position_mode(target_fleet.movement_state),
+        own_fleet,
+        target_fleet,
+        hostiles.len(),
+        selection.time_seconds,
+        format_vector3(selection.intercept_position),
+    );
+}
+
+fn select_fastest_intercept<'a>(own_fleet: &Fleet, hostiles: &'a [Fleet]) -> Option<InterceptSelection<'a>> {
+    let own_position = current_position_for_intercept(own_fleet)?;
+    let own_speed = impulse_speed(own_fleet)?;
+    let mut best: Option<InterceptSelection<'a>> = None;
+
+    for hostile in hostiles {
+        let Some(selection) = intercept_selection_from_state(hostile, own_position, own_speed) else {
+            continue;
+        };
+
+        if best
+            .as_ref()
+            .map(|current| selection.time_seconds < current.time_seconds)
+            .unwrap_or(true)
+        {
+            best = Some(selection);
+        }
+    }
+
+    best
+}
+
+fn intercept_selection_for_hostile<'a>(hostile: &'a Fleet, own_fleet: &Fleet) -> Option<InterceptSelection<'a>> {
+    intercept_selection_from_state(hostile, current_position_for_intercept(own_fleet)?, impulse_speed(own_fleet)?)
+}
+
+fn intercept_selection_from_state<'a>(
+    hostile: &'a Fleet,
+    own_position: Vector3,
+    own_speed: f32,
+) -> Option<InterceptSelection<'a>> {
+    let target_position = current_position_for_intercept(hostile)?;
+    let target_velocity = fleet_velocity(hostile);
+    let time_seconds = intercept_time(own_position, own_speed, target_position, target_velocity)?;
+
+    Some(InterceptSelection {
+        hostile,
+        time_seconds,
+        intercept_position: vector_add(target_position, vector_scale(target_velocity, time_seconds)),
+    })
+}
+
+fn current_position_for_intercept(fleet: &Fleet) -> Option<Vector3> {
+    match fleet.movement_state {
+        FleetMovementState::Impulsing => current_projected_position(fleet),
+        FleetMovementState::Stopped | FleetMovementState::Unknown => fleet.system_position,
+        FleetMovementState::Warping => None,
+    }
+}
+
+fn current_projected_position(fleet: &Fleet) -> Option<Vector3> {
+    let position = fleet.system_position?;
+    let age = fleet.observed_at.elapsed().as_secs_f32();
+    Some(vector_add(position, vector_scale(fleet_velocity(fleet), age)))
+}
+
+fn position_mode(movement_state: FleetMovementState) -> &'static str {
+    match movement_state {
+        FleetMovementState::Impulsing => "projected",
+        FleetMovementState::Stopped | FleetMovementState::Unknown => "fixed",
+        FleetMovementState::Warping => "unavailable",
+    }
+}
+
+fn fleet_velocity(fleet: &Fleet) -> Vector3 {
+    if fleet.movement_state != FleetMovementState::Impulsing {
+        return Vector3::default();
+    }
+
+    let Some(speed) = impulse_speed(fleet) else {
+        return Vector3::default();
+    };
+    let Some(direction) = fleet.travel_direction else {
+        return Vector3::default();
+    };
+    let direction_length = vector_length(direction);
+    if direction_length <= INTERCEPT_EPSILON {
+        return Vector3::default();
+    }
+
+    vector_scale(direction, speed / direction_length)
+}
+
+fn impulse_speed(fleet: &Fleet) -> Option<f32> {
+    fleet
+        .max_impulse_speed
+        .filter(|speed| speed.is_finite() && *speed > INTERCEPT_EPSILON)
+}
+
+fn intercept_time(
+    own_position: Vector3,
+    own_speed: f32,
+    target_position: Vector3,
+    target_velocity: Vector3,
+) -> Option<f32> {
+    if !own_speed.is_finite() || own_speed <= INTERCEPT_EPSILON {
+        return None;
+    }
+
+    let relative_position = vector_sub(target_position, own_position);
+    let a = vector_dot(target_velocity, target_velocity) - own_speed * own_speed;
+    let b = 2.0 * vector_dot(relative_position, target_velocity);
+    let c = vector_dot(relative_position, relative_position);
+
+    if c <= INTERCEPT_EPSILON {
+        return Some(0.0);
+    }
+
+    if a.abs() <= INTERCEPT_EPSILON {
+        if b.abs() <= INTERCEPT_EPSILON {
+            return None;
+        }
+        return positive_time(-c / b);
+    }
+
+    let discriminant = b * b - 4.0 * a * c;
+    if discriminant < 0.0 {
+        return None;
+    }
+
+    let sqrt_discriminant = discriminant.sqrt();
+    let t1 = (-b - sqrt_discriminant) / (2.0 * a);
+    let t2 = (-b + sqrt_discriminant) / (2.0 * a);
+
+    [t1, t2]
+        .into_iter()
+        .filter_map(positive_time)
+        .min_by(|left, right| left.total_cmp(right))
+}
+
+fn positive_time(time_seconds: f32) -> Option<f32> {
+    if time_seconds.is_finite() && time_seconds >= 0.0 {
+        Some(time_seconds)
+    } else {
+        None
+    }
+}
+
+fn vector_add(left: Vector3, right: Vector3) -> Vector3 {
+    Vector3 {
+        x: left.x + right.x,
+        y: left.y + right.y,
+        z: left.z + right.z,
+    }
+}
+
+fn vector_sub(left: Vector3, right: Vector3) -> Vector3 {
+    Vector3 {
+        x: left.x - right.x,
+        y: left.y - right.y,
+        z: left.z - right.z,
+    }
+}
+
+fn vector_scale(vector: Vector3, scale: f32) -> Vector3 {
+    Vector3 {
+        x: vector.x * scale,
+        y: vector.y * scale,
+        z: vector.z * scale,
+    }
+}
+
+fn vector_dot(left: Vector3, right: Vector3) -> f32 {
+    left.x * right.x + left.y * right.y + left.z * right.z
+}
+
+fn vector_length(vector: Vector3) -> f32 {
+    vector_dot(vector, vector).sqrt()
+}
+
+fn format_vector3(vector: Vector3) -> String {
+    format!("({:.2}, {:.2}, {:.2})", vector.x, vector.y, vector.z)
+}
 
 /// Convert an enter-system event into owned fleets and route it through the view gate.
 fn process_enter_system(address: *mut Il2CppObject, fleets: *mut Il2CppList<*mut Il2CppObject>) {
     let Some(system_id) = node_address_system(address) else {
-        trace!(target: "FleetScanner", "Fleet enter event ignored without valid system");
+        trace!(target: LOG_TARGET, "Fleet enter event ignored without valid system");
         return;
     };
 
@@ -198,18 +624,30 @@ fn process_enter_system(address: *mut Il2CppObject, fleets: *mut Il2CppList<*mut
     route_fleet_event(PendingFleetEvent::EnterSystem { system_id, fleets });
 }
 
-/// Clear the store only when the exit event belongs to the currently viewed system.
-fn process_exit_system(address: *mut Il2CppObject) {
+/// Invalidate own fleets and remove exited fleets from the viewed-system store.
+fn process_exit_system(address: *mut Il2CppObject, fleets: *mut Il2CppList<*mut Il2CppObject>) {
+    let fleet_refs = unsafe { list_objects(fleets) }
+        .into_iter()
+        .filter_map(inspect_fleet_ref)
+        .collect::<Vec<_>>();
+    let changes = invalidate_own_fleet_refs(&fleet_refs);
+    if !changes.is_empty() {
+        log_fleet_changes(
+            &format!("Own fleet store update: reason=exit_system, invalidated={}", changes.len()),
+            &changes,
+        );
+    }
+
     let Some(system_id) = node_address_system(address) else {
-        trace!(target: "FleetScanner", "Fleet exit event ignored without valid system");
+        trace!(target: LOG_TARGET, "Fleet exit event ignored without valid system");
         return;
     };
 
     if navigation_view::current_viewed_system_id() == Some(system_id) {
-        reset_fleet_store("exit_system");
+        process_remove_refs("fleet_exit_system", system_id, fleet_refs);
     } else {
         trace!(
-            target: "FleetScanner",
+            target: LOG_TARGET,
             "Fleet exit event ignored: reason=system_mismatch, event_system={}, viewed_system={}",
             format_optional_i64(Some(system_id)),
             format_optional_i64(navigation_view::current_viewed_system_id()),
@@ -257,7 +695,26 @@ fn process_fleets_updated(reason: &'static str, fleets: *mut Il2CppList<*mut Il2
     route_fleet_event(PendingFleetEvent::Update { reason, fleets });
 }
 
-/// Apply an owned update batch to the store and decide whether it is debug-worthy.
+/// Read ended courses for diagnostics only.
+fn process_course_end(courses: *mut Il2CppList<*mut Il2CppObject>) {
+    for course in unsafe { list_objects(courses) } {
+        let snapshot = inspect_course_end(course);
+        let Some(fleet_id) = snapshot.fleet_id else {
+            warn!(target: LOG_TARGET, "Course end ignored: course without readable fleet ID");
+            continue;
+        };
+
+        // FleetDeployedData.CurrentState is the authoritative movement source. This hook observes
+        // course-end events for trace diagnostics and does not feed the store.
+        trace!(
+            target: LOG_TARGET,
+            "Course end observed: fleet_id={fleet_id}, position={}",
+            format_optional_vector3(snapshot.position),
+        );
+    }
+}
+
+/// Apply an owned update batch to the store and log the resulting changes.
 fn process_update_fleets(reason: &str, system_id: i64, fleets: Vec<Fleet>) -> bool {
     let StoreUpdateResult {
         inserted,
@@ -274,17 +731,13 @@ fn process_update_fleets(reason: &str, system_id: i64, fleets: Vec<Fleet>) -> bo
 
     if ignored > 0 {
         trace!(
-            target: "FleetScanner",
+            target: LOG_TARGET,
             "Fleet update ignored: reason={reason}, system={system_id}, ids={}",
             format_fleet_ids(&ignored_fleet_ids),
         );
     }
 
-    if changes.is_empty()
-        || inserted == 0 && updated == 0
-        || is_movement_only_update(&changes)
-        || is_player_only_update(&changes)
-    {
+    if reason == "fleet_update" || changes.is_empty() || is_movement_only_update(&changes) {
         trace_fleet_changes(&summary, &changes);
     } else {
         log_fleet_changes(&summary, &changes);
@@ -303,8 +756,13 @@ fn process_fleets_disposed(fleets: *mut Il2CppList<*mut Il2CppObject>) {
     route_fleet_event(PendingFleetEvent::Dispose { fleets: fleet_refs });
 }
 
-/// Remove owned fleet references from the viewed store.
+/// Remove disposed fleet references from the viewed store.
 fn process_dispose_refs(system_id: i64, fleet_refs: Vec<FleetRef>) -> bool {
+    process_remove_refs("fleet_disposed", system_id, fleet_refs)
+}
+
+/// Remove fleet references from the viewed store.
+fn process_remove_refs(reason: &str, system_id: i64, fleet_refs: Vec<FleetRef>) -> bool {
     let StoreRemoveResult {
         vanished,
         ignored,
@@ -313,24 +771,18 @@ fn process_dispose_refs(system_id: i64, fleet_refs: Vec<FleetRef>) -> bool {
         ignored_fleet_ids,
     } = store_remove_fleets(system_id, fleet_refs);
     let summary = format!(
-        "Fleet store remove: reason=fleet_disposed, system={system_id}, vanished={vanished}, ignored={ignored}, total={total}"
+        "Fleet store remove: reason={reason}, system={system_id}, vanished={vanished}, ignored={ignored}, total={total}"
     );
 
     if ignored > 0 {
         trace!(
-            target: "FleetScanner",
-            "Fleet dispose ignored: reason=not_in_store, system={system_id}, ids={}",
+            target: LOG_TARGET,
+            "Fleet remove ignored: reason={reason}, system={system_id}, ids={}",
             format_fleet_ids(&ignored_fleet_ids),
         );
     }
 
-    if vanished == 0 {
-        trace_fleet_changes(&summary, &changes);
-    } else if total == 0 {
-        debug!(target: "FleetScanner", "{summary}");
-    } else {
-        log_fleet_changes(&summary, &changes);
-    }
+    trace_fleet_changes(&summary, &changes);
 
     vanished > 0
 }
@@ -345,28 +797,89 @@ fn set_viewed_system(system_id: Option<i64>) {
         return;
     }
 
-    debug!(target: "FleetScanner", "Viewed system changed: system={system_id}");
+    debug!(target: LOG_TARGET, "Viewed system changed: system={system_id}");
 
     flush_pending_fleet_events(system_id);
 }
 
-/// Clear the shared viewed system and drop the active store.
+/// Clear only the shared viewed-system marker.
 fn clear_viewed_system(reason: &str) {
     if !navigation_view::clear_viewed_system() {
         return;
     }
 
-    debug!(target: "FleetScanner", "Viewed system cleared: reason={reason}");
-    reset_fleet_store("view_left");
+    debug!(target: LOG_TARGET, "Viewed system marker cleared: reason={reason}");
 }
 
 /// Send an event directly to the store, or queue it until a viewed system is known.
 fn route_fleet_event(event: PendingFleetEvent) -> bool {
+    process_global_own_fleet_event(&event);
+
+    let Some(event) = viewed_store_event(event) else {
+        return false;
+    };
+
     match navigation_view::current_viewed_system_id() {
         Some(system_id) => process_pending_fleet_event(system_id, event),
         None => {
             queue_pending_fleet_event(event);
             false
+        }
+    }
+}
+
+fn viewed_store_event(event: PendingFleetEvent) -> Option<PendingFleetEvent> {
+    match event {
+        PendingFleetEvent::EnterSystem { system_id, fleets } => {
+            let fleets = fleets
+                .into_iter()
+                .filter(|fleet| fleet.kind != FleetKind::Own)
+                .collect::<Vec<_>>();
+            (!fleets.is_empty()).then_some(PendingFleetEvent::EnterSystem { system_id, fleets })
+        }
+        PendingFleetEvent::Update { reason, fleets } => {
+            let fleets = fleets
+                .into_iter()
+                .filter(|fleet| fleet.kind != FleetKind::Own)
+                .collect::<Vec<_>>();
+            (!fleets.is_empty()).then_some(PendingFleetEvent::Update { reason, fleets })
+        }
+        PendingFleetEvent::Dispose { fleets } => Some(PendingFleetEvent::Dispose { fleets }),
+    }
+}
+
+/// Keep own-fleet snapshots globally, independent from the currently viewed system.
+fn process_global_own_fleet_event(event: &PendingFleetEvent) {
+    match event {
+        PendingFleetEvent::EnterSystem { system_id, fleets } => {
+            let changes = store_own_fleets(fleets);
+            if !changes.is_empty() {
+                log_fleet_changes(
+                    &format!(
+                        "Own fleet store update: reason=enter_system, system={system_id}, changed={}",
+                        changes.len()
+                    ),
+                    &changes,
+                );
+            }
+        }
+        PendingFleetEvent::Update { reason, fleets } => {
+            let changes = store_own_fleets(fleets);
+            if !changes.is_empty() {
+                trace_fleet_changes(
+                    &format!("Own fleet store update: reason={reason}, changed={}", changes.len()),
+                    &changes,
+                );
+            }
+        }
+        PendingFleetEvent::Dispose { fleets } => {
+            let changes = invalidate_own_fleet_refs(fleets);
+            if !changes.is_empty() {
+                log_fleet_changes(
+                    &format!("Own fleet store update: reason=fleet_disposed, invalidated={}", changes.len()),
+                    &changes,
+                );
+            }
         }
     }
 }
@@ -389,8 +902,8 @@ fn flush_pending_fleet_events(system_id: i64) {
         }
     }
 
-    debug!(
-        target: "FleetScanner",
+    trace!(
+        target: LOG_TARGET,
         "Pending fleet events flushed: system={system_id}, processed={processed}, dropped={dropped}",
     );
 }
@@ -403,7 +916,7 @@ fn process_pending_fleet_event(system_id: i64, event: PendingFleetEvent) -> bool
                 process_enter_fleets(system_id, fleets)
             } else {
                 trace!(
-                    target: "FleetScanner",
+                    target: LOG_TARGET,
                     "Fleet event ignored: reason=system_mismatch, event=enter_system, system={}, viewed_system={system_id}",
                     format_optional_i64(Some(event_system_id)),
                 );
@@ -414,7 +927,7 @@ fn process_pending_fleet_event(system_id: i64, event: PendingFleetEvent) -> bool
             let result = process_update_fleets(reason, system_id, fleets);
             if !result {
                 trace!(
-                    target: "FleetScanner",
+                    target: LOG_TARGET,
                     "Fleet event ignored: reason=no_matching_fleets, event={reason}, viewed_system={system_id}",
                 );
             }
@@ -424,7 +937,7 @@ fn process_pending_fleet_event(system_id: i64, event: PendingFleetEvent) -> bool
             let result = process_dispose_refs(system_id, fleets);
             if !result {
                 trace!(
-                    target: "FleetScanner",
+                    target: LOG_TARGET,
                     "Fleet event ignored: reason=no_matching_fleets, event=fleet_disposed, viewed_system={system_id}",
                 );
             }
@@ -441,6 +954,7 @@ fn inspect_fleet(fleet: *mut Il2CppObject) -> Option<Fleet> {
 /// Copy all stable fleet data into an owned snapshot.
 fn inspect_fleet_in_system(fleet: *mut Il2CppObject, system_id: Option<i64>) -> Option<Fleet> {
     let id = fleet_id(fleet)?;
+    let observed_at = std::time::Instant::now();
     let local_player = is_local_player(fleet);
     let fleet_type = fleet_type(fleet);
     let hull_type = fleet_hull_type(fleet);
@@ -448,6 +962,7 @@ fn inspect_fleet_in_system(fleet: *mut Il2CppObject, system_id: Option<i64>) -> 
 
     Some(Fleet {
         id,
+        observed_at,
         system_id,
         kind: classify_fleet(local_player, fleet_type, hull_type),
         combat_class: classify_combat_class(hull_name.as_deref(), hull_type),
@@ -463,6 +978,7 @@ fn inspect_fleet_in_system(fleet: *mut Il2CppObject, system_id: Option<i64>) -> 
         max_warp_speed: fleet_max_warp_speed(fleet),
         travel_direction: fleet_travel_direction(fleet),
         time_since_last_update: fleet_time_since_last_update(fleet),
+        movement_state: fleet_movement_state(fleet),
     })
 }
 
@@ -472,6 +988,20 @@ fn inspect_fleet_ref(fleet: *mut Il2CppObject) -> Option<FleetRef> {
         id: fleet_id(fleet)?,
         system_id: fleet_address_system(fleet),
     })
+}
+
+#[derive(Debug)]
+struct CourseEndSnapshot {
+    fleet_id: Option<i64>,
+    position: Option<Vector3>,
+}
+
+/// Copy course-end details for trace diagnostics.
+fn inspect_course_end(course: *mut Il2CppObject) -> CourseEndSnapshot {
+    CourseEndSnapshot {
+        fleet_id: course_fleet_id(course),
+        position: course_system_position(course),
+    }
 }
 
 // ---- IL2CPP access ---------------------------------------------------------
@@ -584,6 +1114,46 @@ fn fleet_time_since_last_update(fleet: *mut Il2CppObject) -> Option<f32> {
     )
 }
 
+/// Read and map the fleet's deployed movement state.
+fn fleet_movement_state(fleet: *mut Il2CppObject) -> FleetMovementState {
+    classify_movement_state(invoke::i32(
+        GET_FLEET_CURRENT_STATE_FN.load(Relaxed),
+        fleet,
+        "FleetDeployedData.get_CurrentState",
+    ))
+}
+
+fn classify_movement_state(raw_state: Option<i32>) -> FleetMovementState {
+    let Some(raw_state) = raw_state else {
+        return FleetMovementState::Unknown;
+    };
+
+    match raw_state {
+        DEPLOYED_STATE_IDLE | DEPLOYED_STATE_BATTLING | DEPLOYED_STATE_DOCKED | DEPLOYED_STATE_PRE_BATTLE => {
+            FleetMovementState::Stopped
+        }
+        DEPLOYED_STATE_MOVING => FleetMovementState::Impulsing,
+        // Recall moves the fleet home, but the enum does not say whether by impulse or warp,
+        // so treat it like a warp: position is unreliable and the fleet is left out of intercepts.
+        DEPLOYED_STATE_WARPING | DEPLOYED_STATE_RECALL => FleetMovementState::Warping,
+        _ => FleetMovementState::Unknown,
+    }
+}
+
+/// Read the fleet ID associated with a course.
+fn course_fleet_id(course: *mut Il2CppObject) -> Option<i64> {
+    invoke::i64(GET_COURSE_FLEET_ID_FN.load(Relaxed), course, "CourseData.get_FleetID")
+}
+
+/// Read the current course system position.
+fn course_system_position(course: *mut Il2CppObject) -> Option<Vector3> {
+    invoke::value(
+        GET_COURSE_SYSTEM_POSITION_FN.load(Relaxed),
+        course,
+        "CourseData.get_SystemPosition",
+    )
+}
+
 /// Read the fleet hull object.
 fn fleet_hull(fleet: *mut Il2CppObject) -> Option<*mut Il2CppObject> {
     invoke::object(GET_FLEET_HULL_FN.load(Relaxed), fleet, "FleetDeployedData.get_Hull")
@@ -615,58 +1185,139 @@ fn valid_system_id(system_id: Option<i64>) -> Option<i64> {
     system_id.filter(|system_id| *system_id >= 0)
 }
 
+fn format_optional_vector3(value: Option<Vector3>) -> String {
+    value.map(format_vector3).unwrap_or_else(|| "unknown".to_string())
+}
+
 // ---- Installation ----------------------------------------------------------
 
 /// Install accessors and event hooks for fleet scanning.
 pub fn install(api: &Il2CppApi) {
+    fleet_bar::install(api);
+    target_viewer::install(api);
+    target_viewer::subscribe_target_id(on_target_viewer_show);
+    if is_ready() {
+        return;
+    }
+
     install_model_accessors(api);
     install_node_address_accessors(api);
+    install_navigation_selection(api);
     install_navigation_view_hooks(api);
     install_event_hooks(api);
-    trace!(target: "FleetScanner", "Fleet scanner install finished");
+    trace!(target: LOG_TARGET, "Fleet scanner install finished");
+}
+
+fn is_ready() -> bool {
+    !method_missing(&GET_FLEET_ID_FN)
+        && !method_missing(&GET_FLEET_SYSTEM_POSITION_FN)
+        && !method_missing(&GET_FLEET_ADDRESS_FN)
+        && !method_missing(&GET_FLEET_IS_LOCAL_PLAYER_FN)
+        && !method_missing(&GET_FLEET_TYPE_FN)
+        && !method_missing(&GET_FLEET_STRENGTH_FN)
+        && !method_missing(&GET_FLEET_LEVEL_FN)
+        && !method_missing(&GET_FLEET_IS_MINING_FN)
+        && !method_missing(&GET_FLEET_HULL_FN)
+        && !method_missing(&GET_FLEET_MAX_IMPULSE_SPEED_FN)
+        && !method_missing(&GET_FLEET_MAX_WARP_SPEED_FN)
+        && !method_missing(&GET_FLEET_TRAVEL_DIRECTION_FN)
+        && !method_missing(&GET_FLEET_TIME_SINCE_LAST_UPDATE_FN)
+        && !method_missing(&GET_HULL_TYPE_FN)
+        && !method_missing(&GET_HULL_NAME_FN)
+        && !method_missing(&GET_NODE_ADDRESS_SYSTEM_FN)
+        && !method_missing(&NAVIGATION_MANAGER_CAN_SELECT_POI_METHOD)
+        && !method_missing(&NAVIGATION_MANAGER_SELECT_POI_METHOD)
+        && !method_missing(&GET_COURSE_FLEET_ID_FN)
+        && !method_missing(&GET_COURSE_SYSTEM_POSITION_FN)
+        && !ORIG_DID_CHANGE_VIEW.load(Relaxed).is_null()
+        && !ORIG_LEAVE_NAVIGATION_VIEW.load(Relaxed).is_null()
+        && !ORIG_NAVIGATION_MANAGER_ENABLE.load(Relaxed).is_null()
+        && !ORIG_NAVIGATION_MANAGER_DISABLE.load(Relaxed).is_null()
+        && !ORIG_FLEETS_ENTER_SYSTEM.load(Relaxed).is_null()
+        && !ORIG_FLEETS_EXIT_SYSTEM.load(Relaxed).is_null()
+        && !ORIG_FLEETS_DISPOSED.load(Relaxed).is_null()
+        && !ORIG_FLEETS_UPDATED.load(Relaxed).is_null()
+        && !ORIG_FLEET_STATE_CHANGE.load(Relaxed).is_null()
+        && !ORIG_COURSE_END.load(Relaxed).is_null()
 }
 
 /// Resolve all FleetDeployedData and HullSpec getters used for snapshots.
 fn install_model_accessors(api: &Il2CppApi) {
-    if let Some(fleet_class) = resolve_model_class(api, "FleetDeployedData") {
-        resolve_fn(api, fleet_class, "get_ID", 0, &GET_FLEET_ID_FN);
-        resolve_fn(api, fleet_class, "get_SystemPosition", 0, &GET_FLEET_SYSTEM_POSITION_FN);
-        resolve_fn(api, fleet_class, "get_Address", 0, &GET_FLEET_ADDRESS_FN);
-        resolve_fn(api, fleet_class, "get_IsLocalPlayer", 0, &GET_FLEET_IS_LOCAL_PLAYER_FN);
-        resolve_fn(api, fleet_class, "get_FleetType", 0, &GET_FLEET_TYPE_FN);
-        resolve_fn(api, fleet_class, "get_Strength", 0, &GET_FLEET_STRENGTH_FN);
-        resolve_fn(api, fleet_class, "get_Level", 0, &GET_FLEET_LEVEL_FN);
-        resolve_fn(api, fleet_class, "get_IsMining", 0, &GET_FLEET_IS_MINING_FN);
-        resolve_fn(api, fleet_class, "get_Hull", 0, &GET_FLEET_HULL_FN);
-        resolve_fn(api, fleet_class, "get_MaxImpulseSpeed", 0, &GET_FLEET_MAX_IMPULSE_SPEED_FN);
-        resolve_fn(api, fleet_class, "get_MaxWarpSpeed", 0, &GET_FLEET_MAX_WARP_SPEED_FN);
-        resolve_fn(api, fleet_class, "get_TravelDirection", 0, &GET_FLEET_TRAVEL_DIRECTION_FN);
-        resolve_fn(
+    if let Some(fleet_class) = resolver::resolve_prime_model_class(api, "FleetDeployedData") {
+        resolve_fn_if_missing(api, fleet_class, "get_ID", 0, &GET_FLEET_ID_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_SystemPosition", 0, &GET_FLEET_SYSTEM_POSITION_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_Address", 0, &GET_FLEET_ADDRESS_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_IsLocalPlayer", 0, &GET_FLEET_IS_LOCAL_PLAYER_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_FleetType", 0, &GET_FLEET_TYPE_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_Strength", 0, &GET_FLEET_STRENGTH_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_Level", 0, &GET_FLEET_LEVEL_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_IsMining", 0, &GET_FLEET_IS_MINING_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_Hull", 0, &GET_FLEET_HULL_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_MaxImpulseSpeed", 0, &GET_FLEET_MAX_IMPULSE_SPEED_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_MaxWarpSpeed", 0, &GET_FLEET_MAX_WARP_SPEED_FN);
+        resolve_fn_if_missing(api, fleet_class, "get_TravelDirection", 0, &GET_FLEET_TRAVEL_DIRECTION_FN);
+        resolve_fn_if_missing(
             api,
             fleet_class,
             "get_TimeSinceLastUpdate",
             0,
             &GET_FLEET_TIME_SINCE_LAST_UPDATE_FN,
         );
+        resolve_fn_if_missing(api, fleet_class, "get_CurrentState", 0, &GET_FLEET_CURRENT_STATE_FN);
     } else {
-        warn!(target: "FleetScanner", "FleetDeployedData class not found");
+        warn!(target: LOG_TARGET, "FleetDeployedData class not found");
     }
 
-    if let Some(hull_class) = resolve_model_class(api, "HullSpec") {
-        resolve_fn(api, hull_class, "get_Type", 0, &GET_HULL_TYPE_FN);
-        resolve_fn(api, hull_class, "get_Name", 0, &GET_HULL_NAME_FN);
+    if let Some(hull_class) = resolver::resolve_prime_model_class(api, "HullSpec") {
+        resolve_fn_if_missing(api, hull_class, "get_Type", 0, &GET_HULL_TYPE_FN);
+        resolve_fn_if_missing(api, hull_class, "get_Name", 0, &GET_HULL_NAME_FN);
     } else {
-        warn!(target: "FleetScanner", "HullSpec class not found");
+        warn!(target: LOG_TARGET, "HullSpec class not found");
+    }
+
+    if let Some(course_class) = resolver::resolve_prime_model_class(api, "CourseData") {
+        resolve_fn_if_missing(api, course_class, "get_FleetID", 0, &GET_COURSE_FLEET_ID_FN);
+        resolve_fn_if_missing(api, course_class, "get_SystemPosition", 0, &GET_COURSE_SYSTEM_POSITION_FN);
+    } else {
+        warn!(target: LOG_TARGET, "CourseData class not found");
     }
 }
 
 /// Resolve NodeAddress access needed for system IDs.
 fn install_node_address_accessors(api: &Il2CppApi) {
-    if let Some(address_class) = resolve_model_class(api, "NodeAddress") {
-        resolve_fn(api, address_class, "get_System", 0, &GET_NODE_ADDRESS_SYSTEM_FN);
+    if let Some(address_class) = resolver::resolve_prime_model_class(api, "NodeAddress") {
+        resolve_fn_if_missing(api, address_class, "get_System", 0, &GET_NODE_ADDRESS_SYSTEM_FN);
     } else {
-        warn!(target: "FleetScanner", "NodeAddress class not found");
+        warn!(target: LOG_TARGET, "NodeAddress class not found");
     }
+}
+
+/// Resolve and track NavigationManager access for POI selection.
+fn install_navigation_selection(api: &Il2CppApi) {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationManager")
+    else {
+        warn!(target: LOG_TARGET, "NavigationManager class not found");
+        return;
+    };
+
+    resolve_fn_if_missing(api, class, "CanSelectPoi", 1, &NAVIGATION_MANAGER_CAN_SELECT_POI_METHOD);
+    resolve_fn_if_missing(api, class, "SelectPoi", 1, &NAVIGATION_MANAGER_SELECT_POI_METHOD);
+    install_hook(
+        api,
+        class,
+        "OnEnable",
+        0,
+        hook_navigation_manager_enable as *const (),
+        &ORIG_NAVIGATION_MANAGER_ENABLE,
+    );
+    install_hook(
+        api,
+        class,
+        "OnDisable",
+        0,
+        hook_navigation_manager_disable as *const (),
+        &ORIG_NAVIGATION_MANAGER_DISABLE,
+    );
 }
 
 /// Hook navigation view events that provide the viewed system lifecycle.
@@ -674,11 +1325,11 @@ fn install_navigation_view_hooks(api: &Il2CppApi) {
     let Some(events_class) =
         resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationCameraEvents")
     else {
-        warn!(target: "FleetScanner", "NavigationCameraEvents class not found");
+        warn!(target: LOG_TARGET, "NavigationCameraEvents class not found");
         return;
     };
 
-    trace!(target: "FleetScanner", "NavigationCameraEvents class found in assembly 'Assembly-CSharp'");
+    trace!(target: LOG_TARGET, "NavigationCameraEvents class found in assembly 'Assembly-CSharp'");
 
     install_hook(
         api,
@@ -700,8 +1351,8 @@ fn install_navigation_view_hooks(api: &Il2CppApi) {
 
 /// Hook deployment events that provide fleet lifecycle changes.
 fn install_event_hooks(api: &Il2CppApi) {
-    let Some(events_class) = resolve_events_class(api) else {
-        warn!(target: "FleetScanner", "DeploymentEvents class not found");
+    let Some(events_class) = resolver::resolve_prime_class(api, "Digit.PrimeServer.Events", "DeploymentEvents") else {
+        warn!(target: LOG_TARGET, "DeploymentEvents class not found");
         return;
     };
 
@@ -745,28 +1396,14 @@ fn install_event_hooks(api: &Il2CppApi) {
         hook_fleet_state_change as *const (),
         &ORIG_FLEET_STATE_CHANGE,
     );
-}
-
-/// Resolve the DeploymentEvents class from known model assemblies.
-fn resolve_events_class(api: &Il2CppApi) -> Option<*mut Il2CppClass> {
-    for assembly in MODEL_ASSEMBLIES {
-        if let Some(class) = resolver::resolve_class(api, assembly, "Digit.PrimeServer.Events", "DeploymentEvents") {
-            trace!(target: "FleetScanner", "DeploymentEvents class found in assembly '{assembly}'");
-            return Some(class);
-        }
-    }
-    None
-}
-
-/// Resolve a PrimeServer model class from known model assemblies.
-fn resolve_model_class(api: &Il2CppApi, class_name: &str) -> Option<*mut Il2CppClass> {
-    for assembly in MODEL_ASSEMBLIES {
-        if let Some(class) = resolver::resolve_class(api, assembly, "Digit.PrimeServer.Models", class_name) {
-            trace!(target: "FleetScanner", "{class_name} class found in assembly '{assembly}'");
-            return Some(class);
-        }
-    }
-    None
+    install_hook(
+        api,
+        events_class,
+        "TriggerCourseEndEvent",
+        1,
+        hook_course_end as *const (),
+        &ORIG_COURSE_END,
+    );
 }
 
 /// Install one resolved hook and store its original trampoline.
@@ -778,6 +1415,10 @@ fn install_hook(
     hook: *const (),
     original: &AtomicPtr<()>,
 ) {
+    if !original.load(Relaxed).is_null() {
+        return;
+    }
+
     tracker::install_resolved_hook(
         api,
         class,
@@ -790,24 +1431,35 @@ fn install_hook(
 }
 
 /// Resolve one method into an atomic MethodInfo pointer.
-fn resolve_fn(
+fn resolve_fn_if_missing(
     api: &Il2CppApi,
     class: *mut Il2CppClass,
     method_name: &str,
     param_count: i32,
     target: &AtomicPtr<MethodInfo>,
 ) {
+    if !method_missing(target) {
+        return;
+    }
+
     resolver::resolve_method_into(api, class, method_name, param_count, target);
+}
+
+fn method_missing(target: &AtomicPtr<MethodInfo>) -> bool {
+    target.load(Relaxed).is_null()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use std::time::{Duration, Instant};
+
     use crate::hooks::navigation_view::TEST_LOCK;
 
     fn reset_store() {
         *FLEET_STORE.lock().unwrap() = None;
+        OWN_FLEET_STORE.lock().unwrap().clear();
         let _ = navigation_view::clear_viewed_system();
         PENDING_FLEET_EVENTS.lock().unwrap().clear();
     }
@@ -819,6 +1471,7 @@ mod tests {
     fn fleet_in_system(id: i64, kind: FleetKind, system_id: Option<i64>) -> Fleet {
         Fleet {
             id,
+            observed_at: Instant::now(),
             system_id,
             kind,
             combat_class: CombatClass::Unknown,
@@ -834,7 +1487,53 @@ mod tests {
             max_warp_speed: None,
             travel_direction: None,
             time_since_last_update: None,
+            movement_state: FleetMovementState::Unknown,
         }
+    }
+
+    fn fleet_with_motion(
+        id: i64,
+        kind: FleetKind,
+        position: Vector3,
+        speed: Option<f32>,
+        direction: Option<Vector3>,
+        observed_age: Option<Duration>,
+    ) -> Fleet {
+        Fleet {
+            observed_at: Instant::now() - observed_age.unwrap_or_default(),
+            system_position: Some(position),
+            max_impulse_speed: speed,
+            travel_direction: direction,
+            movement_state: FleetMovementState::Impulsing,
+            ..fleet(id, kind)
+        }
+    }
+
+    fn fleet_with_state(id: i64, kind: FleetKind, movement_state: FleetMovementState) -> Fleet {
+        Fleet { movement_state, ..fleet(id, kind) }
+    }
+
+    fn assert_vector_near(actual: Vector3, expected: Vector3) {
+        const EPSILON: f32 = 0.01;
+
+        assert!(
+            (actual.x - expected.x).abs() <= EPSILON,
+            "x: actual={}, expected={}",
+            actual.x,
+            expected.x
+        );
+        assert!(
+            (actual.y - expected.y).abs() <= EPSILON,
+            "y: actual={}, expected={}",
+            actual.y,
+            expected.y
+        );
+        assert!(
+            (actual.z - expected.z).abs() <= EPSILON,
+            "z: actual={}, expected={}",
+            actual.z,
+            expected.z
+        );
     }
 
     fn sorted_actions(changes: &[FleetStoreChange]) -> Vec<(i64, FleetStoreAction)> {
@@ -854,23 +1553,162 @@ mod tests {
         }
     }
 
-    fn change_with_fields(action: FleetStoreAction, fleet: Fleet, fields: &[&'static str]) -> FleetStoreChange {
-        FleetStoreChange {
-            action,
-            fleet,
-            changed_fields: fields
-                .iter()
-                .map(|field| FleetFieldChange {
-                    name: field,
-                    old_value: "old".to_string(),
-                    new_value: "new".to_string(),
-                })
-                .collect(),
-        }
-    }
-
     fn fleet_ref(id: i64, system_id: Option<i64>) -> FleetRef {
         FleetRef { id, system_id }
+    }
+
+    #[test]
+    fn intercept_time_accounts_for_target_velocity() {
+        let time = intercept_time(
+            Vector3::default(),
+            10.0,
+            Vector3 { x: 100.0, y: 0.0, z: 0.0 },
+            Vector3 { x: 5.0, y: 0.0, z: 0.0 },
+        );
+
+        assert_eq!(time, Some(20.0));
+    }
+
+    #[test]
+    fn projected_position_uses_observed_age_and_normalized_direction() {
+        let fleet = fleet_with_motion(
+            1,
+            FleetKind::Hostile,
+            Vector3 { x: 10.0, y: 0.0, z: 20.0 },
+            Some(6.0),
+            Some(Vector3 { x: 3.0, y: 0.0, z: 4.0 }),
+            Some(Duration::from_secs(2)),
+        );
+
+        assert_vector_near(
+            current_projected_position(&fleet).expect("expected current position"),
+            Vector3 { x: 17.2, y: 0.0, z: 29.6 },
+        );
+    }
+
+    #[test]
+    fn position_projects_only_while_impulsing() {
+        let fleet = fleet_with_motion(
+            1,
+            FleetKind::Own,
+            Vector3 { x: 10.0, y: 0.0, z: 20.0 },
+            Some(6.0),
+            Some(Vector3 { x: 3.0, y: 0.0, z: 4.0 }),
+            Some(Duration::from_secs(2)),
+        );
+
+        assert_vector_near(
+            current_position_for_intercept(&fleet).expect("expected projected position"),
+            Vector3 { x: 17.2, y: 0.0, z: 29.6 },
+        );
+
+        let stopped = Fleet {
+            movement_state: FleetMovementState::Stopped,
+            ..fleet.clone()
+        };
+        assert_eq!(
+            current_position_for_intercept(&stopped),
+            Some(Vector3 { x: 10.0, y: 0.0, z: 20.0 }),
+        );
+    }
+
+    #[test]
+    fn warping_position_is_not_available_for_system_intercept() {
+        let fleet = fleet_with_state(1, FleetKind::Own, FleetMovementState::Warping);
+
+        assert_eq!(current_position_for_intercept(&fleet), None);
+    }
+
+    #[test]
+    fn unknown_position_uses_stored_position_without_projection() {
+        let fleet = Fleet {
+            movement_state: FleetMovementState::Unknown,
+            ..fleet_with_motion(
+                1,
+                FleetKind::Hostile,
+                Vector3 { x: 10.0, y: 0.0, z: 20.0 },
+                Some(6.0),
+                Some(Vector3 { x: 3.0, y: 0.0, z: 4.0 }),
+                Some(Duration::from_secs(2)),
+            )
+        };
+
+        assert_eq!(
+            current_position_for_intercept(&fleet),
+            Some(Vector3 { x: 10.0, y: 0.0, z: 20.0 }),
+        );
+    }
+
+    #[test]
+    fn select_fastest_intercept_picks_lowest_calculated_time() {
+        let own_fleet = fleet_with_motion(1, FleetKind::Own, Vector3::default(), Some(10.0), None, None);
+        let hostiles = vec![
+            fleet_with_motion(
+                2,
+                FleetKind::Hostile,
+                Vector3 { x: 100.0, y: 0.0, z: 0.0 },
+                Some(5.0),
+                Some(Vector3 { x: 1.0, y: 0.0, z: 0.0 }),
+                None,
+            ),
+            fleet_with_motion(3, FleetKind::Hostile, Vector3 { x: 90.0, y: 0.0, z: 0.0 }, None, None, None),
+        ];
+
+        let selection = select_fastest_intercept(&own_fleet, &hostiles).expect("expected intercept target");
+
+        assert_eq!(selection.hostile.id, 3);
+        assert_eq!(selection.time_seconds, 9.0);
+        assert_eq!(selection.intercept_position, Vector3 { x: 90.0, y: 0.0, z: 0.0 },);
+    }
+
+    #[test]
+    fn select_fastest_intercept_skips_hostiles_without_position() {
+        let own_fleet = fleet_with_motion(1, FleetKind::Own, Vector3::default(), Some(10.0), None, None);
+        let mut hostile = fleet(2, FleetKind::Hostile);
+        hostile.system_position = None;
+
+        assert!(select_fastest_intercept(&own_fleet, &[hostile]).is_none());
+    }
+
+    #[test]
+    fn select_fastest_intercept_skips_warping_hostiles() {
+        let own_fleet = fleet_with_motion(1, FleetKind::Own, Vector3::default(), Some(10.0), None, None);
+        let hostile = Fleet {
+            movement_state: FleetMovementState::Warping,
+            ..fleet_with_motion(
+                2,
+                FleetKind::Hostile,
+                Vector3 { x: 100.0, y: 0.0, z: 0.0 },
+                Some(5.0),
+                Some(Vector3 { x: 1.0, y: 0.0, z: 0.0 }),
+                None,
+            )
+        };
+
+        assert!(select_fastest_intercept(&own_fleet, &[hostile]).is_none());
+    }
+
+    #[test]
+    fn classifies_deployed_movement_states() {
+        assert_eq!(classify_movement_state(None), FleetMovementState::Unknown);
+        assert_eq!(classify_movement_state(Some(DEPLOYED_STATE_IDLE)), FleetMovementState::Stopped);
+        assert_eq!(
+            classify_movement_state(Some(DEPLOYED_STATE_MOVING)),
+            FleetMovementState::Impulsing
+        );
+        assert_eq!(
+            classify_movement_state(Some(DEPLOYED_STATE_WARPING)),
+            FleetMovementState::Warping
+        );
+        assert_eq!(
+            classify_movement_state(Some(DEPLOYED_STATE_RECALL)),
+            FleetMovementState::Warping
+        );
+        assert_eq!(
+            classify_movement_state(Some(DEPLOYED_STATE_DOCKED)),
+            FleetMovementState::Stopped
+        );
+        assert_eq!(classify_movement_state(Some(99)), FleetMovementState::Unknown);
     }
 
     #[test]
@@ -968,6 +1806,28 @@ mod tests {
     }
 
     #[test]
+    fn store_enter_fleets_excludes_own_fleets_from_viewed_store() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        let result = store_enter_fleets(7, vec![fleet(1, FleetKind::Own), fleet(2, FleetKind::Hostile)]);
+
+        let StoreEnterResult::Replaced { stored, changes } = result else {
+            panic!("expected replace result");
+        };
+        assert_eq!(stored, 1);
+        assert_eq!(sorted_actions(&changes), vec![(2, FleetStoreAction::Inserted)]);
+        {
+            let guard = FLEET_STORE.lock().unwrap();
+            let stored = guard.as_ref().unwrap();
+            assert!(!stored.fleets.contains_key(&1));
+            assert!(stored.fleets.contains_key(&2));
+        }
+
+        reset_store();
+    }
+
+    #[test]
     fn store_enter_fleets_deduplicates_by_latest_id() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_store();
@@ -988,74 +1848,6 @@ mod tests {
         }
 
         reset_store();
-    }
-
-    #[test]
-    fn reset_fleet_store_clears_fleets_and_system() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        reset_store();
-
-        store_enter_fleets(7, vec![fleet(1, FleetKind::Player)]);
-
-        reset_fleet_store("test");
-
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, None);
-            assert!(stored.fleets.is_empty());
-        }
-
-        reset_store();
-    }
-
-    #[test]
-    fn player_only_updates_are_trace_noise() {
-        assert!(is_player_only_update(&[change(
-            FleetStoreAction::Updated,
-            fleet(1, FleetKind::Player),
-        )]));
-        assert!(!is_player_only_update(&[change(
-            FleetStoreAction::Updated,
-            fleet(1, FleetKind::Own),
-        )]));
-        assert!(!is_player_only_update(&[change(
-            FleetStoreAction::Updated,
-            fleet(1, FleetKind::Hostile),
-        )]));
-        assert!(!is_player_only_update(&[change(
-            FleetStoreAction::Inserted,
-            fleet(1, FleetKind::Player),
-        )]));
-        assert!(!is_player_only_update(&[
-            change(FleetStoreAction::Updated, fleet(1, FleetKind::Player)),
-            change(FleetStoreAction::Updated, fleet(2, FleetKind::Hostile)),
-        ]));
-        assert!(!is_player_only_update(&[]));
-    }
-
-    #[test]
-    fn movement_only_updates_are_trace_noise() {
-        assert!(is_movement_only_update(&[change_with_fields(
-            FleetStoreAction::Updated,
-            fleet(1, FleetKind::Hostile),
-            &["position", "direction", "age"],
-        )]));
-        assert!(!is_movement_only_update(&[change_with_fields(
-            FleetStoreAction::Updated,
-            fleet(1, FleetKind::Hostile),
-            &["position", "strength"],
-        )]));
-        assert!(!is_movement_only_update(&[change_with_fields(
-            FleetStoreAction::Inserted,
-            fleet(1, FleetKind::Hostile),
-            &["position"],
-        )]));
-        assert!(!is_movement_only_update(&[change(
-            FleetStoreAction::Updated,
-            fleet(1, FleetKind::Hostile),
-        )]));
-        assert!(!is_movement_only_update(&[]));
     }
 
     #[test]
@@ -1244,6 +2036,139 @@ mod tests {
     }
 
     #[test]
+    fn store_update_fleets_excludes_own_fleets_from_viewed_store() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        let result = store_update_fleets(7, vec![fleet(1, FleetKind::Own), fleet(2, FleetKind::Hostile)]);
+
+        assert_eq!(result.inserted, 1);
+        assert_eq!(result.ignored, 0);
+        assert_eq!(sorted_actions(&result.changes), vec![(2, FleetStoreAction::Inserted)]);
+        {
+            let guard = FLEET_STORE.lock().unwrap();
+            let stored = guard.as_ref().unwrap();
+            assert!(!stored.fleets.contains_key(&1));
+            assert!(stored.fleets.contains_key(&2));
+        }
+
+        reset_store();
+    }
+
+    #[test]
+    fn own_fleet_store_accepts_only_own_fleets() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        let changes = store_own_fleets(&[fleet(1, FleetKind::Own), fleet(2, FleetKind::Hostile)]);
+
+        assert_eq!(sorted_actions(&changes), vec![(1, FleetStoreAction::Inserted)]);
+        assert!(own_fleet(1).is_some());
+        assert!(own_fleet(2).is_none());
+
+        reset_store();
+    }
+
+    #[test]
+    fn own_fleet_store_updates_independent_of_viewed_system() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        route_fleet_event(PendingFleetEvent::Update {
+            reason: "fleet_update",
+            fleets: vec![fleet_in_system(1, FleetKind::Own, Some(99))],
+        });
+
+        assert!(PENDING_FLEET_EVENTS.lock().unwrap().is_empty());
+        assert_eq!(own_fleet(1).unwrap().system_id, Some(99));
+
+        reset_store();
+    }
+
+    #[test]
+    fn own_only_update_is_not_queued_for_viewed_store() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        assert!(!route_fleet_event(PendingFleetEvent::Update {
+            reason: "fleet_update",
+            fleets: vec![fleet_in_system(1, FleetKind::Own, Some(99))],
+        }));
+
+        assert!(own_fleet(1).is_some());
+        assert!(PENDING_FLEET_EVENTS.lock().unwrap().is_empty());
+
+        reset_store();
+    }
+
+    #[test]
+    fn mixed_update_queues_only_non_own_fleets_for_viewed_store() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        assert!(!route_fleet_event(PendingFleetEvent::Update {
+            reason: "fleet_update",
+            fleets: vec![
+                fleet_in_system(1, FleetKind::Own, Some(99)),
+                fleet_in_system(2, FleetKind::Hostile, Some(99)),
+            ],
+        }));
+
+        assert!(own_fleet(1).is_some());
+        {
+            let queue = PENDING_FLEET_EVENTS.lock().unwrap();
+            assert_eq!(queue.len(), 1);
+            assert_eq!(queue.front().unwrap().fleet_count(), 1);
+        }
+
+        reset_store();
+    }
+
+    #[test]
+    fn own_fleet_invalidation_clears_live_system_fields_only() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        let mut own = fleet(1, FleetKind::Own);
+        own.hull_name = Some("Franklin".to_string());
+        own.max_impulse_speed = Some(10.0);
+        own.travel_direction = Some(Vector3 { x: 1.0, y: 0.0, z: 0.0 });
+        own.movement_state = FleetMovementState::Impulsing;
+        store_own_fleets(&[own]);
+
+        let changes = invalidate_own_fleet_refs(&[fleet_ref(1, Some(7))]);
+        let stored = own_fleet(1).unwrap();
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(stored.system_id, None);
+        assert_eq!(stored.system_position, None);
+        assert_eq!(stored.travel_direction, None);
+        assert_eq!(stored.movement_state, FleetMovementState::Unknown);
+        assert_eq!(stored.hull_name.as_deref(), Some("Franklin"));
+        assert_eq!(stored.max_impulse_speed, Some(10.0));
+
+        reset_store();
+    }
+
+    #[test]
+    fn own_fleet_and_hostile_fleets_are_read_separately() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        store_own_fleets(&[fleet(1, FleetKind::Own)]);
+        store_enter_fleets(7, vec![fleet(2, FleetKind::Hostile), fleet(3, FleetKind::Player)]);
+
+        let own = own_fleet(1).expect("expected own fleet");
+        let hostiles = hostile_fleets();
+
+        assert_eq!(own.id, 1);
+        assert_eq!(hostiles.len(), 1);
+        assert_eq!(hostiles[0].id, 2);
+
+        reset_store();
+    }
+
+    #[test]
     fn store_update_fleets_updates_known_id_without_system() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_store();
@@ -1421,7 +2346,7 @@ mod tests {
     }
 
     #[test]
-    fn view_clear_resets_store_but_keeps_pending_queue() {
+    fn view_clear_preserves_store_and_pending_queue() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_store();
 
@@ -1439,8 +2364,29 @@ mod tests {
         {
             let guard = FLEET_STORE.lock().unwrap();
             let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, None);
-            assert!(stored.fleets.is_empty());
+            assert_eq!(stored.system_id, Some(7));
+            assert!(stored.fleets.contains_key(&1));
+        }
+
+        reset_store();
+    }
+
+    #[test]
+    fn fleet_exit_removes_only_exited_fleets_from_viewed_store() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_store();
+
+        set_viewed_system(Some(7));
+        store_enter_fleets(7, vec![fleet(1, FleetKind::Hostile), fleet(2, FleetKind::Hostile)]);
+
+        assert!(process_remove_refs("fleet_exit_system", 7, vec![fleet_ref(1, Some(7))]));
+
+        {
+            let guard = FLEET_STORE.lock().unwrap();
+            let stored = guard.as_ref().unwrap();
+            assert_eq!(stored.system_id, Some(7));
+            assert!(!stored.fleets.contains_key(&1));
+            assert!(stored.fleets.contains_key(&2));
         }
 
         reset_store();

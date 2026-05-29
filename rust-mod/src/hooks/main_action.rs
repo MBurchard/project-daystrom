@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 use log::{debug, trace, warn};
 
 use crate::hook::safety::HookInfo;
-use crate::hooks::fleet_bar;
+use crate::hooks::fleet_scanner;
 use crate::hooks::tracker::{self, instance_tracker};
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
@@ -274,9 +274,7 @@ pub fn check() -> bool {
         return true;
     }
 
-    debug!(target: LOG_TARGET, "{}", fleet_bar::describe_selected_fleet());
-
-    false
+    fleet_scanner::try_select_next_hostile()
 }
 
 /// Attempt to engage or queue on the PreScanTargetWidget.
@@ -398,12 +396,12 @@ fn try_warp(starnode: *mut ()) -> bool {
 fn try_set_course() -> bool {
     let method = ON_SET_COURSE_METHOD.load(Relaxed);
     if method.is_null() {
-        debug!(target: LOG_TARGET, "Skipped: set course method unresolved");
+        trace!(target: LOG_TARGET, "Skipped: set course method unresolved");
         return false;
     }
     let nav = nav_controller::get();
     if nav.is_null() {
-        debug!(target: LOG_TARGET, "Skipped: navigation controller unavailable");
+        trace!(target: LOG_TARGET, "Skipped: navigation controller unavailable");
         return false;
     }
     if !can_submit_set_course(nav) {
@@ -420,7 +418,7 @@ fn try_set_course() -> bool {
 fn can_submit_set_course(nav: *mut ()) -> bool {
     let context_method = GET_NAV_CONTEXT_METHOD.load(Relaxed);
     if context_method.is_null() {
-        debug!(target: LOG_TARGET, "Skipped: navigation context method unresolved");
+        trace!(target: LOG_TARGET, "Skipped: navigation context method unresolved");
         return false;
     }
 
@@ -429,17 +427,17 @@ fn can_submit_set_course(nav: *mut ()) -> bool {
         nav as *mut Il2CppObject,
         "NavigationInteractionUIViewController.get_CanvasContext",
     ) else {
-        debug!(target: LOG_TARGET, "Skipped: navigation context unavailable");
+        trace!(target: LOG_TARGET, "Skipped: navigation context unavailable");
         return false;
     };
 
     if !read_context_bool(context, &OFFSET_NAV_VALID_INPUT, "ValidNavigationInput").unwrap_or(false) {
-        debug!(target: LOG_TARGET, "Skipped: navigation input invalid");
+        trace!(target: LOG_TARGET, "Skipped: navigation input invalid");
         return false;
     }
 
     if !read_context_bool(context, &OFFSET_NAV_SHOW_SET_COURSE_ARM, "ShowSetCourseArm").unwrap_or(false) {
-        debug!(target: LOG_TARGET, "Skipped: set course arm hidden");
+        trace!(target: LOG_TARGET, "Skipped: set course arm hidden");
         return false;
     }
 
@@ -449,7 +447,7 @@ fn can_submit_set_course(nav: *mut ()) -> bool {
 
     let should_disable_method = SHOULD_DISABLE_SET_COURSE_METHOD.load(Relaxed);
     if should_disable_method.is_null() {
-        debug!(target: LOG_TARGET, "Skipped: set course state method unresolved");
+        trace!(target: LOG_TARGET, "Skipped: set course state method unresolved");
         return false;
     }
 
@@ -460,7 +458,7 @@ fn can_submit_set_course(nav: *mut ()) -> bool {
     )
     .unwrap_or(true);
     if disabled {
-        debug!(target: LOG_TARGET, "Skipped: set course disabled by navigation context");
+        trace!(target: LOG_TARGET, "Skipped: set course disabled by navigation context");
         return false;
     }
 
@@ -470,14 +468,14 @@ fn can_submit_set_course(nav: *mut ()) -> bool {
 fn has_set_course_interaction(context: *mut Il2CppObject) -> bool {
     let method = GET_INPUT_INTERACTION_TYPE_METHOD.load(Relaxed);
     if method.is_null() {
-        debug!(target: LOG_TARGET, "Skipped: input interaction type method unresolved");
+        trace!(target: LOG_TARGET, "Skipped: input interaction type method unresolved");
         return false;
     }
 
     let interaction_type =
         invoke::i32(method, context, "NavigationInteractionUIContext.get_InputInteractionType").unwrap_or(0);
     if !is_set_course_interaction(interaction_type) {
-        debug!(target: LOG_TARGET, "Skipped: unsupported set course interaction type {interaction_type}");
+        trace!(target: LOG_TARGET, "Skipped: unsupported set course interaction type {interaction_type}");
         return false;
     }
 
@@ -514,7 +512,7 @@ fn is_set_course_interaction(interaction_type: i32) -> bool {
 fn read_context_bool(context: *mut Il2CppObject, offset: &AtomicUsize, field_name: &str) -> Option<bool> {
     let offset = offset.load(Relaxed);
     if offset == 0 {
-        debug!(target: LOG_TARGET, "Skipped: navigation context field unresolved: {field_name}");
+        trace!(target: LOG_TARGET, "Skipped: navigation context field unresolved: {field_name}");
         return None;
     }
 
@@ -561,7 +559,7 @@ fn resolve_required_field(
 /// Resolves viewer classes, hooks Awake/OnDestroy for instance tracking, and resolves action methods.
 /// Called from `hotkeys::install()`.
 pub fn install(api: &Il2CppApi) {
-    fleet_bar::install(api);
+    fleet_scanner::install(api);
 
     if is_ready() {
         return;

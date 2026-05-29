@@ -2,6 +2,7 @@
 //!
 //! Tracks `FleetBarViewController` and exposes the currently selected fleet from `FleetBarContext`.
 
+use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
 
 use log::warn;
@@ -37,10 +38,39 @@ static GET_FLEET_STATE_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::
 /// MethodInfo for `FleetPlayerData.get_Hull()`.
 static GET_FLEET_HULL_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// MethodInfo for `FleetPlayerData.get_Address()`.
+static GET_FLEET_ADDRESS_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
 /// MethodInfo for `HullSpec.get_Name()`.
 static GET_HULL_NAME_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// MethodInfo for `NodeAddress.get_System()`.
+static GET_NODE_ADDRESS_SYSTEM_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
 // ---- Public API -----------------------------------------------------------
+
+/// Details for the fleet selected in the bottom fleet bar.
+pub(crate) struct SelectedFleet {
+    pub(crate) index: Option<i32>,
+    pub(crate) id: Option<i64>,
+    pub(crate) system_id: Option<i64>,
+    pub(crate) state: Option<i32>,
+    pub(crate) hull_name: Option<String>,
+}
+
+impl fmt::Display for SelectedFleet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "selected fleet: index={}, id={}, system={}, state={}, hull={}",
+            format_optional_i32(self.index),
+            format_optional_i64(self.id),
+            format_optional_i64(self.system_id),
+            format_optional_i32(self.state),
+            format_optional_str(self.hull_name.as_deref()),
+        )
+    }
+}
 
 /// Install fleet bar tracking and accessors.
 pub(crate) fn install(api: &Il2CppApi) {
@@ -71,60 +101,61 @@ pub(crate) fn install(api: &Il2CppApi) {
     if method_missing(&GET_FLEET_ID_METHOD)
         || method_missing(&GET_FLEET_STATE_METHOD)
         || method_missing(&GET_FLEET_HULL_METHOD)
+        || method_missing(&GET_FLEET_ADDRESS_METHOD)
     {
-        if let Some(class) = resolve_model_class(api, "FleetPlayerData") {
+        if let Some(class) = resolver::resolve_prime_model_class(api, "FleetPlayerData") {
             resolve_method_if_missing(api, class, "get_Id", 0, &GET_FLEET_ID_METHOD, "Selected fleet");
             resolve_method_if_missing(api, class, "get_CurrentState", 0, &GET_FLEET_STATE_METHOD, "Selected fleet");
             resolve_method_if_missing(api, class, "get_Hull", 0, &GET_FLEET_HULL_METHOD, "Selected fleet");
+            resolve_method_if_missing(api, class, "get_Address", 0, &GET_FLEET_ADDRESS_METHOD, "Selected fleet");
         } else {
             warn!(target: LOG_TARGET, "FleetPlayerData class not found");
         }
     }
 
     if method_missing(&GET_HULL_NAME_METHOD) {
-        if let Some(class) = resolve_model_class(api, "HullSpec") {
+        if let Some(class) = resolver::resolve_prime_model_class(api, "HullSpec") {
             resolve_method_if_missing(api, class, "get_Name", 0, &GET_HULL_NAME_METHOD, "Selected fleet");
         } else {
             warn!(target: LOG_TARGET, "HullSpec class not found");
         }
     }
+
+    if method_missing(&GET_NODE_ADDRESS_SYSTEM_METHOD) {
+        if let Some(class) = resolver::resolve_prime_model_class(api, "NodeAddress") {
+            resolve_method_if_missing(api, class, "get_System", 0, &GET_NODE_ADDRESS_SYSTEM_METHOD, "Selected fleet");
+        } else {
+            warn!(target: LOG_TARGET, "NodeAddress class not found");
+        }
+    }
 }
 
-/// Human-readable snapshot of the fleet selected in the bottom fleet bar.
-pub(crate) fn describe_selected_fleet() -> String {
+/// Fleet selected in the bottom fleet bar.
+pub(crate) fn selected_fleet() -> Option<SelectedFleet> {
     let controller = fleet_bar::get();
     if controller.is_null() {
-        return "selected fleet unavailable: fleet bar controller unavailable".to_string();
+        return None;
     }
 
-    let Some(context) = fleet_bar_context(controller) else {
-        return "selected fleet unavailable: fleet bar context unavailable".to_string();
-    };
-
+    let context = fleet_bar_context(controller)?;
     let index = invoke::i32(
         GET_CURRENT_INDEX_METHOD.load(Relaxed),
         context,
         "FleetBarContext.get_CurrentIndex",
     );
-
-    let Some(fleet) = invoke::object(
+    let fleet = invoke::object(
         GET_CURRENT_FLEET_METHOD.load(Relaxed),
         context,
         "FleetBarContext.get_CurrentFleet",
-    ) else {
-        return format!(
-            "selected fleet unavailable: no current fleet, index={}",
-            format_optional_i32(index)
-        );
-    };
+    )?;
 
-    format!(
-        "selected fleet: index={}, id={}, state={}, hull={}",
-        format_optional_i32(index),
-        format_optional_i64(fleet_id(fleet)),
-        format_optional_i32(fleet_state(fleet)),
-        format_optional_str(fleet_hull_name(fleet).as_deref()),
-    )
+    Some(SelectedFleet {
+        index,
+        id: fleet_id(fleet),
+        system_id: fleet_system_id(fleet),
+        state: fleet_state(fleet),
+        hull_name: fleet_hull_name(fleet),
+    })
 }
 
 // ---- Fleet access ---------------------------------------------------------
@@ -150,6 +181,15 @@ fn fleet_hull_name(fleet: *mut Il2CppObject) -> Option<String> {
     invoke::string(GET_HULL_NAME_METHOD.load(Relaxed), hull, "HullSpec.get_Name")
 }
 
+fn fleet_system_id(fleet: *mut Il2CppObject) -> Option<i64> {
+    let address = invoke::object(GET_FLEET_ADDRESS_METHOD.load(Relaxed), fleet, "FleetPlayerData.get_Address")?;
+    valid_system_id(invoke::i64(
+        GET_NODE_ADDRESS_SYSTEM_METHOD.load(Relaxed),
+        address,
+        "NodeAddress.get_System",
+    ))
+}
+
 // ---- Formatting -----------------------------------------------------------
 
 fn format_optional_i32(value: Option<i32>) -> String {
@@ -164,6 +204,10 @@ fn format_optional_str(value: Option<&str>) -> String {
     value.unwrap_or("unknown").to_string()
 }
 
+fn valid_system_id(system_id: Option<i64>) -> Option<i64> {
+    system_id.filter(|system_id| *system_id >= 0)
+}
+
 // ---- Installation state ---------------------------------------------------
 
 fn is_ready() -> bool {
@@ -175,6 +219,8 @@ fn is_ready() -> bool {
         && !method_missing(&GET_FLEET_STATE_METHOD)
         && !method_missing(&GET_FLEET_HULL_METHOD)
         && !method_missing(&GET_HULL_NAME_METHOD)
+        && !method_missing(&GET_FLEET_ADDRESS_METHOD)
+        && !method_missing(&GET_NODE_ADDRESS_SYSTEM_METHOD)
 }
 
 fn install_tracker_once(api: &Il2CppApi, class: *mut Il2CppClass) {
@@ -184,16 +230,6 @@ fn install_tracker_once(api: &Il2CppApi, class: *mut Il2CppClass) {
 }
 
 // ---- Resolution helpers ---------------------------------------------------
-
-/// Resolve model classes across assemblies used by different game builds.
-fn resolve_model_class(api: &Il2CppApi, class_name: &str) -> Option<*mut Il2CppClass> {
-    for assembly in ["Digit.Client.PrimeLib.Runtime", "Assembly-CSharp", "Assembly-CSharp-firstpass"] {
-        if let Some(class) = resolver::resolve_class(api, assembly, "Digit.PrimeServer.Models", class_name) {
-            return Some(class);
-        }
-    }
-    None
-}
 
 fn method_missing(target: &AtomicPtr<MethodInfo>) -> bool {
     target.load(Relaxed).is_null()
