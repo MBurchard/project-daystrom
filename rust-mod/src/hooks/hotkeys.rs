@@ -344,7 +344,7 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
             CONSUMED_KEYCODE.store(KEYCODE_ESCAPE, Relaxed);
         }
         let main_kc = MAIN_ACTION_KEYCODE.load(Relaxed);
-        if main_kc != 0 && key_down(main_kc) && !is_input_focused() && super::main_action::check() {
+        if main_kc != 0 && key_down(main_kc) && !is_input_focused() && super::main_action::check().acted() {
             CONSUMED_KEYCODE.store(main_kc, Relaxed);
         }
     });

@@ -239,6 +239,33 @@ fn is_viewer_visible(instance: *const ()) -> bool {
 
 // ---- Action execution -----------------------------------------------------
 
+/// The concrete action that [`check`] performed, or [`ActionKind::None`] if nothing matched.
+///
+/// Knowing *which* action ran (not just *whether* one ran) lets the auto-engage state machine react to the
+/// UI state: a `Selected` result means a target was picked, an `Engaged` result means combat started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionKind {
+    /// No viewer matched and no fallback action was executed.
+    None,
+    /// A scan target or station was engaged (combat started or queued).
+    Engaged,
+    /// A mining node was activated.
+    Mined,
+    /// A warp to a star system was initiated.
+    Warped,
+    /// A set course command was submitted via the navigation context.
+    SetCourse,
+    /// A hostile fleet was selected as the next intercept target.
+    Selected,
+}
+
+impl ActionKind {
+    /// Returns `true` when an action was actually executed (the key press should be consumed).
+    pub fn acted(self) -> bool {
+        self != ActionKind::None
+    }
+}
+
 /// Called from `hotkeys::hook_update()` when the main action key is pressed and no input field is focused.
 ///
 /// Checks viewers in priority order and executes the primary action:
@@ -246,35 +273,40 @@ fn is_viewer_visible(instance: *const ()) -> bool {
 /// 2. Mining (mine node)
 /// 3. StarNode (initiate warp)
 /// 4. Navigation context with enabled Set Course action
+/// 5. Fleet scanner (select the fastest interceptable hostile)
 ///
-/// Returns `true` if an action was executed (the key should be consumed).
-pub fn check() -> bool {
+/// Returns the [`ActionKind`] that was executed, or [`ActionKind::None`] if nothing matched.
+pub fn check() -> ActionKind {
     let p = prescan::get();
     if !p.is_null() && is_viewer_visible(p) && try_engage(p) {
-        return true;
+        return ActionKind::Engaged;
     }
 
     // Station prescan (player bases) uses the same engage logic (inherited fields).
     let st = STATION_INSTANCE.load(Relaxed);
     if !st.is_null() && is_viewer_visible(st) && try_engage(st) {
-        return true;
+        return ActionKind::Engaged;
     }
 
     let m = mining::get();
     if !m.is_null() && is_viewer_visible(m) && try_mine(m) {
-        return true;
+        return ActionKind::Mined;
     }
 
     let s = starnode::get();
     if !s.is_null() && is_viewer_visible(s) {
-        return try_warp(s);
+        return if try_warp(s) { ActionKind::Warped } else { ActionKind::None };
     }
 
     if try_set_course() {
-        return true;
+        return ActionKind::SetCourse;
     }
 
-    fleet_scanner::try_select_next_hostile()
+    if fleet_scanner::try_select_next_hostile() {
+        ActionKind::Selected
+    } else {
+        ActionKind::None
+    }
 }
 
 /// Attempt to engage or queue on the PreScanTargetWidget.
@@ -919,7 +951,7 @@ mod tests {
 
     #[test]
     fn check_returns_false_without_instances() {
-        assert!(!check());
+        assert_eq!(check(), ActionKind::None);
     }
 
     #[test]

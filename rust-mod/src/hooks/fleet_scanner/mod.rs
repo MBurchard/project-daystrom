@@ -125,6 +125,20 @@ type ViewChangedFn = unsafe extern "C" fn(*mut Il2CppObject, *const MethodInfo);
 type NoParamEventFn = unsafe extern "C" fn(*const MethodInfo);
 type ActionFn = unsafe extern "C" fn(*mut Il2CppObject);
 
+/// Call a hook's stored original trampoline, forwarding the given arguments.
+///
+/// Loads the trampoline pointer from `$slot`, transmutes it to `$fn_ty`, and invokes it. A null slot (hook not
+/// installed) is a no-op. This collapses the repeated load/null-check/transmute/call boilerplate every hook needs.
+macro_rules! call_original {
+    ($slot:expr, $fn_ty:ty $(, $arg:expr)* $(,)?) => {{
+        let orig = $slot.load(Relaxed);
+        if !orig.is_null() {
+            let original: $fn_ty = unsafe { std::mem::transmute(orig) };
+            unsafe { original($($arg),*) };
+        }
+    }};
+}
+
 // ---- Hooks ----------------------------------------------------------------
 
 /// Observe fleet batches that enter a system and copy them into owned snapshots.
@@ -133,11 +147,7 @@ extern "C" fn hook_fleets_enter_system(
     fleets: *mut Il2CppList<*mut Il2CppObject>,
     method_info: *const MethodInfo,
 ) {
-    let orig = ORIG_FLEETS_ENTER_SYSTEM.load(Relaxed);
-    if !orig.is_null() {
-        let original: FleetsSystemFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(address, fleets, method_info) };
-    }
+    call_original!(ORIG_FLEETS_ENTER_SYSTEM, FleetsSystemFn, address, fleets, method_info);
 
     HOOK_INFO.run(|| process_enter_system(address, fleets));
 }
@@ -148,88 +158,56 @@ extern "C" fn hook_fleets_exit_system(
     fleets: *mut Il2CppList<*mut Il2CppObject>,
     method_info: *const MethodInfo,
 ) {
-    let orig = ORIG_FLEETS_EXIT_SYSTEM.load(Relaxed);
-    if !orig.is_null() {
-        let original: FleetsSystemFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(address, fleets, method_info) };
-    }
+    call_original!(ORIG_FLEETS_EXIT_SYSTEM, FleetsSystemFn, address, fleets, method_info);
 
     HOOK_INFO.run(|| process_exit_system(address, fleets));
 }
 
 /// Observe disposed fleets and remove matching owned snapshots.
 extern "C" fn hook_fleets_disposed(fleets: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
-    let orig = ORIG_FLEETS_DISPOSED.load(Relaxed);
-    if !orig.is_null() {
-        let original: FleetEventFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(fleets, method_info) };
-    }
+    call_original!(ORIG_FLEETS_DISPOSED, FleetEventFn, fleets, method_info);
 
     HOOK_INFO.run(|| process_fleets_disposed(fleets));
 }
 
 /// Observe regular fleet update batches.
 extern "C" fn hook_fleets_updated(fleets: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
-    let orig = ORIG_FLEETS_UPDATED.load(Relaxed);
-    if !orig.is_null() {
-        let original: FleetEventFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(fleets, method_info) };
-    }
+    call_original!(ORIG_FLEETS_UPDATED, FleetEventFn, fleets, method_info);
 
     HOOK_INFO.run(|| process_fleets_updated("fleet_update", fleets));
 }
 
 /// Observe fleet state-change batches, which use the same owned update path.
 extern "C" fn hook_fleet_state_change(fleets: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
-    let orig = ORIG_FLEET_STATE_CHANGE.load(Relaxed);
-    if !orig.is_null() {
-        let original: FleetEventFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(fleets, method_info) };
-    }
+    call_original!(ORIG_FLEET_STATE_CHANGE, FleetEventFn, fleets, method_info);
 
     HOOK_INFO.run(|| process_fleets_updated("fleet_state_change", fleets));
 }
 
 /// Observe finished courses for diagnostics.
 extern "C" fn hook_course_end(courses: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
-    let orig = ORIG_COURSE_END.load(Relaxed);
-    if !orig.is_null() {
-        let original: CourseEventFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(courses, method_info) };
-    }
+    call_original!(ORIG_COURSE_END, CourseEventFn, courses, method_info);
 
     HOOK_INFO.run(|| process_course_end(courses));
 }
 
 /// Observe concrete navigation view changes and set the viewed system.
 extern "C" fn hook_did_change_view(address: *mut Il2CppObject, method_info: *const MethodInfo) {
-    let orig = ORIG_DID_CHANGE_VIEW.load(Relaxed);
-    if !orig.is_null() {
-        let original: ViewChangedFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(address, method_info) };
-    }
+    call_original!(ORIG_DID_CHANGE_VIEW, ViewChangedFn, address, method_info);
 
     HOOK_INFO.run(|| set_viewed_system(node_address_system(address)));
 }
 
 /// Observe leaving the navigation view and clear the viewed system.
 extern "C" fn hook_leave_navigation_view(method_info: *const MethodInfo) {
-    let orig = ORIG_LEAVE_NAVIGATION_VIEW.load(Relaxed);
-    if !orig.is_null() {
-        let original: NoParamEventFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(method_info) };
-    }
+    call_original!(ORIG_LEAVE_NAVIGATION_VIEW, NoParamEventFn, method_info);
 
     HOOK_INFO.run(|| clear_viewed_system("leave_navigation_view"));
 }
 
 /// Track the NavigationManager instance while it is enabled and usable for POI selection.
 extern "C" fn hook_navigation_manager_enable(this: *mut Il2CppObject) {
-    let orig = ORIG_NAVIGATION_MANAGER_ENABLE.load(Relaxed);
-    if !orig.is_null() {
-        let original: ActionFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(this) };
-    }
+    call_original!(ORIG_NAVIGATION_MANAGER_ENABLE, ActionFn, this);
 
     HOOK_INFO.run(|| {
         NAVIGATION_MANAGER_INSTANCE.store(this as *mut (), Relaxed);
@@ -239,11 +217,7 @@ extern "C" fn hook_navigation_manager_enable(this: *mut Il2CppObject) {
 
 /// Release the tracked NavigationManager when it is disabled, which Unity runs before destroying it.
 extern "C" fn hook_navigation_manager_disable(this: *mut Il2CppObject) {
-    let orig = ORIG_NAVIGATION_MANAGER_DISABLE.load(Relaxed);
-    if !orig.is_null() {
-        let original: ActionFn = unsafe { std::mem::transmute(orig) };
-        unsafe { original(this) };
-    }
+    call_original!(ORIG_NAVIGATION_MANAGER_DISABLE, ActionFn, this);
 
     HOOK_INFO.run(|| {
         if NAVIGATION_MANAGER_INSTANCE
@@ -257,23 +231,22 @@ extern "C" fn hook_navigation_manager_disable(this: *mut Il2CppObject) {
 
 // ---- Processing ------------------------------------------------------------
 
-/// Select the hostile that can be intercepted fastest from the current fleet scan.
+/// The own fleet currently selected in the viewed system, resolved from the fleet bar and the own-fleet store.
 ///
-/// Returns `true` only when the target was selected in game.
-pub(crate) fn try_select_next_hostile() -> bool {
-    let Some(system_id) = navigation_view::current_viewed_system_id() else {
-        debug!(target: LOG_TARGET, "Skipped: no viewed system for hostile selection");
-        return false;
-    };
+/// All preconditions for acting on the own fleet are checked here: a system must be viewed, a fleet must be selected
+/// in that same system, and a live snapshot must exist. Returns `None` (with a diagnostic) when any fails, e.g. after
+/// the fleet was destroyed or left the system.
+fn selected_own_fleet() -> Option<Fleet> {
+    let system_id = navigation_view::current_viewed_system_id()?;
 
     let Some(selected_fleet) = fleet_bar::selected_fleet() else {
         debug!(target: LOG_TARGET, "Skipped: selected fleet unavailable for hostile selection");
-        return false;
+        return None;
     };
 
     let Some(fleet_id) = selected_fleet.id else {
         debug!(target: LOG_TARGET, "Skipped: selected fleet ID unavailable, {selected_fleet}");
-        return false;
+        return None;
     };
 
     if selected_fleet.system_id != Some(system_id) {
@@ -281,7 +254,7 @@ pub(crate) fn try_select_next_hostile() -> bool {
             target: LOG_TARGET,
             "Skipped: selected fleet is not in viewed system, viewed_system={system_id}, {selected_fleet}",
         );
-        return false;
+        return None;
     }
 
     let Some(own_fleet) = own_fleet(fleet_id) else {
@@ -289,6 +262,17 @@ pub(crate) fn try_select_next_hostile() -> bool {
             target: LOG_TARGET,
             "Skipped: selected own fleet snapshot unavailable, viewed_system={system_id}, {selected_fleet}",
         );
+        return None;
+    };
+
+    Some(own_fleet)
+}
+
+/// Select the hostile that can be intercepted fastest from the current fleet scan.
+///
+/// Returns `true` only when the target was selected in game.
+pub(crate) fn try_select_next_hostile() -> bool {
+    let Some(own_fleet) = selected_own_fleet() else {
         return false;
     };
     let hostiles = hostile_fleets();
@@ -461,11 +445,11 @@ fn intercept_selection_for_hostile<'a>(hostile: &'a Fleet, own_fleet: &Fleet) ->
     intercept_selection_from_state(hostile, current_position_for_intercept(own_fleet)?, impulse_speed(own_fleet)?)
 }
 
-fn intercept_selection_from_state<'a>(
-    hostile: &'a Fleet,
+fn intercept_selection_from_state(
+    hostile: &Fleet,
     own_position: Vector3,
     own_speed: f32,
-) -> Option<InterceptSelection<'a>> {
+) -> Option<InterceptSelection<'_>> {
     let target_position = current_position_for_intercept(hostile)?;
     let target_velocity = fleet_velocity(hostile);
     let time_seconds = intercept_time(own_position, own_speed, target_position, target_velocity)?;
@@ -848,7 +832,7 @@ fn viewed_store_event(event: PendingFleetEvent) -> Option<PendingFleetEvent> {
     }
 }
 
-/// Keep own-fleet snapshots globally, independent from the currently viewed system.
+/// Keep own-fleet snapshots globally, independent of the currently viewed system.
 fn process_global_own_fleet_event(event: &PendingFleetEvent) {
     match event {
         PendingFleetEvent::EnterSystem { system_id, fleets } => {
@@ -1513,6 +1497,53 @@ mod tests {
         Fleet { movement_state, ..fleet(id, kind) }
     }
 
+    /// Sample fleet at (10,0,20) impulsing toward (3,0,4) at speed 6, observed 2s ago.
+    ///
+    /// Shared by the projection tests, which need an identical motion profile and differ only in fleet kind.
+    fn moving_sample_fleet(kind: FleetKind) -> Fleet {
+        fleet_with_motion(
+            1,
+            kind,
+            Vector3 { x: 10.0, y: 0.0, z: 20.0 },
+            Some(6.0),
+            Some(Vector3 { x: 3.0, y: 0.0, z: 4.0 }),
+            Some(Duration::from_secs(2)),
+        )
+    }
+
+    /// Own fleet at the origin, stationary, with impulse speed 10. Reference point for the intercept tests.
+    fn origin_own_fleet() -> Fleet {
+        fleet_with_motion(1, FleetKind::Own, Vector3::default(), Some(10.0), None, None)
+    }
+
+    /// Hostile at (100,0,0) impulsing along +x at speed 5. Shared by the intercept selection tests.
+    fn hostile_moving_east(id: i64) -> Fleet {
+        fleet_with_motion(
+            id,
+            FleetKind::Hostile,
+            Vector3 { x: 100.0, y: 0.0, z: 0.0 },
+            Some(5.0),
+            Some(Vector3 { x: 1.0, y: 0.0, z: 0.0 }),
+            None,
+        )
+    }
+
+    /// Lock the viewed-system store and run an assertion closure against it.
+    fn with_store(check: impl FnOnce(&FleetStore)) {
+        let guard = FLEET_STORE.lock().unwrap_or_else(|e| e.into_inner());
+        check(guard.as_ref().expect("expected an initialized store"));
+    }
+
+    /// Assert which fleet IDs are present and which are absent in the viewed-system store.
+    fn assert_members(stored: &FleetStore, present: &[i64], absent: &[i64]) {
+        for id in present {
+            assert!(stored.fleets.contains_key(id), "expected fleet {id} present");
+        }
+        for id in absent {
+            assert!(!stored.fleets.contains_key(id), "expected fleet {id} absent");
+        }
+    }
+
     fn assert_vector_near(actual: Vector3, expected: Vector3) {
         const EPSILON: f32 = 0.01;
 
@@ -1571,14 +1602,7 @@ mod tests {
 
     #[test]
     fn projected_position_uses_observed_age_and_normalized_direction() {
-        let fleet = fleet_with_motion(
-            1,
-            FleetKind::Hostile,
-            Vector3 { x: 10.0, y: 0.0, z: 20.0 },
-            Some(6.0),
-            Some(Vector3 { x: 3.0, y: 0.0, z: 4.0 }),
-            Some(Duration::from_secs(2)),
-        );
+        let fleet = moving_sample_fleet(FleetKind::Hostile);
 
         assert_vector_near(
             current_projected_position(&fleet).expect("expected current position"),
@@ -1588,14 +1612,7 @@ mod tests {
 
     #[test]
     fn position_projects_only_while_impulsing() {
-        let fleet = fleet_with_motion(
-            1,
-            FleetKind::Own,
-            Vector3 { x: 10.0, y: 0.0, z: 20.0 },
-            Some(6.0),
-            Some(Vector3 { x: 3.0, y: 0.0, z: 4.0 }),
-            Some(Duration::from_secs(2)),
-        );
+        let fleet = moving_sample_fleet(FleetKind::Own);
 
         assert_vector_near(
             current_position_for_intercept(&fleet).expect("expected projected position"),
@@ -1623,14 +1640,7 @@ mod tests {
     fn unknown_position_uses_stored_position_without_projection() {
         let fleet = Fleet {
             movement_state: FleetMovementState::Unknown,
-            ..fleet_with_motion(
-                1,
-                FleetKind::Hostile,
-                Vector3 { x: 10.0, y: 0.0, z: 20.0 },
-                Some(6.0),
-                Some(Vector3 { x: 3.0, y: 0.0, z: 4.0 }),
-                Some(Duration::from_secs(2)),
-            )
+            ..moving_sample_fleet(FleetKind::Hostile)
         };
 
         assert_eq!(
@@ -1641,16 +1651,9 @@ mod tests {
 
     #[test]
     fn select_fastest_intercept_picks_lowest_calculated_time() {
-        let own_fleet = fleet_with_motion(1, FleetKind::Own, Vector3::default(), Some(10.0), None, None);
+        let own_fleet = origin_own_fleet();
         let hostiles = vec![
-            fleet_with_motion(
-                2,
-                FleetKind::Hostile,
-                Vector3 { x: 100.0, y: 0.0, z: 0.0 },
-                Some(5.0),
-                Some(Vector3 { x: 1.0, y: 0.0, z: 0.0 }),
-                None,
-            ),
+            hostile_moving_east(2),
             fleet_with_motion(3, FleetKind::Hostile, Vector3 { x: 90.0, y: 0.0, z: 0.0 }, None, None, None),
         ];
 
@@ -1663,7 +1666,7 @@ mod tests {
 
     #[test]
     fn select_fastest_intercept_skips_hostiles_without_position() {
-        let own_fleet = fleet_with_motion(1, FleetKind::Own, Vector3::default(), Some(10.0), None, None);
+        let own_fleet = origin_own_fleet();
         let mut hostile = fleet(2, FleetKind::Hostile);
         hostile.system_position = None;
 
@@ -1672,17 +1675,10 @@ mod tests {
 
     #[test]
     fn select_fastest_intercept_skips_warping_hostiles() {
-        let own_fleet = fleet_with_motion(1, FleetKind::Own, Vector3::default(), Some(10.0), None, None);
+        let own_fleet = origin_own_fleet();
         let hostile = Fleet {
             movement_state: FleetMovementState::Warping,
-            ..fleet_with_motion(
-                2,
-                FleetKind::Hostile,
-                Vector3 { x: 100.0, y: 0.0, z: 0.0 },
-                Some(5.0),
-                Some(Vector3 { x: 1.0, y: 0.0, z: 0.0 }),
-                None,
-            )
+            ..hostile_moving_east(2)
         };
 
         assert!(select_fastest_intercept(&own_fleet, &[hostile]).is_none());
@@ -1793,14 +1789,12 @@ mod tests {
             sorted_actions(&changes),
             vec![(1, FleetStoreAction::Inserted), (2, FleetStoreAction::Inserted)]
         );
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert_eq!(stored.fleets.len(), 2);
-            assert_eq!(stored.fleets.get(&1).unwrap().kind, FleetKind::Player);
-            assert_eq!(stored.fleets.get(&2).unwrap().kind, FleetKind::Hostile);
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert_eq!(s.fleets.len(), 2);
+            assert_eq!(s.fleets.get(&1).unwrap().kind, FleetKind::Player);
+            assert_eq!(s.fleets.get(&2).unwrap().kind, FleetKind::Hostile);
+        });
 
         reset_store();
     }
@@ -1817,12 +1811,7 @@ mod tests {
         };
         assert_eq!(stored, 1);
         assert_eq!(sorted_actions(&changes), vec![(2, FleetStoreAction::Inserted)]);
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert!(!stored.fleets.contains_key(&1));
-            assert!(stored.fleets.contains_key(&2));
-        }
+        with_store(|s| assert_members(s, &[2], &[1]));
 
         reset_store();
     }
@@ -1840,12 +1829,10 @@ mod tests {
         assert_eq!(stored, 1);
         assert_eq!(sorted_actions(&changes), vec![(1, FleetStoreAction::Inserted)]);
         assert_eq!(changes.first().unwrap().fleet.kind, FleetKind::Hostile);
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert_eq!(stored.fleets.get(&1).unwrap().kind, FleetKind::Hostile);
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert_eq!(s.fleets.get(&1).unwrap().kind, FleetKind::Hostile);
+        });
 
         reset_store();
     }
@@ -1887,14 +1874,11 @@ mod tests {
         };
         assert_eq!(stored, 1);
         assert_eq!(sorted_actions(&changes), vec![(2, FleetStoreAction::Inserted)]);
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(8));
-            assert_eq!(stored.fleets.len(), 1);
-            assert!(stored.fleets.contains_key(&2));
-            assert!(!stored.fleets.contains_key(&1));
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(8));
+            assert_eq!(s.fleets.len(), 1);
+            assert_members(s, &[2], &[1]);
+        });
 
         reset_store();
     }
@@ -1925,15 +1909,13 @@ mod tests {
             sorted_actions(&changes),
             vec![(2, FleetStoreAction::Updated), (3, FleetStoreAction::Inserted)]
         );
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert_eq!(stored.fleets.len(), 3);
-            assert_eq!(stored.fleets.get(&1).unwrap().kind, FleetKind::Player);
-            assert_eq!(stored.fleets.get(&2).unwrap().kind, FleetKind::Armada);
-            assert_eq!(stored.fleets.get(&3).unwrap().kind, FleetKind::Npc);
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert_eq!(s.fleets.len(), 3);
+            assert_eq!(s.fleets.get(&1).unwrap().kind, FleetKind::Player);
+            assert_eq!(s.fleets.get(&2).unwrap().kind, FleetKind::Armada);
+            assert_eq!(s.fleets.get(&3).unwrap().kind, FleetKind::Npc);
+        });
 
         reset_store();
     }
@@ -2021,16 +2003,13 @@ mod tests {
             sorted_actions(&result.changes),
             vec![(2, FleetStoreAction::Updated), (3, FleetStoreAction::Inserted)]
         );
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.fleets.len(), 3);
-            assert_eq!(stored.fleets.get(&1).unwrap().kind, FleetKind::Player);
-            assert_eq!(stored.fleets.get(&2).unwrap().kind, FleetKind::Armada);
-            assert_eq!(stored.fleets.get(&3).unwrap().kind, FleetKind::Npc);
-            assert!(!stored.fleets.contains_key(&4));
-            assert!(!stored.fleets.contains_key(&5));
-        }
+        with_store(|s| {
+            assert_eq!(s.fleets.len(), 3);
+            assert_eq!(s.fleets.get(&1).unwrap().kind, FleetKind::Player);
+            assert_eq!(s.fleets.get(&2).unwrap().kind, FleetKind::Armada);
+            assert_eq!(s.fleets.get(&3).unwrap().kind, FleetKind::Npc);
+            assert_members(s, &[], &[4, 5]);
+        });
 
         reset_store();
     }
@@ -2045,12 +2024,7 @@ mod tests {
         assert_eq!(result.inserted, 1);
         assert_eq!(result.ignored, 0);
         assert_eq!(sorted_actions(&result.changes), vec![(2, FleetStoreAction::Inserted)]);
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert!(!stored.fleets.contains_key(&1));
-            assert!(stored.fleets.contains_key(&2));
-        }
+        with_store(|s| assert_members(s, &[2], &[1]));
 
         reset_store();
     }
@@ -2180,13 +2154,11 @@ mod tests {
         assert_eq!(result.updated, 1);
         assert_eq!(result.ignored, 0);
         assert_eq!(result.total, 1);
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            let fleet = stored.fleets.get(&2).unwrap();
+        with_store(|s| {
+            let fleet = s.fleets.get(&2).unwrap();
             assert_eq!(fleet.kind, FleetKind::Armada);
             assert_eq!(fleet.system_id, Some(7));
-        }
+        });
 
         reset_store();
     }
@@ -2233,14 +2205,12 @@ mod tests {
         assert_eq!(result.changes[0].changed_fields[0].name, "position");
         assert_eq!(result.changes[0].changed_fields[0].old_value, "(1.00, 2.00, 3.00)");
         assert_eq!(result.changes[0].changed_fields[0].new_value, "(9.00, 8.00, 7.00)");
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
+        with_store(|s| {
             assert_eq!(
-                stored.fleets.get(&2).unwrap().system_position,
+                s.fleets.get(&2).unwrap().system_position,
                 Some(Vector3 { x: 9.0, y: 8.0, z: 7.0 })
             );
-        }
+        });
 
         reset_store();
     }
@@ -2258,13 +2228,10 @@ mod tests {
         assert_eq!(result.ignored_fleet_ids, vec![3]);
         assert_eq!(result.total, 1);
         assert_eq!(sorted_actions(&result.changes), vec![(2, FleetStoreAction::Vanished)]);
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.fleets.len(), 1);
-            assert!(stored.fleets.contains_key(&1));
-            assert!(!stored.fleets.contains_key(&2));
-        }
+        with_store(|s| {
+            assert_eq!(s.fleets.len(), 1);
+            assert_members(s, &[1], &[2]);
+        });
 
         reset_store();
     }
@@ -2297,12 +2264,10 @@ mod tests {
         set_viewed_system(Some(7));
 
         assert!(PENDING_FLEET_EVENTS.lock().unwrap().is_empty());
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert!(stored.fleets.contains_key(&1));
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert_members(s, &[1], &[]);
+        });
 
         reset_store();
     }
@@ -2361,12 +2326,10 @@ mod tests {
 
         assert_eq!(navigation_view::current_viewed_system_id(), None);
         assert_eq!(PENDING_FLEET_EVENTS.lock().unwrap().len(), 1);
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert!(stored.fleets.contains_key(&1));
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert_members(s, &[1], &[]);
+        });
 
         reset_store();
     }
@@ -2381,13 +2344,10 @@ mod tests {
 
         assert!(process_remove_refs("fleet_exit_system", 7, vec![fleet_ref(1, Some(7))]));
 
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert!(!stored.fleets.contains_key(&1));
-            assert!(stored.fleets.contains_key(&2));
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert_members(s, &[2], &[1]);
+        });
 
         reset_store();
     }
@@ -2404,13 +2364,11 @@ mod tests {
             fleets: vec![fleet_in_system(1, FleetKind::Armada, None)],
         });
 
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            let fleet = stored.fleets.get(&1).unwrap();
+        with_store(|s| {
+            let fleet = s.fleets.get(&1).unwrap();
             assert_eq!(fleet.kind, FleetKind::Armada);
             assert_eq!(fleet.system_id, Some(7));
-        }
+        });
 
         reset_store();
     }
@@ -2426,12 +2384,10 @@ mod tests {
             fleets: vec![fleet(1, FleetKind::Hostile)],
         });
 
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert!(stored.fleets.contains_key(&1));
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert_members(s, &[1], &[]);
+        });
 
         reset_store();
     }
@@ -2447,12 +2403,10 @@ mod tests {
             fleets: vec![fleet_in_system(1, FleetKind::Hostile, None), fleet_in_system(2, FleetKind::Hostile, Some(8))],
         });
 
-        {
-            let guard = FLEET_STORE.lock().unwrap();
-            let stored = guard.as_ref().unwrap();
-            assert_eq!(stored.system_id, Some(7));
-            assert!(stored.fleets.is_empty());
-        }
+        with_store(|s| {
+            assert_eq!(s.system_id, Some(7));
+            assert!(s.fleets.is_empty());
+        });
 
         reset_store();
     }

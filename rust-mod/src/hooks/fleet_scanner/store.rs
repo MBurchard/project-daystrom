@@ -78,6 +78,44 @@ pub(super) fn own_fleet(fleet_id: i64) -> Option<Fleet> {
 
 // ---- Store mutations -------------------------------------------------------
 
+/// Outcome of merging an incoming fleet into an existing viewed-system store entry.
+enum UpsertOutcome {
+    /// No field changed. The entry was refreshed in place without producing a change record.
+    Unchanged,
+    /// At least one field changed. Carries the resulting change record.
+    Updated(FleetStoreChange),
+}
+
+/// Merge an incoming `fleet` into its existing store entry, reporting whether anything changed.
+///
+/// A systemless incoming update inherits the existing system id, so the last known system is kept until an
+/// explicit dispose clears it.
+fn merge_existing_fleet(existing: &mut Fleet, mut fleet: Fleet) -> UpsertOutcome {
+    fleet.system_id = fleet.system_id.or(existing.system_id);
+    let changed_fields = diff_fleet(existing, &fleet);
+    if changed_fields.is_empty() {
+        *existing = fleet;
+        UpsertOutcome::Unchanged
+    } else {
+        *existing = fleet.clone();
+        UpsertOutcome::Updated(FleetStoreChange {
+            action: FleetStoreAction::Updated,
+            fleet,
+            changed_fields,
+        })
+    }
+}
+
+/// Insert a brand-new fleet into the store and build its `Inserted` change record.
+fn insert_new_fleet(store: &mut FleetStore, fleet: Fleet) -> FleetStoreChange {
+    store.fleets.insert(fleet.id, fleet.clone());
+    FleetStoreChange {
+        action: FleetStoreAction::Inserted,
+        fleet,
+        changed_fields: Vec::new(),
+    }
+}
+
 /// Replace or upsert the viewed-system store from an enter-system fleet batch.
 pub(super) fn store_enter_fleets(system_id: i64, fleets: Vec<Fleet>) -> StoreEnterResult {
     let mut guard = FLEET_STORE.lock().unwrap_or_else(|e| e.into_inner());
@@ -124,30 +162,18 @@ pub(super) fn store_enter_fleets(system_id: i64, fleets: Vec<Fleet>) -> StoreEnt
     let mut unchanged = 0;
     let mut changes = Vec::with_capacity(fleets.len());
 
-    for mut fleet in fleets {
+    for fleet in fleets {
         if let Some(existing) = store.fleets.get_mut(&fleet.id) {
-            fleet.system_id = fleet.system_id.or(existing.system_id);
-            let changed_fields = diff_fleet(existing, &fleet);
-            if changed_fields.is_empty() {
-                unchanged += 1;
-                *existing = fleet;
-            } else {
-                *existing = fleet.clone();
-                updated += 1;
-                changes.push(FleetStoreChange {
-                    action: FleetStoreAction::Updated,
-                    fleet,
-                    changed_fields,
-                });
+            match merge_existing_fleet(existing, fleet) {
+                UpsertOutcome::Unchanged => unchanged += 1,
+                UpsertOutcome::Updated(change) => {
+                    updated += 1;
+                    changes.push(change);
+                }
             }
         } else {
             added += 1;
-            store.fleets.insert(fleet.id, fleet.clone());
-            changes.push(FleetStoreChange {
-                action: FleetStoreAction::Inserted,
-                fleet,
-                changed_fields: Vec::new(),
-            });
+            changes.push(insert_new_fleet(store, fleet));
         }
     }
 
@@ -172,34 +198,22 @@ pub(super) fn store_update_fleets(system_id: i64, fleets: Vec<Fleet>) -> StoreUp
     let mut changes = Vec::with_capacity(fleets.len());
     let mut ignored_fleet_ids = Vec::new();
 
-    for mut fleet in fleets {
+    for fleet in fleets {
         if !is_viewed_system_fleet(&fleet) {
             continue;
         }
 
         if let Some(existing) = store.fleets.get_mut(&fleet.id) {
-            fleet.system_id = fleet.system_id.or(existing.system_id);
-            let changed_fields = diff_fleet(existing, &fleet);
-            if changed_fields.is_empty() {
-                unchanged += 1;
-                *existing = fleet;
-            } else {
-                *existing = fleet.clone();
-                updated += 1;
-                changes.push(FleetStoreChange {
-                    action: FleetStoreAction::Updated,
-                    fleet,
-                    changed_fields,
-                });
+            match merge_existing_fleet(existing, fleet) {
+                UpsertOutcome::Unchanged => unchanged += 1,
+                UpsertOutcome::Updated(change) => {
+                    updated += 1;
+                    changes.push(change);
+                }
             }
         } else if fleet.system_id == Some(system_id) {
-            store.fleets.insert(fleet.id, fleet.clone());
             inserted += 1;
-            changes.push(FleetStoreChange {
-                action: FleetStoreAction::Inserted,
-                fleet,
-                changed_fields: Vec::new(),
-            });
+            changes.push(insert_new_fleet(store, fleet));
         } else {
             ignored += 1;
             ignored_fleet_ids.push(fleet.id);
