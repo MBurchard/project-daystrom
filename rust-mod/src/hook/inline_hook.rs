@@ -120,43 +120,73 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     let mut saved = vec![0u8; total_len];
     unsafe { std::ptr::copy_nonoverlapping(target as *const u8, saved.as_mut_ptr(), total_len) };
 
+    // Calculate trampoline code size (short branches expand from 2 to 5/6 bytes)
+    let trampoline_code_len: usize = decoded.iter().map(|i| i.expansion.as_ref().map_or(i.len, |e| e.len)).sum();
+
     // Allocate trampoline within ±2GB of target so relocated RIP-relative
     // displacements still fit in 32 bits.
-    let trampoline_size = total_len + HOOK_SIZE;
+    let trampoline_size = trampoline_code_len + HOOK_SIZE;
     const X86_RIP_RANGE: usize = 0x4000_0000; // ±1GB (conservative for ±2GB RIP-relative)
     let trampoline_mem = unsafe { alloc_near(target_addr, trampoline_size, X86_RIP_RANGE)? };
     let trampoline_addr = trampoline_mem as usize;
 
     // Copy instructions to trampoline, relocating RIP-relative references
+    // and expanding short branches (Jcc/JMP rel8 → rel32).
     let mut src_offset = 0;
     let mut dst_offset = 0;
     for insn in &decoded {
-        let src = &saved[src_offset..src_offset + insn.len];
-        let dst = unsafe { std::slice::from_raw_parts_mut((trampoline_mem as *mut u8).add(dst_offset), insn.len) };
-        dst.copy_from_slice(src);
+        if let Some(ref exp) = insn.expansion {
+            // Write expanded branch bytes to trampoline
+            let dst = unsafe { std::slice::from_raw_parts_mut((trampoline_mem as *mut u8).add(dst_offset), exp.len) };
+            dst.copy_from_slice(&exp.bytes[..exp.len]);
 
-        // Fix up RIP-relative displacement if present
-        if let Some(reloc_off) = insn.reloc_offset {
-            let disp_ptr = unsafe { (trampoline_mem as *mut u8).add(dst_offset + reloc_off) as *mut i32 };
+            // Relocate the displacement for the new trampoline position.
+            // old_rip uses the original instruction length, new_rip uses the expanded length.
+            let disp_ptr = unsafe { (trampoline_mem as *mut u8).add(dst_offset + exp.reloc_offset) as *mut i32 };
             let old_disp = unsafe { disp_ptr.read_unaligned() } as i64;
             let old_rip = (target_addr + src_offset + insn.len) as i64;
-            let new_rip = (trampoline_addr + dst_offset + insn.len) as i64;
+            let new_rip = (trampoline_addr + dst_offset + exp.len) as i64;
             let abs_target = old_rip + old_disp;
             let new_disp = abs_target - new_rip;
 
             if new_disp > i32::MAX as i64 || new_disp < i32::MIN as i64 {
                 return Err(format!(
-                    "relocation overflow: trampoline too far from original code \
-                     (delta: {new_disp:#x}, max ±{:#x}). \
-                     Consider allocating trampoline near the target.",
+                    "relocation overflow on expanded branch \
+                     (delta: {new_disp:#x}, max ±{:#x})",
                     i32::MAX
                 ));
             }
             unsafe { disp_ptr.write_unaligned(new_disp as i32) };
-        }
 
-        src_offset += insn.len;
-        dst_offset += insn.len;
+            src_offset += insn.len;
+            dst_offset += exp.len;
+        } else {
+            // Copy original bytes, fix up RIP-relative displacement if present
+            let src = &saved[src_offset..src_offset + insn.len];
+            let dst = unsafe { std::slice::from_raw_parts_mut((trampoline_mem as *mut u8).add(dst_offset), insn.len) };
+            dst.copy_from_slice(src);
+
+            if let Some(reloc_off) = insn.reloc_offset {
+                let disp_ptr = unsafe { (trampoline_mem as *mut u8).add(dst_offset + reloc_off) as *mut i32 };
+                let old_disp = unsafe { disp_ptr.read_unaligned() } as i64;
+                let old_rip = (target_addr + src_offset + insn.len) as i64;
+                let new_rip = (trampoline_addr + dst_offset + insn.len) as i64;
+                let abs_target = old_rip + old_disp;
+                let new_disp = abs_target - new_rip;
+
+                if new_disp > i32::MAX as i64 || new_disp < i32::MIN as i64 {
+                    return Err(format!(
+                        "relocation overflow: trampoline too far from original code \
+                         (delta: {new_disp:#x}, max ±{:#x})",
+                        i32::MAX
+                    ));
+                }
+                unsafe { disp_ptr.write_unaligned(new_disp as i32) };
+            }
+
+            src_offset += insn.len;
+            dst_offset += insn.len;
+        }
     }
 
     // Write jump back to the instruction after our patch

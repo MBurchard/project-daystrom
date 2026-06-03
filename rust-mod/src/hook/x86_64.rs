@@ -10,6 +10,7 @@ const M: u8 = 0x01; // has ModR/M byte
 const I1: u8 = 0x02; // has 1-byte immediate
 const I4: u8 = 0x04; // has 4-byte immediate (2-byte with 0x66 prefix)
 const R4: u8 = 0x10; // is rel32 branch (CALL/JMP/Jcc) — needs relocation
+const R1: u8 = 0x20; // is rel8 branch (Jcc/JMP short) — needs expansion to rel32
 const XX: u8 = 0x80; // unhandled opcode — decoder returns an error
 
 // ---- One-byte opcode table ------------------------------------------------
@@ -35,8 +36,8 @@ const OP1: [u8; 256] = [
     0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
     // 0x60 misc (PUSHA/POPA invalid in 64-bit, MOVSXD, prefixes, PUSH/IMUL imm)
     XX,   XX,   XX,   M,    0,    0,    0,    0,    I4,   M|I4, I1,   M|I1, 0,    0,    0,    0,
-    // 0x70 Jcc rel8 — marked XX: short branches need expansion, not simple relocation
-    XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,   XX,
+    // 0x70 Jcc rel8 — expanded to Jcc rel32 during trampoline construction
+    R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,   R1,
     // 0x80 Group1 imm, TEST, XCHG, MOV, LEA, POP
     M|I1, M|I4, XX,   M|I1, M,    M,    M,    M,    M,    M,    M,    M,    M,    M,    M,    M,
     // 0x90 NOP, XCHG, CBW, CWD, CALLF(XX), FWAIT, PUSHF, POPF, SAHF, LAHF
@@ -49,8 +50,8 @@ const OP1: [u8; 256] = [
     M|I1, M|I1, XX,   0,    XX,   XX,   M|I1, M|I4, XX,   0,    XX,   0,    0,    I1,   XX,   0,
     // 0xD0 shifts, BCD(XX), XLAT, x87 FPU (all have ModR/M)
     M,    M,    M,    M,    XX,   XX,   XX,   0,    M,    M,    M,    M,    M,    M,    M,    M,
-    // 0xE0 LOOP(XX), IN/OUT imm8, CALL/JMP rel32, JMPF(XX), JMP rel8(XX), IN/OUT DX
-    XX,   XX,   XX,   XX,   I1,   I1,   I1,   I1,   R4,   R4,   XX,   XX,   0,    0,    0,    0,
+    // 0xE0 LOOP(XX), IN/OUT imm8, CALL/JMP rel32, JMPF(XX), JMP rel8, IN/OUT DX
+    XX,   XX,   XX,   XX,   I1,   I1,   I1,   I1,   R4,   R4,   XX,   R1,   0,    0,    0,    0,
     // 0xF0 LOCK, INT1(XX), REP, HLT, CMC, Group3, CLC..STD, Group4/5
     0,    XX,   0,    0,    0,    0,    M,    M,    0,    0,    0,    0,    0,    0,    M,    M,
 ];
@@ -137,6 +138,21 @@ const fn make_op2() -> [u8; 256] {
 
 // ---- Decoded instruction --------------------------------------------------
 
+/// A short branch expanded to its near (rel32) equivalent for trampoline relocation.
+///
+/// `Jcc rel8` (2 bytes) becomes `Jcc rel32` (6 bytes: `0F 80+cc disp32`).
+/// `JMP rel8` (2 bytes) becomes `JMP rel32` (5 bytes: `E9 disp32`).
+/// The displacement is initially the sign-extended original rel8 value (relative to
+/// the original next-IP). The trampoline builder recomputes it for the new location.
+pub struct Expansion {
+    /// Expanded instruction bytes. Only the first `len` bytes are valid.
+    pub bytes: [u8; 6],
+    /// Number of valid bytes in `bytes` (5 for JMP, 6 for Jcc).
+    pub len: usize,
+    /// Byte offset of the rel32 displacement within `bytes`.
+    pub reloc_offset: usize,
+}
+
 /// Result of decoding a single x86_64 instruction.
 pub struct Insn {
     /// Total instruction length in bytes (including all prefixes).
@@ -147,14 +163,20 @@ pub struct Insn {
     /// relative branch targets (CALL/JMP/Jcc rel32). In both cases the adjustment
     /// formula is the same: `new_disp = old_disp + (old_addr - new_addr)`.
     pub reloc_offset: Option<usize>,
+    /// Short branch (Jcc/JMP rel8) expanded to its rel32 equivalent.
+    ///
+    /// When present, the trampoline builder emits the expanded bytes (not the original)
+    /// and applies relocation to the displacement within.
+    pub expansion: Option<Expansion>,
 }
 
 // ---- Decoder --------------------------------------------------------------
 
 /// Decode one x86_64 instruction, returning its length and relocation info.
 ///
-/// Returns an error for opcodes that cannot be safely relocated (short branches,
-/// exotic encodings, or truly invalid instructions in 64-bit mode).
+/// Short branches (`Jcc rel8`, `JMP rel8`) are decoded and returned with an
+/// [`Expansion`] that the trampoline builder uses to emit the near-jump equivalent.
+/// Returns an error for exotic encodings or truly invalid instructions in 64-bit mode.
 pub fn decode(code: &[u8]) -> Result<Insn, String> {
     if code.is_empty() {
         return Err("empty code buffer".to_string());
@@ -217,7 +239,37 @@ pub fn decode(code: &[u8]) -> Result<Insn, String> {
         return Err(format!("unhandled opcode {opcode:#04x} at byte {}", pos - 1));
     }
 
-    // 4. ModR/M + optional SIB + displacement
+    // 4. Short branch expansion (Jcc rel8 / JMP rel8)
+    if flags & R1 != 0 {
+        let disp8 = *code.get(pos).ok_or("truncated at rel8 displacement")? as i8;
+        pos += 1;
+        let d = (disp8 as i32).to_le_bytes();
+
+        let expansion = if opcode == 0xEB {
+            // JMP rel8 → JMP rel32 (E9 disp32)
+            Expansion {
+                bytes: [0xE9, d[0], d[1], d[2], d[3], 0],
+                len: 5,
+                reloc_offset: 1,
+            }
+        } else {
+            // Jcc rel8 → Jcc rel32 (0F 80+cc disp32)
+            let cc = 0x80 | (opcode & 0x0F);
+            Expansion {
+                bytes: [0x0F, cc, d[0], d[1], d[2], d[3]],
+                len: 6,
+                reloc_offset: 2,
+            }
+        };
+
+        return Ok(Insn {
+            len: pos,
+            reloc_offset: None,
+            expansion: Some(expansion),
+        });
+    }
+
+    // 5. ModR/M + optional SIB + displacement
     let mut reloc_offset = None;
     let mut modrm_reg = 0u8;
 
@@ -294,7 +346,7 @@ pub fn decode(code: &[u8]) -> Result<Insn, String> {
         return Err(format!("instruction extends beyond buffer ({pos} > {})", code.len()));
     }
 
-    Ok(Insn { len: pos, reloc_offset })
+    Ok(Insn { len: pos, reloc_offset, expansion: None })
 }
 
 // ---- Tests ----------------------------------------------------------------
@@ -411,18 +463,43 @@ mod tests {
         assert_eq!(reloc(&bytes), Some(2));
     }
 
-    // -- Short branches are rejected --
+    // -- Short branches are expanded --
 
     #[test]
-    fn jcc_rel8_rejected() {
-        // 74 05 = JE +5 (short branch, needs expansion)
-        assert!(decode(&[0x74, 0x05]).is_err());
+    fn jcc_rel8_expanded() {
+        // 75 05 = JNZ +5 → expanded to 0F 85 disp32
+        let insn = decode(&[0x75, 0x05]).unwrap();
+        assert_eq!(insn.len, 2);
+        assert!(insn.reloc_offset.is_none());
+        let exp = insn.expansion.unwrap();
+        assert_eq!(exp.len, 6);
+        assert_eq!(exp.reloc_offset, 2);
+        assert_eq!(&exp.bytes[..2], &[0x0F, 0x85]);
+        assert_eq!(&exp.bytes[2..6], &5_i32.to_le_bytes());
     }
 
     #[test]
-    fn jmp_rel8_rejected() {
-        // EB 05 = JMP +5
-        assert!(decode(&[0xEB, 0x05]).is_err());
+    fn jcc_rel8_negative_disp() {
+        // 74 FA = JE -6 → expanded to 0F 84 disp32
+        let insn = decode(&[0x74, 0xFA]).unwrap();
+        assert_eq!(insn.len, 2);
+        let exp = insn.expansion.unwrap();
+        assert_eq!(exp.len, 6);
+        assert_eq!(&exp.bytes[..2], &[0x0F, 0x84]);
+        assert_eq!(&exp.bytes[2..6], &(-6_i32).to_le_bytes());
+    }
+
+    #[test]
+    fn jmp_rel8_expanded() {
+        // EB 05 = JMP +5 → expanded to E9 disp32
+        let insn = decode(&[0xEB, 0x05]).unwrap();
+        assert_eq!(insn.len, 2);
+        assert!(insn.reloc_offset.is_none());
+        let exp = insn.expansion.unwrap();
+        assert_eq!(exp.len, 5);
+        assert_eq!(exp.reloc_offset, 1);
+        assert_eq!(exp.bytes[0], 0xE9);
+        assert_eq!(&exp.bytes[1..5], &5_i32.to_le_bytes());
     }
 
     // -- MOV with immediate --
