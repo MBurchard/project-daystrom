@@ -107,8 +107,7 @@ static ORIG_FLEETS_DISPOSED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut()
 static ORIG_FLEETS_UPDATED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_FLEET_STATE_CHANGE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_COURSE_END: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static ORIG_DID_CHANGE_VIEW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static ORIG_LEAVE_NAVIGATION_VIEW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_CHANGE_VIEW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_NAVIGATION_MANAGER_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_NAVIGATION_MANAGER_DISABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -121,8 +120,7 @@ static HOOK_INFO: HookInfo = HookInfo::new(LOG_TARGET);
 type FleetsSystemFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
 type FleetEventFn = unsafe extern "C" fn(*mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
 type CourseEventFn = unsafe extern "C" fn(*mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
-type ViewChangedFn = unsafe extern "C" fn(*mut Il2CppObject, *const MethodInfo);
-type NoParamEventFn = unsafe extern "C" fn(*const MethodInfo);
+type ChangeViewFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject, i64, *const MethodInfo);
 type ActionFn = unsafe extern "C" fn(*mut Il2CppObject);
 
 /// Call a hook's stored original trampoline, forwarding the given arguments.
@@ -191,18 +189,34 @@ extern "C" fn hook_course_end(courses: *mut Il2CppList<*mut Il2CppObject>, metho
     HOOK_INFO.run(|| process_course_end(courses));
 }
 
-/// Observe concrete navigation view changes and set the viewed system.
-extern "C" fn hook_did_change_view(address: *mut Il2CppObject, method_info: *const MethodInfo) {
-    call_original!(ORIG_DID_CHANGE_VIEW, ViewChangedFn, address, method_info);
+/// Post-hook on `NavigationManager.ChangeView(ChangeViewData, Nullable<ZoomLevels>)`.
+///
+/// Reads the `NodeAddress` from `ChangeViewData.address` (offset 0x10) and extracts the system ID.
+/// This replaces the old `TriggerDidChangeViewEvent` hook which was inlined by MSVC on Windows.
+extern "C" fn hook_change_view(
+    this: *mut Il2CppObject,
+    data: *mut Il2CppObject,
+    zoom: i64,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_CHANGE_VIEW, ChangeViewFn, this, data, zoom, method_info);
 
-    HOOK_INFO.run(|| set_viewed_system(node_address_system(address)));
-}
-
-/// Observe leaving the navigation view and clear the viewed system.
-extern "C" fn hook_leave_navigation_view(method_info: *const MethodInfo) {
-    call_original!(ORIG_LEAVE_NAVIGATION_VIEW, NoParamEventFn, method_info);
-
-    HOOK_INFO.run(|| clear_viewed_system("leave_navigation_view"));
+    HOOK_INFO.run(|| {
+        if data.is_null() {
+            return;
+        }
+        // ChangeViewData.address is a NodeAddress at offset 0x10.
+        let address = unsafe { tracker::read_ptr(data as *const (), 0x10) };
+        if address.is_null() {
+            warn!(target: LOG_TARGET, "ChangeView fired but ChangeViewData.address is null");
+            return;
+        }
+        let system_id = node_address_system(address as *mut Il2CppObject);
+        if system_id.is_none() {
+            warn!(target: LOG_TARGET, "ChangeView fired but system ID unavailable from NodeAddress");
+        }
+        set_viewed_system(system_id);
+    });
 }
 
 /// Track the NavigationManager instance while it is enabled and usable for POI selection.
@@ -215,7 +229,10 @@ extern "C" fn hook_navigation_manager_enable(this: *mut Il2CppObject) {
     });
 }
 
-/// Release the tracked NavigationManager when it is disabled, which Unity runs before destroying it.
+/// Release the tracked NavigationManager and clear the viewed system when it is disabled.
+///
+/// Unity runs `OnDisable` before destroying the object, so this is safe for cleanup.
+/// This replaces the old `TriggerLeaveNavigationViewEvent` hook.
 extern "C" fn hook_navigation_manager_disable(this: *mut Il2CppObject) {
     call_original!(ORIG_NAVIGATION_MANAGER_DISABLE, ActionFn, this);
 
@@ -224,6 +241,7 @@ extern "C" fn hook_navigation_manager_disable(this: *mut Il2CppObject) {
             .compare_exchange(this as *mut (), std::ptr::null_mut(), Relaxed, Relaxed)
             .is_ok()
         {
+            clear_viewed_system("navigation_manager_disabled");
             trace!(target: LOG_TARGET, "NavigationManager instance released on disable");
         }
     });
@@ -1187,7 +1205,6 @@ pub fn install(api: &Il2CppApi) {
     install_model_accessors(api);
     install_node_address_accessors(api);
     install_navigation_selection(api);
-    install_navigation_view_hooks(api);
     install_event_hooks(api);
     trace!(target: LOG_TARGET, "Fleet scanner install finished");
 }
@@ -1213,8 +1230,7 @@ fn is_ready() -> bool {
         && !method_missing(&NAVIGATION_MANAGER_SELECT_POI_METHOD)
         && !method_missing(&GET_COURSE_FLEET_ID_FN)
         && !method_missing(&GET_COURSE_SYSTEM_POSITION_FN)
-        && !ORIG_DID_CHANGE_VIEW.load(Relaxed).is_null()
-        && !ORIG_LEAVE_NAVIGATION_VIEW.load(Relaxed).is_null()
+        && !ORIG_CHANGE_VIEW.load(Relaxed).is_null()
         && !ORIG_NAVIGATION_MANAGER_ENABLE.load(Relaxed).is_null()
         && !ORIG_NAVIGATION_MANAGER_DISABLE.load(Relaxed).is_null()
         && !ORIG_FLEETS_ENTER_SYSTEM.load(Relaxed).is_null()
@@ -1286,6 +1302,7 @@ fn install_navigation_selection(api: &Il2CppApi) {
 
     resolve_fn_if_missing(api, class, "CanSelectPoi", 1, &NAVIGATION_MANAGER_CAN_SELECT_POI_METHOD);
     resolve_fn_if_missing(api, class, "SelectPoi", 1, &NAVIGATION_MANAGER_SELECT_POI_METHOD);
+    install_hook(api, class, "ChangeView", 2, hook_change_view as *const (), &ORIG_CHANGE_VIEW);
     install_hook(
         api,
         class,
@@ -1301,35 +1318,6 @@ fn install_navigation_selection(api: &Il2CppApi) {
         0,
         hook_navigation_manager_disable as *const (),
         &ORIG_NAVIGATION_MANAGER_DISABLE,
-    );
-}
-
-/// Hook navigation view events that provide the viewed system lifecycle.
-fn install_navigation_view_hooks(api: &Il2CppApi) {
-    let Some(events_class) =
-        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationCameraEvents")
-    else {
-        warn!(target: LOG_TARGET, "NavigationCameraEvents class not found");
-        return;
-    };
-
-    trace!(target: LOG_TARGET, "NavigationCameraEvents class found in assembly 'Assembly-CSharp'");
-
-    install_hook(
-        api,
-        events_class,
-        "TriggerDidChangeViewEvent",
-        1,
-        hook_did_change_view as *const (),
-        &ORIG_DID_CHANGE_VIEW,
-    );
-    install_hook(
-        api,
-        events_class,
-        "TriggerLeaveNavigationViewEvent",
-        0,
-        hook_leave_navigation_view as *const (),
-        &ORIG_LEAVE_NAVIGATION_VIEW,
     );
 }
 
