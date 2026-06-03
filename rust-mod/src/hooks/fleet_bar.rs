@@ -3,11 +3,11 @@
 //! Tracks `FleetBarViewController` and exposes the currently selected fleet from `FleetBarContext`.
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::warn;
 
-use crate::hooks::tracker::instance_tracker;
+use crate::hooks::tracker::{self, instance_tracker};
 use crate::il2cpp::api::Il2CppApi;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
@@ -47,6 +47,9 @@ static GET_HULL_NAME_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::nu
 /// MethodInfo for `NodeAddress.get_System()`.
 static GET_NODE_ADDRESS_SYSTEM_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// `FleetPlayerData.LocationData`.
+static OFFSET_FLEET_LOCATION_DATA: AtomicUsize = AtomicUsize::new(0);
+
 // ---- Public API -----------------------------------------------------------
 
 /// Details for the fleet selected in the bottom fleet bar.
@@ -56,6 +59,7 @@ pub(crate) struct SelectedFleet {
     pub(crate) system_id: Option<i64>,
     pub(crate) state: Option<i32>,
     pub(crate) hull_name: Option<String>,
+    pub(crate) location_data: Option<*mut Il2CppObject>,
 }
 
 impl fmt::Display for SelectedFleet {
@@ -102,12 +106,14 @@ pub(crate) fn install(api: &Il2CppApi) {
         || method_missing(&GET_FLEET_STATE_METHOD)
         || method_missing(&GET_FLEET_HULL_METHOD)
         || method_missing(&GET_FLEET_ADDRESS_METHOD)
+        || field_missing(&OFFSET_FLEET_LOCATION_DATA)
     {
         if let Some(class) = resolver::resolve_prime_model_class(api, "FleetPlayerData") {
             resolve_method_if_missing(api, class, "get_Id", 0, &GET_FLEET_ID_METHOD, "Selected fleet");
             resolve_method_if_missing(api, class, "get_CurrentState", 0, &GET_FLEET_STATE_METHOD, "Selected fleet");
             resolve_method_if_missing(api, class, "get_Hull", 0, &GET_FLEET_HULL_METHOD, "Selected fleet");
             resolve_method_if_missing(api, class, "get_Address", 0, &GET_FLEET_ADDRESS_METHOD, "Selected fleet");
+            resolve_field_if_missing(api, class, "LocationData", &OFFSET_FLEET_LOCATION_DATA, "Selected fleet");
         } else {
             warn!(target: LOG_TARGET, "FleetPlayerData class not found");
         }
@@ -155,6 +161,7 @@ pub(crate) fn selected_fleet() -> Option<SelectedFleet> {
         system_id: fleet_system_id(fleet),
         state: fleet_state(fleet),
         hull_name: fleet_hull_name(fleet),
+        location_data: fleet_location_data(fleet),
     })
 }
 
@@ -190,6 +197,16 @@ fn fleet_system_id(fleet: *mut Il2CppObject) -> Option<i64> {
     ))
 }
 
+fn fleet_location_data(fleet: *mut Il2CppObject) -> Option<*mut Il2CppObject> {
+    let offset = OFFSET_FLEET_LOCATION_DATA.load(Relaxed);
+    if offset == 0 {
+        return None;
+    }
+
+    let location_data = unsafe { tracker::read_ptr(fleet as *const (), offset) } as *mut Il2CppObject;
+    (!location_data.is_null()).then_some(location_data)
+}
+
 // ---- Formatting -----------------------------------------------------------
 
 fn format_optional_i32(value: Option<i32>) -> String {
@@ -221,6 +238,7 @@ fn is_ready() -> bool {
         && !method_missing(&GET_HULL_NAME_METHOD)
         && !method_missing(&GET_FLEET_ADDRESS_METHOD)
         && !method_missing(&GET_NODE_ADDRESS_SYSTEM_METHOD)
+        && !field_missing(&OFFSET_FLEET_LOCATION_DATA)
 }
 
 fn install_tracker_once(api: &Il2CppApi, class: *mut Il2CppClass) {
@@ -233,6 +251,10 @@ fn install_tracker_once(api: &Il2CppApi, class: *mut Il2CppClass) {
 
 fn method_missing(target: &AtomicPtr<MethodInfo>) -> bool {
     target.load(Relaxed).is_null()
+}
+
+fn field_missing(target: &AtomicUsize) -> bool {
+    target.load(Relaxed) == 0
 }
 
 fn resolve_method_if_missing(
@@ -249,5 +271,21 @@ fn resolve_method_if_missing(
 
     if !resolver::resolve_method_into(api, class, method_name, param_count, target) {
         warn!(target: LOG_TARGET, "{feature} unavailable: method {method_name} not resolved");
+    }
+}
+
+fn resolve_field_if_missing(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    field_name: &str,
+    target: &AtomicUsize,
+    feature: &str,
+) {
+    if !field_missing(target) {
+        return;
+    }
+
+    if !resolver::resolve_field_offset_into(api, class, field_name, target) {
+        warn!(target: LOG_TARGET, "{feature} unavailable: field {field_name} not resolved");
     }
 }

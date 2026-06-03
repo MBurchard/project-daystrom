@@ -104,12 +104,17 @@ static OFFSET_CHANGE_VIEW_DATA_ADDRESS: AtomicUsize = AtomicUsize::new(0);
 
 // ---- Original trampolines --------------------------------------------------
 
-static ORIG_FLEETS_ENTER_SYSTEM: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static ORIG_FLEETS_EXIT_SYSTEM: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static ORIG_FLEETS_DISPOSED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static ORIG_FLEETS_UPDATED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static ORIG_FLEET_STATE_CHANGE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_COURSE_END: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FLEET_DATA_ADDED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FLEET_DATA_UPDATED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FLEET_DATA_DISPOSED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FLEET_DATA_ENTER_SYSTEM: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FLEET_DATA_EXIT_SYSTEM: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_EVENT_FLEET_ADDED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_EVENT_FLEET_DISPOSED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_EVENT_FLEET_UPDATED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_EVENT_FLEET_STATE_CHANGED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_PLAYER_FLEET_UPDATED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_CHANGE_VIEW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_NAVIGATION_MANAGER_ENABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_NAVIGATION_MANAGER_DISABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -120,8 +125,11 @@ static HOOK_INFO: HookInfo = HookInfo::new(LOG_TARGET);
 
 // ---- Type aliases ----------------------------------------------------------
 
-type FleetsSystemFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
-type FleetEventFn = unsafe extern "C" fn(*mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
+type InstanceFleetEventFn =
+    unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
+type InstanceFleetsSystemFn =
+    unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject, *mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
+type ContainerFleetEventFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject, *const MethodInfo);
 type CourseEventFn = unsafe extern "C" fn(*mut Il2CppList<*mut Il2CppObject>, *const MethodInfo);
 type ChangeViewFn = unsafe extern "C" fn(*mut Il2CppObject, *mut Il2CppObject, i64, *const MethodInfo);
 type ActionFn = unsafe extern "C" fn(*mut Il2CppObject);
@@ -142,54 +150,133 @@ macro_rules! call_original {
 
 // ---- Hooks ----------------------------------------------------------------
 
-/// Observe fleet batches that enter a system and copy them into owned snapshots.
-extern "C" fn hook_fleets_enter_system(
-    address: *mut Il2CppObject,
-    fleets: *mut Il2CppList<*mut Il2CppObject>,
-    method_info: *const MethodInfo,
-) {
-    call_original!(ORIG_FLEETS_ENTER_SYSTEM, FleetsSystemFn, address, fleets, method_info);
-
-    HOOK_INFO.run(|| process_enter_system(address, fleets));
-}
-
-/// Observe fleet batches that leave a system and remove those fleets from the viewed store when relevant.
-extern "C" fn hook_fleets_exit_system(
-    address: *mut Il2CppObject,
-    fleets: *mut Il2CppList<*mut Il2CppObject>,
-    method_info: *const MethodInfo,
-) {
-    call_original!(ORIG_FLEETS_EXIT_SYSTEM, FleetsSystemFn, address, fleets, method_info);
-
-    HOOK_INFO.run(|| process_exit_system(address, fleets));
-}
-
-/// Observe disposed fleets and remove matching owned snapshots.
-extern "C" fn hook_fleets_disposed(fleets: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
-    call_original!(ORIG_FLEETS_DISPOSED, FleetEventFn, fleets, method_info);
-
-    HOOK_INFO.run(|| process_fleets_disposed(fleets));
-}
-
-/// Observe regular fleet update batches.
-extern "C" fn hook_fleets_updated(fleets: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
-    call_original!(ORIG_FLEETS_UPDATED, FleetEventFn, fleets, method_info);
-
-    HOOK_INFO.run(|| process_fleets_updated("fleet_update", fleets));
-}
-
-/// Observe fleet state-change batches, which use the same owned update path.
-extern "C" fn hook_fleet_state_change(fleets: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
-    call_original!(ORIG_FLEET_STATE_CHANGE, FleetEventFn, fleets, method_info);
-
-    HOOK_INFO.run(|| process_fleets_updated("fleet_state_change", fleets));
-}
-
 /// Observe finished courses for diagnostics.
 extern "C" fn hook_course_end(courses: *mut Il2CppList<*mut Il2CppObject>, method_info: *const MethodInfo) {
     call_original!(ORIG_COURSE_END, CourseEventFn, courses, method_info);
 
     HOOK_INFO.run(|| process_course_end(courses));
+}
+
+extern "C" fn hook_fleet_data_added(
+    this: *mut Il2CppObject,
+    fleets: *mut Il2CppList<*mut Il2CppObject>,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_FLEET_DATA_ADDED, InstanceFleetEventFn, this, fleets, method_info);
+
+    HOOK_INFO.run(|| process_fleets_updated("fleet_added", fleets));
+}
+
+extern "C" fn hook_fleet_data_updated(
+    this: *mut Il2CppObject,
+    fleets: *mut Il2CppList<*mut Il2CppObject>,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_FLEET_DATA_UPDATED, InstanceFleetEventFn, this, fleets, method_info);
+
+    HOOK_INFO.run(|| process_fleets_updated("fleet_update", fleets));
+}
+
+extern "C" fn hook_fleet_data_disposed(
+    this: *mut Il2CppObject,
+    fleets: *mut Il2CppList<*mut Il2CppObject>,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_FLEET_DATA_DISPOSED, InstanceFleetEventFn, this, fleets, method_info);
+
+    HOOK_INFO.run(|| process_fleets_disposed(fleets));
+}
+
+extern "C" fn hook_fleet_data_enter_system(
+    this: *mut Il2CppObject,
+    address: *mut Il2CppObject,
+    fleets: *mut Il2CppList<*mut Il2CppObject>,
+    method_info: *const MethodInfo,
+) {
+    call_original!(
+        ORIG_FLEET_DATA_ENTER_SYSTEM,
+        InstanceFleetsSystemFn,
+        this,
+        address,
+        fleets,
+        method_info
+    );
+
+    HOOK_INFO.run(|| process_enter_system(address, fleets));
+}
+
+extern "C" fn hook_fleet_data_exit_system(
+    this: *mut Il2CppObject,
+    address: *mut Il2CppObject,
+    fleets: *mut Il2CppList<*mut Il2CppObject>,
+    method_info: *const MethodInfo,
+) {
+    call_original!(
+        ORIG_FLEET_DATA_EXIT_SYSTEM,
+        InstanceFleetsSystemFn,
+        this,
+        address,
+        fleets,
+        method_info
+    );
+
+    HOOK_INFO.run(|| process_exit_system(address, fleets));
+}
+
+extern "C" fn hook_player_fleet_updated(
+    this: *mut Il2CppObject,
+    fleet: *mut Il2CppObject,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_PLAYER_FLEET_UPDATED, ContainerFleetEventFn, this, fleet, method_info);
+
+    HOOK_INFO.run(|| process_player_fleet_updated(fleet));
+}
+
+extern "C" fn hook_event_fleet_added(
+    this: *mut Il2CppObject,
+    fleet: *mut Il2CppObject,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_EVENT_FLEET_ADDED, ContainerFleetEventFn, this, fleet, method_info);
+
+    if ORIG_FLEET_DATA_ADDED.load(Relaxed).is_null() {
+        HOOK_INFO.run(|| process_single_fleet_updated("fleet_added", fleet));
+    }
+}
+
+extern "C" fn hook_event_fleet_disposed(
+    this: *mut Il2CppObject,
+    fleet: *mut Il2CppObject,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_EVENT_FLEET_DISPOSED, ContainerFleetEventFn, this, fleet, method_info);
+
+    if ORIG_FLEET_DATA_DISPOSED.load(Relaxed).is_null() {
+        HOOK_INFO.run(|| process_single_fleet_disposed(fleet));
+    }
+}
+
+extern "C" fn hook_event_fleet_updated(
+    this: *mut Il2CppObject,
+    fleet: *mut Il2CppObject,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_EVENT_FLEET_UPDATED, ContainerFleetEventFn, this, fleet, method_info);
+
+    if ORIG_FLEET_DATA_UPDATED.load(Relaxed).is_null() {
+        HOOK_INFO.run(|| process_single_fleet_updated("fleet_update", fleet));
+    }
+}
+
+extern "C" fn hook_event_fleet_state_changed(
+    this: *mut Il2CppObject,
+    fleet: *mut Il2CppObject,
+    method_info: *const MethodInfo,
+) {
+    call_original!(ORIG_EVENT_FLEET_STATE_CHANGED, ContainerFleetEventFn, this, fleet, method_info);
+
+    HOOK_INFO.run(|| process_single_fleet_updated("fleet_state_change", fleet));
 }
 
 /// Post-hook on `NavigationManager.ChangeView(ChangeViewData, Nullable<ZoomLevels>)`.
@@ -289,7 +376,7 @@ fn selected_own_fleet() -> Option<Fleet> {
         return None;
     }
 
-    let Some(own_fleet) = own_fleet(fleet_id) else {
+    let Some(own_fleet) = own_fleet(fleet_id).or_else(|| selected_own_fleet_from_location_data(&selected_fleet)) else {
         debug!(
             target: LOG_TARGET,
             "Skipped: selected own fleet snapshot unavailable, viewed_system={system_id}, {selected_fleet}",
@@ -298,6 +385,41 @@ fn selected_own_fleet() -> Option<Fleet> {
     };
 
     Some(own_fleet)
+}
+
+fn selected_own_fleet_from_location_data(selected_fleet: &fleet_bar::SelectedFleet) -> Option<Fleet> {
+    let location_data = selected_fleet.location_data?;
+    let fleet = inspect_fleet(location_data)?;
+
+    if fleet.kind != FleetKind::Own || Some(fleet.id) != selected_fleet.id {
+        trace!(
+            target: LOG_TARGET,
+            "Selected fleet LocationData ignored: expected_id={}, snapshot_id={}, kind={:?}",
+            format_optional_i64(selected_fleet.id),
+            fleet.id,
+            fleet.kind,
+        );
+        return None;
+    }
+
+    let changes = store_own_fleets(&[fleet.clone()]);
+    if changes.is_empty() {
+        trace!(
+            target: LOG_TARGET,
+            "Own fleet store unchanged: reason=selected_fleet_location_data, fleet_id={}",
+            fleet.id,
+        );
+    } else {
+        log_fleet_changes(
+            &format!(
+                "Own fleet store update: reason=selected_fleet_location_data, changed={}",
+                changes.len()
+            ),
+            &changes,
+        );
+    }
+
+    Some(fleet)
 }
 
 /// Select the hostile that can be intercepted fastest from the current fleet scan.
@@ -711,6 +833,45 @@ fn process_fleets_updated(reason: &'static str, fleets: *mut Il2CppList<*mut Il2
     route_fleet_event(PendingFleetEvent::Update { reason, fleets });
 }
 
+fn process_single_fleet_updated(reason: &'static str, fleet: *mut Il2CppObject) {
+    let Some(fleet) = inspect_fleet(fleet) else {
+        trace!(target: LOG_TARGET, "Fleet update ignored: reason={reason}, fleet=unreadable");
+        return;
+    };
+
+    route_fleet_event(PendingFleetEvent::Update { reason, fleets: vec![fleet] });
+}
+
+fn process_single_fleet_disposed(fleet: *mut Il2CppObject) {
+    let Some(fleet) = inspect_fleet_ref(fleet) else {
+        trace!(target: LOG_TARGET, "Fleet dispose ignored: fleet=unreadable");
+        return;
+    };
+
+    route_fleet_event(PendingFleetEvent::Dispose { fleets: vec![fleet] });
+}
+
+/// Convert a single player-fleet update into an owned snapshot.
+fn process_player_fleet_updated(fleet: *mut Il2CppObject) {
+    if fleet.is_null() {
+        trace!(target: LOG_TARGET, "Player fleet update ignored: fleet=null");
+        return;
+    }
+
+    let Some(fleet) = inspect_fleet(fleet) else {
+        trace!(target: LOG_TARGET, "Player fleet update ignored: unreadable fleet");
+        return;
+    };
+
+    let changes = store_own_fleets(&[fleet]);
+    if !changes.is_empty() {
+        log_fleet_changes(
+            &format!("Own fleet store update: reason=player_fleet_updated, changed={}", changes.len()),
+            &changes,
+        );
+    }
+}
+
 /// Read ended courses for diagnostics only.
 fn process_course_end(courses: *mut Il2CppList<*mut Il2CppObject>) {
     for course in unsafe { list_objects(courses) } {
@@ -753,7 +914,12 @@ fn process_update_fleets(reason: &str, system_id: i64, fleets: Vec<Fleet>) -> bo
         );
     }
 
-    if reason == "fleet_update" || changes.is_empty() || is_movement_only_update(&changes) {
+    if reason == "fleet_update"
+        || reason == "fleet_added"
+        || reason == "fleet_state_change"
+        || changes.is_empty()
+        || is_movement_only_update(&changes)
+    {
         trace_fleet_changes(&summary, &changes);
     } else {
         log_fleet_changes(&summary, &changes);
@@ -1223,7 +1389,9 @@ pub fn install(api: &Il2CppApi) {
     install_node_address_accessors(api);
     install_change_view_data_accessors(api);
     install_navigation_selection(api);
-    install_event_hooks(api);
+    install_fleet_data_system_hooks(api);
+    install_fleet_event_container_hooks(api);
+    install_course_event_hook(api);
     trace!(target: LOG_TARGET, "Fleet scanner install finished");
 }
 
@@ -1252,12 +1420,16 @@ fn is_ready() -> bool {
         && !ORIG_CHANGE_VIEW.load(Relaxed).is_null()
         && !ORIG_NAVIGATION_MANAGER_ENABLE.load(Relaxed).is_null()
         && !ORIG_NAVIGATION_MANAGER_DISABLE.load(Relaxed).is_null()
-        && !ORIG_FLEETS_ENTER_SYSTEM.load(Relaxed).is_null()
-        && !ORIG_FLEETS_EXIT_SYSTEM.load(Relaxed).is_null()
-        && !ORIG_FLEETS_DISPOSED.load(Relaxed).is_null()
-        && !ORIG_FLEETS_UPDATED.load(Relaxed).is_null()
-        && !ORIG_FLEET_STATE_CHANGE.load(Relaxed).is_null()
+        && fleet_data_system_hooks_ready()
         && !ORIG_COURSE_END.load(Relaxed).is_null()
+}
+
+fn fleet_data_system_hooks_ready() -> bool {
+    !ORIG_FLEET_DATA_ADDED.load(Relaxed).is_null()
+        && !ORIG_FLEET_DATA_UPDATED.load(Relaxed).is_null()
+        && !ORIG_FLEET_DATA_DISPOSED.load(Relaxed).is_null()
+        && !ORIG_FLEET_DATA_ENTER_SYSTEM.load(Relaxed).is_null()
+        && !ORIG_FLEET_DATA_EXIT_SYSTEM.load(Relaxed).is_null()
 }
 
 /// Resolve all FleetDeployedData and HullSpec getters used for snapshots.
@@ -1351,53 +1523,112 @@ fn install_navigation_selection(api: &Il2CppApi) {
     );
 }
 
-/// Hook deployment events that provide fleet lifecycle changes.
-fn install_event_hooks(api: &Il2CppApi) {
-    let Some(events_class) = resolver::resolve_prime_class(api, "Digit.PrimeServer.Events", "DeploymentEvents") else {
-        warn!(target: LOG_TARGET, "DeploymentEvents class not found");
+/// Hook FleetDataSystem instance handlers, which are large enough to survive MSVC inlining of event wrappers.
+fn install_fleet_data_system_hooks(api: &Il2CppApi) {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.Core.Systems", "FleetDataSystem")
+    else {
+        warn!(target: LOG_TARGET, "FleetDataSystem class not found");
         return;
     };
 
     install_hook(
         api,
-        events_class,
-        "TriggerFleetsEnterSystemEvent",
+        class,
+        "OnFleetsAddedEvent",
+        1,
+        hook_fleet_data_added as *const (),
+        &ORIG_FLEET_DATA_ADDED,
+    );
+    install_hook(
+        api,
+        class,
+        "OnFleetsUpdatedEvent",
+        1,
+        hook_fleet_data_updated as *const (),
+        &ORIG_FLEET_DATA_UPDATED,
+    );
+    install_hook(
+        api,
+        class,
+        "OnFleetsDisposedEvent",
+        1,
+        hook_fleet_data_disposed as *const (),
+        &ORIG_FLEET_DATA_DISPOSED,
+    );
+    install_hook(
+        api,
+        class,
+        "OnFleetsEnterSystemEvent",
         2,
-        hook_fleets_enter_system as *const (),
-        &ORIG_FLEETS_ENTER_SYSTEM,
+        hook_fleet_data_enter_system as *const (),
+        &ORIG_FLEET_DATA_ENTER_SYSTEM,
     );
     install_hook(
         api,
-        events_class,
-        "TriggerFleetsExitSystemEvent",
+        class,
+        "OnFleetsExitSystemEvent",
         2,
-        hook_fleets_exit_system as *const (),
-        &ORIG_FLEETS_EXIT_SYSTEM,
+        hook_fleet_data_exit_system as *const (),
+        &ORIG_FLEET_DATA_EXIT_SYSTEM,
+    );
+}
+
+/// Hook a non-inline event-container method that carries direct player-fleet snapshots.
+fn install_fleet_event_container_hooks(api: &Il2CppApi) {
+    let Some(class) = resolver::resolve_prime_class(api, "Digit.PrimeServer.Services", "FleetEventContainer") else {
+        warn!(target: LOG_TARGET, "FleetEventContainer class not found");
+        return;
+    };
+
+    install_hook(
+        api,
+        class,
+        "AddFleetAdded",
+        1,
+        hook_event_fleet_added as *const (),
+        &ORIG_EVENT_FLEET_ADDED,
     );
     install_hook(
         api,
-        events_class,
-        "TriggerFleetsDisposedEvent",
+        class,
+        "AddFleetDisposed",
         1,
-        hook_fleets_disposed as *const (),
-        &ORIG_FLEETS_DISPOSED,
+        hook_event_fleet_disposed as *const (),
+        &ORIG_EVENT_FLEET_DISPOSED,
     );
     install_hook(
         api,
-        events_class,
-        "TriggerFleetsUpdatedEvent",
+        class,
+        "AddFleetUpdated",
         1,
-        hook_fleets_updated as *const (),
-        &ORIG_FLEETS_UPDATED,
+        hook_event_fleet_updated as *const (),
+        &ORIG_EVENT_FLEET_UPDATED,
     );
     install_hook(
         api,
-        events_class,
-        "TriggerFleetStateChangeEvent",
+        class,
+        "AddPlayerFleetUpdated",
         1,
-        hook_fleet_state_change as *const (),
-        &ORIG_FLEET_STATE_CHANGE,
+        hook_player_fleet_updated as *const (),
+        &ORIG_PLAYER_FLEET_UPDATED,
     );
+    install_hook(
+        api,
+        class,
+        "AddFleetStateChanged",
+        1,
+        hook_event_fleet_state_changed as *const (),
+        &ORIG_EVENT_FLEET_STATE_CHANGED,
+    );
+}
+
+/// Hook course events for diagnostics.
+fn install_course_event_hook(api: &Il2CppApi) {
+    let Some(events_class) = resolver::resolve_prime_class(api, "Digit.PrimeServer.Events", "DeploymentEvents") else {
+        warn!(target: LOG_TARGET, "DeploymentEvents class not found");
+        return;
+    };
+
     install_hook(
         api,
         events_class,
