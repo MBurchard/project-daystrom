@@ -153,6 +153,15 @@ pub struct Expansion {
     pub reloc_offset: usize,
 }
 
+/// Kind of 32-bit displacement relocation needed by an instruction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RelocKind {
+    /// RIP-relative memory access such as `MOV RAX, [RIP+disp32]`.
+    RipRelative,
+    /// Relative control-flow target such as `CALL/JMP/Jcc rel32`.
+    RelativeBranch,
+}
+
 /// Result of decoding a single x86_64 instruction.
 pub struct Insn {
     /// Total instruction length in bytes (including all prefixes).
@@ -163,6 +172,9 @@ pub struct Insn {
     /// relative branch targets (CALL/JMP/Jcc rel32). In both cases the adjustment
     /// formula is the same: `new_disp = old_disp + (old_addr - new_addr)`.
     pub reloc_offset: Option<usize>,
+    /// Semantic kind of `reloc_offset`, used to distinguish data references from branch targets that may need remapping
+    /// inside the trampoline.
+    pub reloc_kind: Option<RelocKind>,
     /// Short branch (Jcc/JMP rel8) expanded to its rel32 equivalent.
     ///
     /// When present, the trampoline builder emits the expanded bytes (not the original)
@@ -265,12 +277,14 @@ pub fn decode(code: &[u8]) -> Result<Insn, String> {
         return Ok(Insn {
             len: pos,
             reloc_offset: None,
+            reloc_kind: None,
             expansion: Some(expansion),
         });
     }
 
     // 5. ModR/M + optional SIB + displacement
     let mut reloc_offset = None;
+    let mut reloc_kind = None;
     let mut modrm_reg = 0u8;
 
     if flags & M != 0 {
@@ -286,6 +300,7 @@ pub fn decode(code: &[u8]) -> Result<Insn, String> {
                 if rm == 0b101 {
                     // [RIP + disp32] — this is the one we need to relocate
                     reloc_offset = Some(pos);
+                    reloc_kind = Some(RelocKind::RipRelative);
                     pos += 4;
                 } else if rm == 0b100 {
                     // SIB byte follows
@@ -328,6 +343,7 @@ pub fn decode(code: &[u8]) -> Result<Insn, String> {
     if flags & R4 != 0 {
         // Relative branch (CALL/JMP/Jcc rel32) — always 4 bytes, needs relocation
         reloc_offset = Some(pos);
+        reloc_kind = Some(RelocKind::RelativeBranch);
         pos += 4;
     } else if flags & I4 != 0 {
         // 4-byte immediate (or special cases)
@@ -346,7 +362,12 @@ pub fn decode(code: &[u8]) -> Result<Insn, String> {
         return Err(format!("instruction extends beyond buffer ({pos} > {})", code.len()));
     }
 
-    Ok(Insn { len: pos, reloc_offset, expansion: None })
+    Ok(Insn {
+        len: pos,
+        reloc_offset,
+        reloc_kind,
+        expansion: None,
+    })
 }
 
 // ---- Tests ----------------------------------------------------------------

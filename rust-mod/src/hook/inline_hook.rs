@@ -99,6 +99,7 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
 /// Decodes instructions at the hook target to find a clean boundary (>= 14 bytes), copies
 /// them to a trampoline with RIP-relative displacement fixups, and writes a jump back to the
 /// continuation address. This correctly handles LEA [RIP+...], MOV [RIP+...], CALL rel32, etc.
+/// Relative branches that target copied instructions are remapped to the trampoline copy.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*const (), String> {
     let target_addr = target as usize;
@@ -120,8 +121,8 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     let mut saved = vec![0u8; total_len];
     unsafe { std::ptr::copy_nonoverlapping(target as *const u8, saved.as_mut_ptr(), total_len) };
 
-    // Calculate trampoline code size (short branches expand from 2 to 5/6 bytes)
-    let trampoline_code_len: usize = decoded.iter().map(|i| i.expansion.as_ref().map_or(i.len, |e| e.len)).sum();
+    // Calculate trampoline code size and source-to-trampoline offsets.
+    let (trampoline_code_len, offset_map) = x86_trampoline_offsets(&decoded);
 
     // Allocate trampoline within ±2GB of target so relocated RIP-relative
     // displacements still fit in 32 bits.
@@ -147,6 +148,7 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
             let old_rip = (target_addr + src_offset + insn.len) as i64;
             let new_rip = (trampoline_addr + dst_offset + exp.len) as i64;
             let abs_target = old_rip + old_disp;
+            let abs_target = x86_remap_branch_target(abs_target, target_addr, total_len, trampoline_addr, &offset_map)?;
             let new_disp = abs_target - new_rip;
 
             if new_disp > i32::MAX as i64 || new_disp < i32::MIN as i64 {
@@ -171,7 +173,11 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
                 let old_disp = unsafe { disp_ptr.read_unaligned() } as i64;
                 let old_rip = (target_addr + src_offset + insn.len) as i64;
                 let new_rip = (trampoline_addr + dst_offset + insn.len) as i64;
-                let abs_target = old_rip + old_disp;
+                let mut abs_target = old_rip + old_disp;
+                if insn.reloc_kind == Some(super::x86_64::RelocKind::RelativeBranch) {
+                    abs_target =
+                        x86_remap_branch_target(abs_target, target_addr, total_len, trampoline_addr, &offset_map)?;
+                }
                 let new_disp = abs_target - new_rip;
 
                 if new_disp > i32::MAX as i64 || new_disp < i32::MIN as i64 {
@@ -203,6 +209,46 @@ pub unsafe fn install(target: *const (), replacement: *const ()) -> Result<*cons
     flush_icache(target_addr, HOOK_SIZE);
 
     Ok(trampoline_mem as *const ())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn x86_trampoline_offsets(decoded: &[super::x86_64::Insn]) -> (usize, Vec<(usize, usize)>) {
+    let mut src_offset = 0;
+    let mut dst_offset = 0;
+    let mut offsets = Vec::with_capacity(decoded.len() + 1);
+
+    for insn in decoded {
+        offsets.push((src_offset, dst_offset));
+        src_offset += insn.len;
+        dst_offset += insn.expansion.as_ref().map_or(insn.len, |exp| exp.len);
+    }
+    offsets.push((src_offset, dst_offset));
+
+    (dst_offset, offsets)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn x86_remap_branch_target(
+    abs_target: i64,
+    target_addr: usize,
+    total_len: usize,
+    trampoline_addr: usize,
+    offset_map: &[(usize, usize)],
+) -> Result<i64, String> {
+    let target_start = target_addr as i64;
+    let target_end = (target_addr + total_len) as i64;
+    if abs_target < target_start || abs_target >= target_end {
+        return Ok(abs_target);
+    }
+
+    let src_offset = (abs_target - target_start) as usize;
+    let Some((_, dst_offset)) = offset_map.iter().find(|(src, _)| *src == src_offset) else {
+        return Err(format!(
+            "relative branch target lands inside relocated instruction at +{src_offset:#x}"
+        ));
+    };
+
+    Ok((trampoline_addr + *dst_offset) as i64)
 }
 
 // ---- ARM64 branch encoding ------------------------------------------------
@@ -650,6 +696,80 @@ mod tests {
     #[test]
     fn hook_size_is_14_on_x86_64() {
         assert_eq!(HOOK_SIZE, 14);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn decode_until_hook_size(code: &[u8]) -> (Vec<super::super::x86_64::Insn>, usize) {
+        let mut offset = 0;
+        let mut decoded = Vec::new();
+        while offset < HOOK_SIZE {
+            let insn = super::super::x86_64::decode(&code[offset..]).unwrap();
+            offset += insn.len;
+            decoded.push(insn);
+        }
+        (decoded, offset)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn remaps_expanded_short_branch_target_inside_trampoline() {
+        let code = [
+            0x75, 0x05, // JNZ +5 -> original offset 7
+            0x48, 0x89, 0x5C, 0x24, 0x08, // MOV [RSP+8], RBX
+            0x48, 0x83, 0xEC, 0x20, // SUB RSP, 0x20
+            0x90, 0x90, 0x90, // NOP padding to 14 original bytes
+        ];
+        let (decoded, total_len) = decode_until_hook_size(&code);
+        let (trampoline_code_len, offset_map) = x86_trampoline_offsets(&decoded);
+
+        assert_eq!(total_len, 14);
+        assert_eq!(trampoline_code_len, 18);
+        assert!(offset_map.contains(&(7, 11)));
+
+        let target_addr = 0x1000_0000;
+        let trampoline_addr = 0x2000_0000;
+        let old_abs_target = (target_addr + 7) as i64;
+        let remapped =
+            x86_remap_branch_target(old_abs_target, target_addr, total_len, trampoline_addr, &offset_map).unwrap();
+
+        assert_eq!(remapped, (trampoline_addr + 11) as i64);
+        assert_eq!(remapped - (trampoline_addr + 6) as i64, 5);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn keeps_branch_targets_outside_relocated_prologue() {
+        let code = [
+            0x75, 0x10, // JNZ +16 -> outside copied bytes
+            0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x83, 0xEC, 0x20, 0x90, 0x90, 0x90,
+        ];
+        let (decoded, total_len) = decode_until_hook_size(&code);
+        let (_, offset_map) = x86_trampoline_offsets(&decoded);
+
+        let target_addr = 0x1000_0000;
+        let trampoline_addr = 0x2000_0000;
+        let old_abs_target = (target_addr + 18) as i64;
+        let remapped =
+            x86_remap_branch_target(old_abs_target, target_addr, total_len, trampoline_addr, &offset_map).unwrap();
+
+        assert_eq!(remapped, old_abs_target);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn rejects_internal_branch_target_inside_instruction() {
+        let code = [
+            0x75, 0x05, // JNZ +5 -> original offset 7
+            0x48, 0x89, 0x5C, 0x24, 0x08, // MOV [RSP+8], RBX
+            0x48, 0x83, 0xEC, 0x20, // SUB RSP, 0x20
+            0x90, 0x90, 0x90,
+        ];
+        let (decoded, total_len) = decode_until_hook_size(&code);
+        let (_, offset_map) = x86_trampoline_offsets(&decoded);
+
+        let err = x86_remap_branch_target(0x1000_0003, 0x1000_0000, total_len, 0x2000_0000, &offset_map).unwrap_err();
+
+        assert!(err.contains("inside relocated instruction"));
     }
 
     #[cfg(target_arch = "aarch64")]

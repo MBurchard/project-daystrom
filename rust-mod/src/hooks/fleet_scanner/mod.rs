@@ -4,7 +4,7 @@
 //! beyond the read operation. Events observed before a concrete system view is known are held in a bounded pending
 //! queue and flushed once the viewed system changes.
 
-use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
 use log::{debug, trace, warn};
 
@@ -99,6 +99,9 @@ static GET_COURSE_FLEET_ID_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::
 /// `CourseData.get_SystemPosition()`.
 static GET_COURSE_SYSTEM_POSITION_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// `ChangeViewData.address`.
+static OFFSET_CHANGE_VIEW_DATA_ADDRESS: AtomicUsize = AtomicUsize::new(0);
+
 // ---- Original trampolines --------------------------------------------------
 
 static ORIG_FLEETS_ENTER_SYSTEM: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -191,7 +194,7 @@ extern "C" fn hook_course_end(courses: *mut Il2CppList<*mut Il2CppObject>, metho
 
 /// Post-hook on `NavigationManager.ChangeView(ChangeViewData, Nullable<ZoomLevels>)`.
 ///
-/// Reads the `NodeAddress` from `ChangeViewData.address` (offset 0x10) and extracts the system ID.
+/// Reads the `NodeAddress` from `ChangeViewData.address` and extracts the system ID.
 /// This replaces the old `TriggerDidChangeViewEvent` hook which was inlined by MSVC on Windows.
 extern "C" fn hook_change_view(
     this: *mut Il2CppObject,
@@ -203,17 +206,28 @@ extern "C" fn hook_change_view(
 
     HOOK_INFO.run(|| {
         if data.is_null() {
+            clear_viewed_system("change_view_null_data");
             return;
         }
-        // ChangeViewData.address is a NodeAddress at offset 0x10.
-        let address = unsafe { tracker::read_ptr(data as *const (), 0x10) };
+
+        let address_offset = OFFSET_CHANGE_VIEW_DATA_ADDRESS.load(Relaxed);
+        if address_offset == 0 {
+            warn!(target: LOG_TARGET, "ChangeView fired but ChangeViewData.address offset is unresolved");
+            clear_viewed_system("change_view_address_offset_unresolved");
+            return;
+        }
+
+        let address = unsafe { tracker::read_ptr(data as *const (), address_offset) };
         if address.is_null() {
             warn!(target: LOG_TARGET, "ChangeView fired but ChangeViewData.address is null");
+            clear_viewed_system("change_view_null_address");
             return;
         }
         let system_id = node_address_system(address as *mut Il2CppObject);
         if system_id.is_none() {
-            warn!(target: LOG_TARGET, "ChangeView fired but system ID unavailable from NodeAddress");
+            debug!(target: LOG_TARGET, "ChangeView fired without a concrete system");
+            clear_viewed_system("change_view_without_system");
+            return;
         }
         set_viewed_system(system_id);
     });
@@ -805,6 +819,9 @@ fn set_viewed_system(system_id: Option<i64>) {
 }
 
 /// Clear only the shared viewed-system marker.
+///
+/// Non-system views, such as the galaxy view, must stop actions from using the previous system context. The fleet
+/// snapshot store is intentionally kept until a concrete system view replaces it with another system's data.
 fn clear_viewed_system(reason: &str) {
     if !navigation_view::clear_viewed_system() {
         return;
@@ -1204,6 +1221,7 @@ pub fn install(api: &Il2CppApi) {
 
     install_model_accessors(api);
     install_node_address_accessors(api);
+    install_change_view_data_accessors(api);
     install_navigation_selection(api);
     install_event_hooks(api);
     trace!(target: LOG_TARGET, "Fleet scanner install finished");
@@ -1230,6 +1248,7 @@ fn is_ready() -> bool {
         && !method_missing(&NAVIGATION_MANAGER_SELECT_POI_METHOD)
         && !method_missing(&GET_COURSE_FLEET_ID_FN)
         && !method_missing(&GET_COURSE_SYSTEM_POSITION_FN)
+        && !field_missing(&OFFSET_CHANGE_VIEW_DATA_ADDRESS)
         && !ORIG_CHANGE_VIEW.load(Relaxed).is_null()
         && !ORIG_NAVIGATION_MANAGER_ENABLE.load(Relaxed).is_null()
         && !ORIG_NAVIGATION_MANAGER_DISABLE.load(Relaxed).is_null()
@@ -1290,6 +1309,17 @@ fn install_node_address_accessors(api: &Il2CppApi) {
     } else {
         warn!(target: LOG_TARGET, "NodeAddress class not found");
     }
+}
+
+/// Resolve ChangeViewData fields used by the navigation view hook.
+fn install_change_view_data_accessors(api: &Il2CppApi) {
+    let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Navigation", "ChangeViewData")
+    else {
+        warn!(target: LOG_TARGET, "ChangeViewData class not found");
+        return;
+    };
+
+    resolve_field_if_missing(api, class, "address", &OFFSET_CHANGE_VIEW_DATA_ADDRESS);
 }
 
 /// Resolve and track NavigationManager access for POI selection.
@@ -1419,6 +1449,18 @@ fn resolve_fn_if_missing(
 
 fn method_missing(target: &AtomicPtr<MethodInfo>) -> bool {
     target.load(Relaxed).is_null()
+}
+
+fn field_missing(target: &AtomicUsize) -> bool {
+    target.load(Relaxed) == 0
+}
+
+fn resolve_field_if_missing(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {
+    if !field_missing(target) {
+        return;
+    }
+
+    resolver::resolve_field_offset_into(api, class, field_name, target);
 }
 
 #[cfg(test)]
