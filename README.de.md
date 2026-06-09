@@ -31,7 +31,9 @@ Spiels eingreift.
   - Automatisches Öffnen der Cargo-Ansicht für Hostiles, Armadas, Stationen und Spielerschiffe
   - Lootbox-Öffnungsanimation überspringen (standardmäßig aktiviert)
   - Erstes Popup nach Spielstart überspringen (standardmäßig aktiviert)
-  - Main-Action-Shortcut mit Unterstützung für Tastaturtasten und zusätzliche Maustasten
+  - Ein-Tasten-Kampfablauf: Main-Action-Taste wiederholt drücken, um das nächste erreichbare Hostile auszuwählen und
+    ohne Maus anzugreifen
+  - Konfigurierbarer Main-Action-Shortcut mit Unterstützung für Tastaturtasten und zusätzliche Maustasten
   - Toast-Banner-Unterdrückung mit typ-basiertem Opt-out (Kampf, Station, Armada etc.)
   - Automatische Erkennung von Spiel-Updates über die Scopely-Update-API
 - **Native plattformübergreifende App** (Tauri 2 + Vue 3)
