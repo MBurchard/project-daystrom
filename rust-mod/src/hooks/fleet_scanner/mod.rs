@@ -332,7 +332,7 @@ extern "C" fn hook_navigation_manager_enable(this: *mut Il2CppObject) {
 
 /// Release the tracked NavigationManager and clear the viewed system when it is disabled.
 ///
-/// Unity runs `OnDisable` before destroying the object, so this is safe for cleanup.
+/// Unity runs `OnDisable` before destroying the object, so this is safe for clean-up.
 /// This replaces the old `TriggerLeaveNavigationViewEvent` hook.
 extern "C" fn hook_navigation_manager_disable(this: *mut Il2CppObject) {
     call_original!(ORIG_NAVIGATION_MANAGER_DISABLE, ActionFn, this);
@@ -402,7 +402,7 @@ fn selected_own_fleet_from_location_data(selected_fleet: &fleet_bar::SelectedFle
         return None;
     }
 
-    let changes = store_own_fleets(&[fleet.clone()]);
+    let changes = store_own_fleets(std::slice::from_ref(&fleet));
     if changes.is_empty() {
         trace!(
             target: LOG_TARGET,

@@ -105,15 +105,7 @@ struct LogLevelScopes {
 
 /// Parse a level string (case-insensitive) into a [`LevelFilter`].
 fn parse_level_filter(s: &str) -> Option<LevelFilter> {
-    match s.to_lowercase().as_str() {
-        "off" => Some(LevelFilter::Off),
-        "error" => Some(LevelFilter::Error),
-        "warn" => Some(LevelFilter::Warn),
-        "info" => Some(LevelFilter::Info),
-        "debug" => Some(LevelFilter::Debug),
-        "trace" => Some(LevelFilter::Trace),
-        _ => None,
-    }
+    s.parse().ok()
 }
 
 /// Load per-target log level overrides from `[log_levels.app]` in settings.toml.
@@ -373,7 +365,7 @@ fn copy_truncate_rotation(dir: &Path, time_suffix: Option<&str>) {
 /// Check whether the date has changed since the last log event and rotate if needed.
 ///
 /// Called at the start of every [`format_log`] invocation. The fast path (same date) is a single mutex lock + date
-/// comparison. On date change, performs a copy-truncate rotation followed by archive cleanup.
+/// comparison. On date change, performs a copy-truncate rotation followed by archive clean-up.
 fn check_runtime_rotation() {
     let mut guard = match ROTATION_STATE.lock() {
         Ok(g) => g,
@@ -481,11 +473,10 @@ fn format_log(callback: fern::FormatCallback, message: &std::fmt::Arguments, rec
 /// Example: `2026-02-20T14:30:45.123+01:00`
 fn format_timestamp() -> String {
     let now = TimezoneStrategy::UseLocal.get_now();
-    let format = time::format_description::parse(
+    let format = time::macros::format_description!(
         "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]\
-         [offset_hour sign:mandatory]:[offset_minute]",
-    )
-    .expect("invalid time format");
+         [offset_hour sign:mandatory]:[offset_minute]"
+    );
     now.format(&format)
         .unwrap_or_else(|_| "????-??-??T??:??:??.???+??:??".to_string())
 }

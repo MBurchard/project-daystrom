@@ -279,15 +279,7 @@ struct LogLevelScopes {
 
 /// Parse a level string (case-insensitive) into a [`LevelFilter`].
 fn parse_level_filter(s: &str) -> Option<LevelFilter> {
-    match s.to_lowercase().as_str() {
-        "off" => Some(LevelFilter::Off),
-        "error" => Some(LevelFilter::Error),
-        "warn" => Some(LevelFilter::Warn),
-        "info" => Some(LevelFilter::Info),
-        "debug" => Some(LevelFilter::Debug),
-        "trace" => Some(LevelFilter::Trace),
-        _ => None,
-    }
+    s.parse().ok()
 }
 
 /// Load per-target log level overrides from `[log_levels.game]` in settings.toml.

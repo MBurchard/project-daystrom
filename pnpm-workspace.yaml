@@ -2,6 +2,7 @@ shellEmulator: true
 trustPolicy: no-downgrade
 trustPolicyExclude:
   - ast-v8-to-istanbul@1.0.2
+  - nanoid@3.3.14
   - tinyexec@1.2.2
 packages:
   - app
