@@ -537,7 +537,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
 .shortcut-key {
   font-family: monospace;
   padding: 0.2rem 0.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgb(255 255 255 / 20%);
   border-radius: 0.25rem;
   min-width: 4rem;
   text-align: center;
@@ -545,7 +545,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
 }
 
 .shortcut-key:hover {
-  border-color: rgba(255, 255, 255, 0.4);
+  border-color: rgb(255 255 255 / 40%);
 }
 
 .shortcut-key.disabled {
@@ -554,7 +554,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
 }
 
 .shortcut-key.capturing {
-  border-color: rgba(100, 180, 255, 0.6);
+  border-color: rgb(100 180 255 / 60%);
   animation: pulse 1s ease-in-out infinite;
 }
 

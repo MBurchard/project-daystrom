@@ -13,9 +13,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@app': resolve(__dirname, 'modules/app/src'),
-      '@generated': resolve(__dirname, 'modules/app/src/generated'),
-      '@resources': resolve(__dirname, 'resources'),
+      '@app': resolve(import.meta.dirname, 'modules/app/src'),
+      '@generated': resolve(import.meta.dirname, 'modules/app/src/generated'),
+      '@resources': resolve(import.meta.dirname, 'resources'),
     },
   },
   clearScreen: false,
