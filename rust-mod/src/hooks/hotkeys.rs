@@ -584,9 +584,9 @@ fn event_code_to_input_path(code: &str) -> Option<String> {
         "BracketLeft" => "leftBracket",
         "BracketRight" => "rightBracket",
         "Backquote" => "backquote",
-        s if s.starts_with("Key") => return Some(format!("<Keyboard>/{}", &s[3..].to_lowercase())),
+        s if s.starts_with("Key") => return Some(format!("<Keyboard>/{}", s[3..].to_lowercase())),
         s if s.starts_with("Digit") => return Some(format!("<Keyboard>/{}", &s[5..])),
-        s if s.starts_with("Numpad") => return Some(format!("<Keyboard>/numpad{}", &s[6..].to_lowercase())),
+        s if s.starts_with("Numpad") => return Some(format!("<Keyboard>/numpad{}", s[6..].to_lowercase())),
         s if s.starts_with("F") && s[1..].parse::<u32>().is_ok() => {
             return Some(format!("<Keyboard>/{}", s.to_lowercase()));
         }

@@ -166,13 +166,11 @@ body {
 *,
 *::before,
 *::after {
-  -webkit-user-select: none;
   user-select: none;
 }
 
 .error,
 .info-message {
-  -webkit-user-select: text;
   user-select: text;
 }
 </style>
@@ -194,22 +192,22 @@ body {
 }
 
 .checklist li.ok::before {
-  content: '✓';
+  content: "✓";
   color: #4caf50;
 }
 
 .checklist li.fail::before {
-  content: '✗';
+  content: "✗";
   color: #f44336;
 }
 
 .checklist li.warn::before {
-  content: '!';
+  content: "!";
   color: #ff9800;
 }
 
 .checklist li.neutral::before {
-  content: '';
+  content: "";
   width: 0.85rem;
   height: 0.85rem;
   margin-right: 0.6rem;

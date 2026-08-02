@@ -58,6 +58,7 @@ const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
 
 const COMMANDS: Record<string, () => void> = {
   lint,
+  'lint:ci': lintCi,
   'lint:fix': lintFix,
   'lint:app': lintApp,
   'lint:app:fix': lintAppFix,
@@ -68,6 +69,7 @@ const COMMANDS: Record<string, () => void> = {
   'typecheck:backend': typecheckBackend,
   'typecheck:mod': typecheckMod,
   test: testAll,
+  'test:tooling': testTooling,
   'test:frontend': testFrontend,
   'test:frontend:watch': testFrontendWatch,
   'test:frontend:coverage': testFrontendCoverage,
@@ -110,9 +112,11 @@ function tauri(args: string): void {
 /**
  * Run a cargo command with the backend manifest path and ts-rs export dir.
  * @param args - cargo sub-command and flags, e.g. "test"
+ * @param rustcArgs - optional flags forwarded to rustc or clippy after `--`
  */
-function cargo(args: string): void {
-  execSync(`cargo ${args} --manifest-path ${MANIFEST_PATH}`, {
+function cargo(args: string, rustcArgs = ''): void {
+  const forwardedArgs = rustcArgs ? ` -- ${rustcArgs}` : '';
+  execSync(`cargo ${args} --manifest-path ${MANIFEST_PATH}${forwardedArgs}`, {
     cwd: APP_DIR,
     stdio: 'inherit',
     env: {...process.env, TS_RS_EXPORT_DIR},
@@ -122,9 +126,11 @@ function cargo(args: string): void {
 /**
  * Run a cargo command in the Rust mod crate.
  * @param args - cargo sub-command and flags, e.g. "clippy"
+ * @param rustcArgs - optional flags forwarded to rustc or clippy after `--`
  */
-function cargoMod(args: string): void {
-  execSync(`cargo ${args}`, {cwd: RUST_MOD_DIR, stdio: 'inherit'});
+function cargoMod(args: string, rustcArgs = ''): void {
+  const forwardedArgs = rustcArgs ? ` -- ${rustcArgs}` : '';
+  execSync(`cargo ${args}${forwardedArgs}`, {cwd: RUST_MOD_DIR, stdio: 'inherit'});
 }
 
 /**
@@ -133,6 +139,17 @@ function cargoMod(args: string): void {
  */
 function eslint(args = ''): void {
   execSync(`pnpm exec eslint . ${args}`.trim(), {cwd: ROOT, stdio: 'inherit'});
+}
+
+/**
+ * Run stylelint for CSS and Vue style blocks.
+ * @param args - stylelint flags, e.g. "--fix"
+ */
+function stylelint(args = ''): void {
+  execSync(`pnpm exec stylelint "app/modules/app/src/**/*.{css,vue}" ${args}`.trim(), {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
 }
 
 // -- lint -------------------------------------------------------------------
@@ -154,6 +171,38 @@ function lintAppEslintFix(): void {
 }
 
 /**
+ * Run eslint without allowing warnings.
+ */
+function lintAppEslintCi(): void {
+  log.info('Linting app TypeScript and Vue files in strict mode...');
+  eslint('--max-warnings 0');
+}
+
+/**
+ * Run stylelint for app CSS and Vue style blocks.
+ */
+function lintAppStyle(): void {
+  log.info('Linting app CSS and Vue style blocks...');
+  stylelint();
+}
+
+/**
+ * Run stylelint --fix for app CSS and Vue style blocks.
+ */
+function lintAppStyleFix(): void {
+  log.info('Fixing app CSS and Vue style issues...');
+  stylelint('--fix');
+}
+
+/**
+ * Run stylelint without allowing warnings.
+ */
+function lintAppStyleCi(): void {
+  log.info('Linting app CSS and Vue style blocks in strict mode...');
+  stylelint('--max-warnings 0');
+}
+
+/**
  * Check Rust formatting and run clippy for the backend crate.
  */
 function lintAppBackend(): void {
@@ -161,6 +210,16 @@ function lintAppBackend(): void {
   cargo('fmt --check');
   log.info('Linting backend Rust code...');
   cargo('clippy');
+}
+
+/**
+ * Check backend Rust formatting and deny all clippy warnings.
+ */
+function lintAppBackendCi(): void {
+  log.info('Checking backend Rust formatting...');
+  cargo('fmt --check');
+  log.info('Linting backend Rust code in strict mode...');
+  cargo('clippy --all-targets', '-D warnings');
 }
 
 /**
@@ -186,6 +245,16 @@ function lintMod(): void {
 }
 
 /**
+ * Check mod Rust formatting and deny all clippy warnings.
+ */
+function lintModCi(): void {
+  log.info('Checking mod Rust formatting...');
+  cargoMod('fmt --check');
+  log.info('Linting mod Rust code in strict mode...');
+  cargoMod('clippy --all-targets', '-D warnings');
+}
+
+/**
  * Format mod Rust code and apply clippy fixes where possible.
  */
 function lintModFix(): void {
@@ -202,6 +271,7 @@ function lintModFix(): void {
  */
 function lintApp(): void {
   lintAppEslint();
+  lintAppStyle();
   lintAppBackend();
 }
 
@@ -210,7 +280,17 @@ function lintApp(): void {
  */
 function lintAppFix(): void {
   lintAppEslintFix();
+  lintAppStyleFix();
   lintAppBackendFix();
+}
+
+/**
+ * Run all app lint checks without allowing warnings.
+ */
+function lintAppCi(): void {
+  lintAppEslintCi();
+  lintAppStyleCi();
+  lintAppBackendCi();
 }
 
 /**
@@ -219,6 +299,14 @@ function lintAppFix(): void {
 function lint(): void {
   lintMod();
   lintApp();
+}
+
+/**
+ * Run all lint checks without allowing warnings.
+ */
+function lintCi(): void {
+  lintModCi();
+  lintAppCi();
 }
 
 /**
@@ -269,6 +357,14 @@ function typecheck(): void {
 }
 
 // -- test -------------------------------------------------------------------
+
+/**
+ * Run tests for repository tooling such as custom lint rules.
+ */
+function testTooling(): void {
+  log.info('Running tooling tests...');
+  execSync('pnpm exec vitest run eslint-rules', {cwd: ROOT, stdio: 'inherit'});
+}
 
 /**
  * Run frontend tests via vitest.
@@ -330,6 +426,7 @@ function testModCoverage(): void {
  * Run all tests (mod, frontend, backend).
  */
 function testAll(): void {
+  testTooling();
   testMod();
   testFrontend();
   testBackend();

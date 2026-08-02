@@ -1,4 +1,7 @@
 import antfu from '@antfu/eslint-config';
+import htmlMultilineAttributeValue from './eslint-rules/html-multiline-attribute-value.js';
+
+const maxLineLength = 120;
 
 export default antfu({
   vue: true,
@@ -16,7 +19,7 @@ export default antfu({
     'regexp/strict': 'off',
     'style/block-spacing': ['error', 'never'],
     'style/brace-style': ['error', '1tbs'],
-    'style/max-len': ['warn', {code: 120}],
+    'style/max-len': ['warn', {code: maxLineLength}],
     'style/object-curly-spacing': ['error', 'never'],
     'style/object-property-newline': ['error', {allowAllPropertiesOnSameLine: true}],
     'style/operator-linebreak': ['error', 'after'],
@@ -24,8 +27,16 @@ export default antfu({
   },
 }, {
   files: ['**/*.vue'],
+  plugins: {
+    html: {
+      rules: {
+        'multiline-attribute-value': htmlMultilineAttributeValue,
+      },
+    },
+  },
   rules: {
-    'vue/first-attribute-linebreak': ['error', {singleline: 'beside', multiline: 'beside'}],
+    'html/multiline-attribute-value': ['warn', {indent: 2, maxLineLength}],
+    'vue/first-attribute-linebreak': 'off',
     'vue/html-closing-bracket-newline': ['error', {singleline: 'never', multiline: 'never'}],
     'vue/html-indent': ['error', 2, {attribute: 2, alignAttributesVertically: false}],
     'vue/max-attributes-per-line': ['error', {singleline: 5, multiline: 5}],

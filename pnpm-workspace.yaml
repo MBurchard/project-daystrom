@@ -1,4 +1,5 @@
 shellEmulator: true
+autoInstallPeers: false
 trustPolicy: no-downgrade
 trustPolicyExclude:
   - ast-v8-to-istanbul@1.0.2
