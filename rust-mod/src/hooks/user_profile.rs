@@ -8,6 +8,8 @@ use log::{debug, warn};
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -159,19 +161,23 @@ fn read_ulong_property(
 /// Called from `install_all_hooks()` after IL2CPP is initialized. If the class or method cannot
 /// be resolved (e.g. after a game update), logs a warning and returns without crashing.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::USER_PROFILE) {
+        return;
+    }
+
     let Some(class) =
         resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileManager")
     else {
         return;
     };
 
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "GetLocalUserProfile",
         0,
         "GetLocalUserProfile",
         hook as *const (),
-        |original| ORIGINAL.store(original as *mut (), Relaxed),
+        &ORIGINAL,
     );
 }

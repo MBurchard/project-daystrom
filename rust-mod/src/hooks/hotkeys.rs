@@ -757,6 +757,10 @@ fn reload_game_bindings() {
 /// Hooks Input.GetKeyDownInt for key detection and consumption, tracks all GenericRewardsScreenViewController
 /// subclasses for ESC collection, installs main action hooks, and hooks ScreenManager.Update() for per-frame key checks.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::HOTKEYS) {
+        return;
+    }
+
     install_shortcuts_hook(api);
     if !install_input(api) {
         return;
@@ -765,15 +769,17 @@ pub fn install(api: &Il2CppApi) {
         install_reward_tracking(api);
         install_widget_collect_tracking(api);
     }
-    if compatibility::is_enabled(manifest::MAIN_ACTION) {
-        super::main_action::install(api);
-    }
+    super::main_action::install(api);
     install_update_hook(api);
 }
 
 /// Post-hook `ShortcutsManager.InitializeActions()` to parse default bindings and resolve `LoadBindings()`
 /// for runtime keybinding reloads.
 fn install_shortcuts_hook(api: &Il2CppApi) {
+    if OFFSET_ACTIONS.load(Relaxed) != 0 && !ORIG_INITIALIZE_ACTIONS.load(Relaxed).is_null() {
+        return;
+    }
+
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutsManager")
     else {
         warn!(target: "Hotkeys", "ShortcutsManager not found");
@@ -790,18 +796,14 @@ fn install_shortcuts_hook(api: &Il2CppApi) {
         resolver::resolve_method_into(api, class, "LoadBindings", 0, &LOAD_BINDINGS_METHOD);
     }
 
-    if !ORIG_INITIALIZE_ACTIONS.load(Relaxed).is_null() {
-        return;
-    }
-
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "InitializeActions",
         0,
         "InitializeActions",
         hook_initialize_actions as *const (),
-        |orig| ORIG_INITIALIZE_ACTIONS.store(orig as *mut (), Relaxed),
+        &ORIG_INITIALIZE_ACTIONS,
     );
 }
 
@@ -866,22 +868,33 @@ fn install_reward_tracking(api: &Il2CppApi) {
 
     // Resolve each subclass: store its Il2CppClass pointer and OnCollectClicked.
     for &(slot, ns, name) in &subclasses {
-        let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", ns, name) else {
-            warn!(target: "Hotkeys", "{name} not found");
-            continue;
+        let target = &REWARD_TARGETS[slot];
+        let class = match target.class.load(Relaxed) {
+            class if !class.is_null() => class as *mut Il2CppClass,
+            _ => {
+                let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", ns, name) else {
+                    warn!(target: "Hotkeys", "{name} not found");
+                    continue;
+                };
+                target.class.store(class as *mut (), Relaxed);
+                class
+            }
         };
-        REWARD_TARGETS[slot].class.store(class as *mut (), Relaxed);
 
-        resolver::resolve_method_into(api, class, "OnCollectClicked", 0, &REWARD_TARGETS[slot].on_collect);
+        if target.on_collect.load(Relaxed).is_null() {
+            resolver::resolve_method_into(api, class, "OnCollectClicked", 0, &target.on_collect);
+        }
     }
 
     // Resolve IsActive from UIBehaviour (shared, only need it once from any resolved class).
-    for target in &REWARD_TARGETS {
-        let class = target.class.load(Relaxed);
-        if !class.is_null()
-            && resolver::resolve_method_into(api, class as *mut Il2CppClass, "IsActive", 0, &IS_ACTIVE_FN)
-        {
-            break;
+    if IS_ACTIVE_FN.load(Relaxed).is_null() {
+        for target in &REWARD_TARGETS {
+            let class = target.class.load(Relaxed);
+            if !class.is_null()
+                && resolver::resolve_method_into(api, class as *mut Il2CppClass, "IsActive", 0, &IS_ACTIVE_FN)
+            {
+                break;
+            }
         }
     }
 
@@ -908,32 +921,34 @@ fn install_reward_tracking(api: &Il2CppApi) {
     }
 
     // Hook GenericRewardsScreenViewController.AboutToShow/Hide (shared by slots 1, 3).
-    let Some(base_class) = resolver::resolve_class(
-        api,
-        "Assembly-CSharp",
-        "Digit.Prime.SharedFeatures",
-        "GenericRewardsScreenViewController",
-    ) else {
-        warn!(target: "Hotkeys", "GenericRewardsScreenViewController not found");
-        return;
-    };
+    if ORIG_BASE_SHOW.load(Relaxed).is_null() || ORIG_BASE_HIDE.load(Relaxed).is_null() {
+        let Some(base_class) = resolver::resolve_class(
+            api,
+            "Assembly-CSharp",
+            "Digit.Prime.SharedFeatures",
+            "GenericRewardsScreenViewController",
+        ) else {
+            warn!(target: "Hotkeys", "GenericRewardsScreenViewController not found");
+            return;
+        };
 
-    install_hook_if_missing(
-        api,
-        base_class,
-        "AboutToShow",
-        "RewardBaseShow",
-        hook_base_reward_show,
-        &ORIG_BASE_SHOW,
-    );
-    install_hook_if_missing(
-        api,
-        base_class,
-        "AboutToHide",
-        "RewardBaseHide",
-        hook_base_reward_hide,
-        &ORIG_BASE_HIDE,
-    );
+        install_hook_if_missing(
+            api,
+            base_class,
+            "AboutToShow",
+            "RewardBaseShow",
+            hook_base_reward_show,
+            &ORIG_BASE_SHOW,
+        );
+        install_hook_if_missing(
+            api,
+            base_class,
+            "AboutToHide",
+            "RewardBaseHide",
+            hook_base_reward_hide,
+            &ORIG_BASE_HIDE,
+        );
+    }
 
     // Hook FirstTimeSpenderScreenViewController.AboutToShow/Hide (slot 2, own override).
     let fts_class = REWARD_TARGETS[2].class.load(Relaxed);
@@ -949,6 +964,10 @@ fn install_reward_tracking(api: &Il2CppApi) {
 /// These are `Widget<T>` subclasses with a single collect button that should be triggerable via ESC.
 /// They persist for the session, so `Awake` tracking is enough; collection is gated via `IsActive`.
 fn install_widget_collect_tracking(api: &Il2CppApi) {
+    if !MISSIONS_POPOUT_ON_COLLECT.load(Relaxed).is_null() && !ORIG_MISSIONS_POPOUT_AWAKE.load(Relaxed).is_null() {
+        return;
+    }
+
     // MissionsNotificationPopoutWidget
     let Some(class) =
         resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "MissionsNotificationPopoutWidget")
@@ -957,7 +976,9 @@ fn install_widget_collect_tracking(api: &Il2CppApi) {
         return;
     };
 
-    resolver::resolve_method_into(api, class, "OnCollectButtonClicked", 0, &MISSIONS_POPOUT_ON_COLLECT);
+    if MISSIONS_POPOUT_ON_COLLECT.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, class, "OnCollectButtonClicked", 0, &MISSIONS_POPOUT_ON_COLLECT);
+    }
 
     install_hook_if_missing(
         api,
@@ -1013,15 +1034,9 @@ fn install_hook_if_missing(
     method_name: &str,
     hook_name: &str,
     hook: extern "C" fn(*mut Il2CppObject),
-    original: &'static AtomicPtr<()>,
+    original: &AtomicPtr<()>,
 ) -> bool {
-    if !original.load(Relaxed).is_null() {
-        return true;
-    }
-
-    tracker::install_resolved_hook(api, class, method_name, 0, hook_name, hook as *const (), |orig| {
-        original.store(orig as *mut (), Relaxed)
-    })
+    tracker::install_resolved_hook_if_missing(api, class, method_name, 0, hook_name, hook as *const (), original)
 }
 
 // ---- Tests ----------------------------------------------------------------

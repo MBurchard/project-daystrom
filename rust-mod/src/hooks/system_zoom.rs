@@ -15,6 +15,8 @@ use crate::hook::safety::HookInfo;
 use crate::hooks::navigation_view;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -238,7 +240,9 @@ extern "C" fn hook_set_depth(this: *mut Il2CppObject, depth: i32) {
 
 /// Resolve a field offset and store it.
 fn resolve_field(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {
-    resolver::resolve_field_offset_into(api, class, field_name, target);
+    if target.load(Relaxed) == 0 {
+        resolver::resolve_field_offset_into(api, class, field_name, target);
+    }
 }
 
 // ---- Installation ---------------------------------------------------------
@@ -248,6 +252,10 @@ fn resolve_field(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, tar
 /// Hooks `SetDepth` to extend the zoom-out limit for system views and resolves `OverrideZoomLimits` as a callable
 /// method.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::SYSTEM_ZOOM) {
+        return;
+    }
+
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom")
     else {
         warn!(target: "SystemZoom", "NavigationZoom class not found");
@@ -267,19 +275,23 @@ pub fn install(api: &Il2CppApi) {
 
     // Hook SetDepth (called when the navigation depth changes).
     // SetViewParameters is inlined by MSVC on Windows, but its inlined copies are still called SetDepth.
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "SetDepth",
         1,
         "SystemZoom.SetDepth",
         hook_set_depth as *const (),
-        |orig| ORIG_SET_DEPTH.store(orig as *mut (), Relaxed),
+        &ORIG_SET_DEPTH,
     );
 
     // Resolve OverrideZoomLimits (called from the SetDepth hook).
-    resolver::resolve_method_into(api, class, "OverrideZoomLimits", 2, &OVERRIDE_ZOOM_LIMITS_FN);
+    if OVERRIDE_ZOOM_LIMITS_FN.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, class, "OverrideZoomLimits", 2, &OVERRIDE_ZOOM_LIMITS_FN);
+    }
 
     // Resolve set_Distance (called for initial zoom and live slider updates, not hooked).
-    resolver::resolve_method_into(api, class, "set_Distance", 1, &SET_DISTANCE_FN);
+    if SET_DISTANCE_FN.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, class, "set_Distance", 1, &SET_DISTANCE_FN);
+    }
 }

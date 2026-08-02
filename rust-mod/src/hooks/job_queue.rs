@@ -14,6 +14,8 @@ use log::debug;
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -144,6 +146,10 @@ fn try_expand() {
 /// Hooks `JobQueuePanelViewController.RegenerateLists` (expand trigger) and resolves
 /// `OnContractExpandButtonClickEventHandler` as a guarded callable method.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::JOB_QUEUE) {
+        return;
+    }
+
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "JobQueuePanelViewController")
     else {
         log::warn!(target: "JobQueue", "JobQueuePanelViewController not found");
@@ -151,21 +157,25 @@ pub fn install(api: &Il2CppApi) {
     };
 
     // Resolve field offset dynamically via IL2CPP reflection.
-    resolver::resolve_field_offset_into(api, class, "_listCollapsed", &OFFSET_LIST_COLLAPSED);
+    if OFFSET_LIST_COLLAPSED.load(Relaxed) == 0 {
+        resolver::resolve_field_offset_into(api, class, "_listCollapsed", &OFFSET_LIST_COLLAPSED);
+    }
 
     // Hook RegenerateLists: non-virtual, class-specific method that fires when the panel
     // rebuilds its job list. Unlike OnEnable (inherited from the generic ViewController<T>),
     // this resolves to a concrete method pointer and is safe to hook.
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "RegenerateLists",
         0,
         "JobQueue.RegenerateLists",
         hook_regenerate_lists as *const (),
-        |orig| ORIG_REGENERATE.store(orig as *mut (), Relaxed),
+        &ORIG_REGENERATE,
     );
 
     // Resolve OnContractExpandButtonClickEventHandler (called during expand, not hooked).
-    resolver::resolve_method_into(api, class, "OnContractExpandButtonClickEventHandler", 0, &EXPAND_FN);
+    if EXPAND_FN.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, class, "OnContractExpandButtonClickEventHandler", 0, &EXPAND_FN);
+    }
 }

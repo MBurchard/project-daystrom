@@ -60,8 +60,12 @@ pub(crate) fn subscribe_target_id(callback: TargetViewerCallback) {
 
 /// Install the shared PreScan target viewer hook.
 pub(crate) fn install(api: &Il2CppApi) {
-    install_show_with_fleet_accessors(api);
-    install_target_accessors(api);
+    if ORIG_SHOW_WITH_FLEET.load(Relaxed).is_null() {
+        install_show_with_fleet_accessors(api);
+    }
+    if ORIG_GET_TARGET_ID.load(Relaxed).is_null() {
+        install_target_accessors(api);
+    }
 }
 
 fn install_show_with_fleet_accessors(api: &Il2CppApi) {
@@ -73,18 +77,14 @@ fn install_show_with_fleet_accessors(api: &Il2CppApi) {
 }
 
 fn install_show_with_fleet_hook(api: &Il2CppApi, class: *mut Il2CppClass) {
-    if !ORIG_SHOW_WITH_FLEET.load(Relaxed).is_null() {
-        return;
-    }
-
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "ShowWithFleet",
         1,
         "TargetViewer.ShowWithFleet",
         hook_show_with_fleet as *const (),
-        |orig| ORIG_SHOW_WITH_FLEET.store(orig as *mut (), Relaxed),
+        &ORIG_SHOW_WITH_FLEET,
     );
 }
 
@@ -97,18 +97,14 @@ fn install_target_accessors(api: &Il2CppApi) {
 }
 
 fn install_target_id_hook(api: &Il2CppApi, class: *mut Il2CppClass) {
-    if !ORIG_GET_TARGET_ID.load(Relaxed).is_null() {
-        return;
-    }
-
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "get_TargetID",
         0,
         "TargetViewer.BattleTargetData.get_TargetID",
         hook_get_target_id as *const (),
-        |orig| ORIG_GET_TARGET_ID.store(orig as *mut (), Relaxed),
+        &ORIG_GET_TARGET_ID,
     );
 }
 
@@ -195,23 +191,23 @@ fn monotonic_ms() -> i64 {
 mod tests {
     use super::*;
 
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicUsize;
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
     static FIRST_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
     static SECOND_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     fn first_callback(_: TargetViewerEvent) {
-        FIRST_CALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
+        FIRST_CALLBACK_COUNT.fetch_add(1, Relaxed);
     }
 
     fn second_callback(_: TargetViewerEvent) {
-        SECOND_CALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
+        SECOND_CALLBACK_COUNT.fetch_add(1, Relaxed);
     }
 
     fn reset_counts() {
-        FIRST_CALLBACK_COUNT.store(0, Ordering::Relaxed);
-        SECOND_CALLBACK_COUNT.store(0, Ordering::Relaxed);
+        FIRST_CALLBACK_COUNT.store(0, Relaxed);
+        SECOND_CALLBACK_COUNT.store(0, Relaxed);
     }
 
     fn event() -> TargetViewerEvent {
@@ -232,7 +228,7 @@ mod tests {
         emit(&subscribers, event());
 
         assert_eq!(subscribers.lock().unwrap().len(), 1);
-        assert_eq!(FIRST_CALLBACK_COUNT.load(Ordering::Relaxed), 1);
+        assert_eq!(FIRST_CALLBACK_COUNT.load(Relaxed), 1);
     }
 
     #[test]
@@ -246,7 +242,7 @@ mod tests {
         emit(&subscribers, event());
 
         assert_eq!(subscribers.lock().unwrap().len(), 2);
-        assert_eq!(FIRST_CALLBACK_COUNT.load(Ordering::Relaxed), 1);
-        assert_eq!(SECOND_CALLBACK_COUNT.load(Ordering::Relaxed), 1);
+        assert_eq!(FIRST_CALLBACK_COUNT.load(Relaxed), 1);
+        assert_eq!(SECOND_CALLBACK_COUNT.load(Relaxed), 1);
     }
 }

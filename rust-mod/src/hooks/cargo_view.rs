@@ -9,6 +9,8 @@ use log::{debug, warn};
 
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -157,53 +159,88 @@ fn get_hull_type(fleet: *mut Il2CppObject) -> Option<i32> {
 
 /// Install cargo auto-open hooks.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::CARGO_VIEW) {
+        return;
+    }
+
     target_viewer::install(api);
     target_viewer::subscribe_show_with_fleet(on_target_viewer_show);
 
-    let Some(prescan_class) =
-        resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget")
-    else {
-        warn!(target: "CargoView", "PreScanTargetWidget class not found");
+    if is_ready() {
         return;
-    };
-
-    resolve_offset(api, prescan_class, "_battleTargetData", &OFFSET_BATTLE_TARGET_DATA);
-    resolve_offset(api, prescan_class, "_rewardsButtonWidget", &OFFSET_REWARDS_BUTTON_WIDGET);
-
-    if let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "RewardsButtonWidget") {
-        resolve_offset(api, class, "_rewardsController", &OFFSET_REWARDS_CONTROLLER);
-    } else {
-        warn!(target: "CargoView", "RewardsButtonWidget class not found");
     }
 
-    if let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController") {
-        resolve_fn(api, class, "Show", 1, &VISIBILITY_SHOW_FN);
-    } else {
-        warn!(target: "CargoView", "VisibilityController class not found");
+    if offset_missing(&OFFSET_BATTLE_TARGET_DATA) || offset_missing(&OFFSET_REWARDS_BUTTON_WIDGET) {
+        if let Some(class) =
+            resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget")
+        {
+            resolve_offset(api, class, "_battleTargetData", &OFFSET_BATTLE_TARGET_DATA);
+            resolve_offset(api, class, "_rewardsButtonWidget", &OFFSET_REWARDS_BUTTON_WIDGET);
+        } else {
+            warn!(target: "CargoView", "PreScanTargetWidget class not found");
+        }
     }
 
-    if let Some(class) = resolver::resolve_prime_model_class(api, "BattleTargetData") {
-        resolve_offset(api, class, "TargetFleetDeployedData", &OFFSET_TARGET_FLEET_DEPLOYED_DATA);
-    } else {
-        warn!(target: "CargoView", "BattleTargetData class not found");
+    if offset_missing(&OFFSET_REWARDS_CONTROLLER) {
+        if let Some(class) =
+            resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Combat", "RewardsButtonWidget")
+        {
+            resolve_offset(api, class, "_rewardsController", &OFFSET_REWARDS_CONTROLLER);
+        } else {
+            warn!(target: "CargoView", "RewardsButtonWidget class not found");
+        }
     }
 
-    if let Some(class) = resolver::resolve_prime_model_class(api, "FleetDeployedData") {
-        resolve_fn(api, class, "get_FleetType", 0, &GET_FLEET_TYPE_FN);
-        resolve_fn(api, class, "get_Hull", 0, &GET_HULL_FN);
-    } else {
-        warn!(target: "CargoView", "FleetDeployedData class not found");
+    if method_missing(&VISIBILITY_SHOW_FN) {
+        if let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "VisibilityController")
+        {
+            resolve_fn(api, class, "Show", 1, &VISIBILITY_SHOW_FN);
+        } else {
+            warn!(target: "CargoView", "VisibilityController class not found");
+        }
     }
 
-    if let Some(class) = resolver::resolve_prime_model_class(api, "HullSpec") {
-        resolve_fn(api, class, "get_Type", 0, &GET_HULL_TYPE_FN);
-    } else {
-        warn!(target: "CargoView", "HullSpec class not found");
+    if offset_missing(&OFFSET_TARGET_FLEET_DEPLOYED_DATA) {
+        if let Some(class) = resolver::resolve_prime_model_class(api, "BattleTargetData") {
+            resolve_offset(api, class, "TargetFleetDeployedData", &OFFSET_TARGET_FLEET_DEPLOYED_DATA);
+        } else {
+            warn!(target: "CargoView", "BattleTargetData class not found");
+        }
+    }
+
+    if method_missing(&GET_FLEET_TYPE_FN) || method_missing(&GET_HULL_FN) {
+        if let Some(class) = resolver::resolve_prime_model_class(api, "FleetDeployedData") {
+            resolve_fn(api, class, "get_FleetType", 0, &GET_FLEET_TYPE_FN);
+            resolve_fn(api, class, "get_Hull", 0, &GET_HULL_FN);
+        } else {
+            warn!(target: "CargoView", "FleetDeployedData class not found");
+        }
+    }
+
+    if method_missing(&GET_HULL_TYPE_FN) {
+        if let Some(class) = resolver::resolve_prime_model_class(api, "HullSpec") {
+            resolve_fn(api, class, "get_Type", 0, &GET_HULL_TYPE_FN);
+        } else {
+            warn!(target: "CargoView", "HullSpec class not found");
+        }
     }
 }
 
+fn is_ready() -> bool {
+    !offset_missing(&OFFSET_BATTLE_TARGET_DATA)
+        && !offset_missing(&OFFSET_REWARDS_BUTTON_WIDGET)
+        && !offset_missing(&OFFSET_REWARDS_CONTROLLER)
+        && !offset_missing(&OFFSET_TARGET_FLEET_DEPLOYED_DATA)
+        && !method_missing(&VISIBILITY_SHOW_FN)
+        && !method_missing(&GET_FLEET_TYPE_FN)
+        && !method_missing(&GET_HULL_FN)
+        && !method_missing(&GET_HULL_TYPE_FN)
+}
+
 fn resolve_offset(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str, target: &AtomicUsize) {
-    resolver::resolve_field_offset_into(api, class, field_name, target);
+    if offset_missing(target) {
+        resolver::resolve_field_offset_into(api, class, field_name, target);
+    }
 }
 
 fn resolve_fn(
@@ -213,5 +250,15 @@ fn resolve_fn(
     param_count: i32,
     target: &AtomicPtr<MethodInfo>,
 ) {
-    resolver::resolve_method_into(api, class, method_name, param_count, target);
+    if method_missing(target) {
+        resolver::resolve_method_into(api, class, method_name, param_count, target);
+    }
+}
+
+fn offset_missing(target: &AtomicUsize) -> bool {
+    target.load(Relaxed) == 0
+}
+
+fn method_missing(target: &AtomicPtr<MethodInfo>) -> bool {
+    target.load(Relaxed).is_null()
 }
