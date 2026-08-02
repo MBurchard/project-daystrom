@@ -12,6 +12,8 @@ use crate::hook::safety::HookInfo;
 use crate::hooks::navigation_view;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -1378,6 +1380,9 @@ fn format_optional_vector3(value: Option<Vector3>) -> String {
 
 /// Install accessors and event hooks for fleet scanning.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::FLEET_SCANNER) {
+        return;
+    }
     fleet_bar::install(api);
     target_viewer::install(api);
     target_viewer::subscribe_target_id(on_target_viewer_show);

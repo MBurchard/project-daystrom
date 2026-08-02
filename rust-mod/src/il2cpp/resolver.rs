@@ -6,50 +6,105 @@ use log::warn;
 use super::api::Il2CppApi;
 use super::types::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClassResolveError {
+    DomainUnavailable,
+    AssemblyMissing,
+    ImageMissing,
+    ClassMissing,
+}
+
+impl ClassResolveError {
+    const fn description(self) -> &'static str {
+        match self {
+            Self::DomainUnavailable => "domain unavailable",
+            Self::AssemblyMissing => "assembly missing",
+            Self::ImageMissing => "image missing",
+            Self::ClassMissing => "class missing",
+        }
+    }
+}
+
 /// Resolve an IL2CPP class by assembly name, namespace, and class name.
 ///
 /// Walks the chain: domain → assembly → image → class. Returns `None` and logs a warning if any step fails.
 /// This is expected when a game update renames or removes a class.
 pub fn resolve_class(api: &Il2CppApi, assembly: &str, namespace: &str, class_name: &str) -> Option<*mut Il2CppClass> {
-    let c_assembly = CString::new(assembly).unwrap_or_else(|_| {
+    let Ok(c_assembly) = CString::new(assembly) else {
         warn!(target: "IL2CPP", "Invalid assembly name (contains null byte): {assembly}");
-        CString::default()
-    });
-    let c_namespace = CString::new(namespace).unwrap_or_else(|_| {
+        return None;
+    };
+    let Ok(c_namespace) = CString::new(namespace) else {
         warn!(target: "IL2CPP", "Invalid namespace (contains null byte): {namespace}");
-        CString::default()
-    });
-    let c_class = CString::new(class_name).unwrap_or_else(|_| {
+        return None;
+    };
+    let Ok(c_class) = CString::new(class_name) else {
         warn!(target: "IL2CPP", "Invalid class name (contains null byte): {class_name}");
-        CString::default()
-    });
+        return None;
+    };
 
+    match resolve_class_cstr(api, &c_assembly, &c_namespace, &c_class) {
+        Ok(class) => Some(class),
+        Err(ClassResolveError::DomainUnavailable) => {
+            warn!(target: "IL2CPP", "il2cpp_domain_get() returned null");
+            None
+        }
+        Err(ClassResolveError::AssemblyMissing) => {
+            warn!(target: "IL2CPP", "Assembly not found: {assembly}");
+            None
+        }
+        Err(ClassResolveError::ImageMissing) => {
+            warn!(target: "IL2CPP", "Image not found for assembly: {assembly}");
+            None
+        }
+        Err(ClassResolveError::ClassMissing) => {
+            warn!(target: "IL2CPP", "Class not found: {namespace}.{class_name} in {assembly}");
+            None
+        }
+    }
+}
+
+/// Resolve a class without logging normal lookup misses.
+pub fn try_resolve_class(
+    api: &Il2CppApi,
+    assembly: &str,
+    namespace: &str,
+    class_name: &str,
+) -> Option<*mut Il2CppClass> {
+    let c_assembly = CString::new(assembly).ok()?;
+    let c_namespace = CString::new(namespace).ok()?;
+    let c_class = CString::new(class_name).ok()?;
+    resolve_class_cstr(api, &c_assembly, &c_namespace, &c_class).ok()
+}
+
+fn resolve_class_cstr(
+    api: &Il2CppApi,
+    assembly: &CString,
+    namespace: &CString,
+    class_name: &CString,
+) -> Result<*mut Il2CppClass, ClassResolveError> {
     unsafe {
         let domain = (api.domain_get)();
         if domain.is_null() {
-            warn!(target: "IL2CPP", "il2cpp_domain_get() returned null");
-            return None;
+            return Err(ClassResolveError::DomainUnavailable);
         }
 
-        let asm = (api.domain_assembly_open)(domain, c_assembly.as_ptr());
+        let asm = (api.domain_assembly_open)(domain, assembly.as_ptr());
         if asm.is_null() {
-            warn!(target: "IL2CPP", "Assembly not found: {assembly}");
-            return None;
+            return Err(ClassResolveError::AssemblyMissing);
         }
 
         let image = (api.assembly_get_image)(asm);
         if image.is_null() {
-            warn!(target: "IL2CPP", "Image not found for assembly: {assembly}");
-            return None;
+            return Err(ClassResolveError::ImageMissing);
         }
 
-        let class = (api.class_from_name)(image, c_namespace.as_ptr(), c_class.as_ptr());
+        let class = (api.class_from_name)(image, namespace.as_ptr(), class_name.as_ptr());
         if class.is_null() {
-            warn!(target: "IL2CPP", "Class not found: {namespace}.{class_name} in {assembly}");
-            return None;
+            return Err(ClassResolveError::ClassMissing);
         }
 
-        Some(class)
+        Ok(class)
     }
 }
 
@@ -60,9 +115,34 @@ const PRIME_ASSEMBLIES: &[&str] = &["Digit.Client.PrimeLib.Runtime", "Assembly-C
 ///
 /// Different game builds place these classes in different assemblies, so this returns the first match.
 pub fn resolve_prime_class(api: &Il2CppApi, namespace: &str, class_name: &str) -> Option<*mut Il2CppClass> {
-    PRIME_ASSEMBLIES
-        .iter()
-        .find_map(|assembly| resolve_class(api, assembly, namespace, class_name))
+    let Ok(c_namespace) = CString::new(namespace) else {
+        warn!(target: "IL2CPP", "Invalid namespace (contains null byte): {namespace}");
+        return None;
+    };
+    let Ok(c_class) = CString::new(class_name) else {
+        warn!(target: "IL2CPP", "Invalid class name (contains null byte): {class_name}");
+        return None;
+    };
+
+    let mut failures = Vec::with_capacity(PRIME_ASSEMBLIES.len());
+    for assembly in PRIME_ASSEMBLIES {
+        let c_assembly = CString::new(*assembly).expect("Prime assembly names must not contain null bytes");
+        match resolve_class_cstr(api, &c_assembly, &c_namespace, &c_class) {
+            Ok(class) => return Some(class),
+            Err(ClassResolveError::DomainUnavailable) => {
+                warn!(target: "IL2CPP", "il2cpp_domain_get() returned null");
+                return None;
+            }
+            Err(error) => failures.push(format!("{assembly}: {}", error.description())),
+        }
+    }
+
+    warn!(
+        target: "IL2CPP",
+        "Could not resolve Prime class: {namespace}.{class_name} (tried {})",
+        failures.join(", ")
+    );
+    None
 }
 
 /// Resolve a class from the `Digit.PrimeServer.Models` namespace across the known Prime assemblies.
@@ -140,6 +220,29 @@ pub fn resolve_method(
 
         Some(method)
     }
+}
+
+/// Resolve a method without logging normal lookup misses.
+pub fn try_resolve_method(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+) -> Option<*const MethodInfo> {
+    let c_method = CString::new(method_name).ok()?;
+    let method = unsafe { (api.class_get_method_from_name)(class, c_method.as_ptr(), param_count) };
+    if method.is_null() || unsafe { (*method).method_pointer.is_null() } {
+        return None;
+    }
+    Some(method)
+}
+
+/// Check whether a field exists without logging normal lookup misses.
+pub fn has_field(api: &Il2CppApi, class: *mut Il2CppClass, field_name: &str) -> bool {
+    let Ok(c_field) = CString::new(field_name) else {
+        return false;
+    };
+    !unsafe { (api.class_get_field_from_name)(class, c_field.as_ptr()) }.is_null()
 }
 
 /// Resolve a method and cache its `MethodInfo` pointer.

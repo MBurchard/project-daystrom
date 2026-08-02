@@ -45,6 +45,8 @@ jobs:
         run: pnpm icons
       - name: Run backend tests and generate TypeScript bindings
         run: pnpm test:app:backend
+      - name: Run mod tests
+        run: pnpm test:mod
       - name: Lint
         run: pnpm lint:ci
       - name: Typecheck

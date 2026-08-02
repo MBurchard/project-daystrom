@@ -131,24 +131,26 @@ This compiles the mod for the current platform and copies the result to `app/res
 
 ### Workspace root (run from the project root)
 
-| Script                            | Description                                          |
-|-----------------------------------|------------------------------------------------------|
-| `pnpm install:all`                | Force-install all workspace dependencies             |
-| `pnpm lint`                       | Run ESLint across the entire project                 |
-| `pnpm lint:fix`                   | Run ESLint with auto-fix                             |
-| `pnpm typecheck`                  | TypeScript + Rust type checks                        |
-| `pnpm test`                       | Run all tests (frontend + backend)                   |
-| `pnpm test:app`                   | Run all app tests (frontend + backend)               |
-| `pnpm test:app:frontend`          | Run frontend tests only (vitest)                     |
-| `pnpm test:app:backend`           | Run backend tests only (cargo test + ts-rs bindings) |
-| `pnpm test:app:frontend:watch`    | Run frontend tests in watch mode                     |
-| `pnpm test:app:frontend:coverage` | Run frontend tests with v8 coverage                  |
-| `pnpm test:app:backend:coverage`  | Run backend tests with llvm-cov coverage             |
-| `pnpm build`                      | Build everything (mod dylib → Tauri app)             |
-| `pnpm build:mod`                  | Build mod dylib and copy to `app/resources/mod/`     |
-| `pnpm build:app`                  | Build mod dylib + Tauri app bundle                   |
-| `pnpm icons`                      | Generate Tauri icons from `resources/daystrom.png`   |
-| `pnpm dev`                        | Build mod + start Tauri app with hot reload          |
+| Script                                     | Description                                           |
+|--------------------------------------------|-------------------------------------------------------|
+| `pnpm install:all`                         | Force-install all workspace dependencies              |
+| `pnpm lint`                                | Run ESLint across the entire project                  |
+| `pnpm lint:fix`                            | Run ESLint with auto-fix                              |
+| `pnpm typecheck`                           | TypeScript + Rust type checks                         |
+| `pnpm test`                                | Run all tests (frontend + backend)                    |
+| `pnpm test:app`                            | Run all app tests (frontend + backend)                |
+| `pnpm test:app:frontend`                   | Run frontend tests only (vitest)                      |
+| `pnpm test:app:backend`                    | Run backend tests only (cargo test + ts-rs bindings)  |
+| `pnpm test:app:frontend:watch`             | Run frontend tests in watch mode                      |
+| `pnpm test:app:frontend:coverage`          | Run frontend tests with v8 coverage                   |
+| `pnpm test:app:backend:coverage`           | Run backend tests with llvm-cov coverage              |
+| `pnpm check:mod:dump -- <paths>`           | Check IL2CPP dumps against the compatibility manifest |
+| `pnpm release:verify -- <macOS> <Windows>` | Require compatible platform dumps before release      |
+| `pnpm build`                               | Build everything (mod dylib → Tauri app)              |
+| `pnpm build:mod`                           | Build mod dylib and copy to `app/resources/mod/`      |
+| `pnpm build:app`                           | Build mod dylib + Tauri app bundle                    |
+| `pnpm icons`                               | Generate Tauri icons from `resources/daystrom.png`    |
+| `pnpm dev`                                 | Build mod + start Tauri app with hot reload           |
 
 ### Path Aliases
 

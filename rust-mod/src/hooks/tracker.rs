@@ -402,6 +402,30 @@ mod tests {
         }
     }
 
+    unsafe extern "C" fn fake_method_get_return_type(_: *const MethodInfo) -> *const Il2CppType {
+        std::ptr::null()
+    }
+
+    unsafe extern "C" fn fake_method_get_param(_: *const MethodInfo, _: u32) -> *const Il2CppType {
+        std::ptr::null()
+    }
+
+    unsafe extern "C" fn fake_method_get_flags(_: *const MethodInfo, _: *mut u32) -> u32 {
+        0
+    }
+
+    unsafe extern "C" fn fake_type_get_type(_: *const Il2CppType) -> i32 {
+        0
+    }
+
+    unsafe extern "C" fn fake_class_from_type(_: *const Il2CppType) -> *mut Il2CppClass {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn fake_class_is_valuetype(_: *const Il2CppClass) -> bool {
+        false
+    }
+
     unsafe extern "C" fn fake_class_get_field_from_name(_: *mut Il2CppClass, _: *const c_char) -> *mut FieldInfo {
         std::ptr::null_mut()
     }
@@ -430,6 +454,12 @@ mod tests {
             assembly_get_image: fake_assembly_get_image,
             class_from_name: fake_class_from_name,
             class_get_method_from_name: fake_class_get_method_from_name,
+            method_get_return_type: fake_method_get_return_type,
+            method_get_param: fake_method_get_param,
+            method_get_flags: fake_method_get_flags,
+            type_get_type: fake_type_get_type,
+            class_from_type: fake_class_from_type,
+            class_is_valuetype: fake_class_is_valuetype,
             class_get_field_from_name: fake_class_get_field_from_name,
             field_get_offset: fake_field_get_offset,
             runtime_invoke: fake_runtime_invoke,
@@ -486,6 +516,24 @@ mod tests {
             original: |orig| original.store(orig as *mut (), Relaxed),
             install: fake_installer,
         }
+    }
+
+    fn install_test_lifecycle_hooks(
+        api: &Il2CppApi,
+        original_awake: &AtomicPtr<()>,
+        original_destroy: &AtomicPtr<()>,
+        install: HookInstaller,
+    ) -> bool {
+        install_lifecycle_hooks_once_with(LifecycleHookInstall {
+            api,
+            class: 0xABCDusize as *mut Il2CppClass,
+            label: "Subject",
+            awake_hook: subject::hook_awake,
+            destroy_hook: subject::hook_destroy,
+            original_awake,
+            original_destroy,
+            install,
+        })
     }
 
     #[test]
@@ -549,16 +597,7 @@ mod tests {
         let original_awake = AtomicPtr::new(std::ptr::null_mut());
         let original_destroy = AtomicPtr::new(std::ptr::null_mut());
 
-        let installed = install_lifecycle_hooks_once_with(LifecycleHookInstall {
-            api: &api,
-            class: 0xABCDusize as *mut Il2CppClass,
-            label: "Subject",
-            awake_hook: subject::hook_awake,
-            destroy_hook: subject::hook_destroy,
-            original_awake: &original_awake,
-            original_destroy: &original_destroy,
-            install: fake_installer,
-        });
+        let installed = install_test_lifecycle_hooks(&api, &original_awake, &original_destroy, fake_installer);
 
         assert!(installed);
         assert_eq!(original_awake.load(Relaxed), fake_original as *mut ());
@@ -574,31 +613,14 @@ mod tests {
         let original_awake = AtomicPtr::new(std::ptr::null_mut());
         let original_destroy = AtomicPtr::new(std::ptr::null_mut());
 
-        let first_installed = install_lifecycle_hooks_once_with(LifecycleHookInstall {
-            api: &api,
-            class: 0xABCDusize as *mut Il2CppClass,
-            label: "Subject",
-            awake_hook: subject::hook_awake,
-            destroy_hook: subject::hook_destroy,
-            original_awake: &original_awake,
-            original_destroy: &original_destroy,
-            install: fake_installer_fails_destroy,
-        });
+        let first_installed =
+            install_test_lifecycle_hooks(&api, &original_awake, &original_destroy, fake_installer_fails_destroy);
         assert!(!first_installed);
         assert_eq!(original_awake.load(Relaxed), fake_original as *mut ());
         assert!(original_destroy.load(Relaxed).is_null());
         assert_eq!(INSTALL_CALLS.load(Relaxed), 2);
 
-        let second_installed = install_lifecycle_hooks_once_with(LifecycleHookInstall {
-            api: &api,
-            class: 0xABCDusize as *mut Il2CppClass,
-            label: "Subject",
-            awake_hook: subject::hook_awake,
-            destroy_hook: subject::hook_destroy,
-            original_awake: &original_awake,
-            original_destroy: &original_destroy,
-            install: fake_installer,
-        });
+        let second_installed = install_test_lifecycle_hooks(&api, &original_awake, &original_destroy, fake_installer);
 
         assert!(second_installed);
         assert_eq!(original_awake.load(Relaxed), fake_original as *mut ());

@@ -25,6 +25,24 @@ type Il2CppClassFromNameFn = unsafe extern "C" fn(*mut Il2CppImage, *const c_cha
 /// Type alias for `il2cpp_class_get_method_from_name(class, name, argc) -> method_info`.
 type Il2CppClassGetMethodFromNameFn = unsafe extern "C" fn(*mut Il2CppClass, *const c_char, i32) -> *const MethodInfo;
 
+/// Type alias for `il2cpp_method_get_return_type(method) -> type`.
+type Il2CppMethodGetReturnTypeFn = unsafe extern "C" fn(*const MethodInfo) -> *const Il2CppType;
+
+/// Type alias for `il2cpp_method_get_param(method, index) -> type`.
+type Il2CppMethodGetParamFn = unsafe extern "C" fn(*const MethodInfo, u32) -> *const Il2CppType;
+
+/// Type alias for `il2cpp_method_get_flags(method, iflags) -> flags`.
+type Il2CppMethodGetFlagsFn = unsafe extern "C" fn(*const MethodInfo, *mut u32) -> u32;
+
+/// Type alias for `il2cpp_type_get_type(type) -> Il2CppTypeEnum`.
+type Il2CppTypeGetTypeFn = unsafe extern "C" fn(*const Il2CppType) -> i32;
+
+/// Type alias for `il2cpp_class_from_type(type) -> class`.
+type Il2CppClassFromTypeFn = unsafe extern "C" fn(*const Il2CppType) -> *mut Il2CppClass;
+
+/// Type alias for `il2cpp_class_is_valuetype(class) -> bool`.
+type Il2CppClassIsValueTypeFn = unsafe extern "C" fn(*const Il2CppClass) -> bool;
+
 /// Type alias for `il2cpp_runtime_invoke(method, obj, params, exc) -> result`.
 pub type Il2CppRuntimeInvokeFn = unsafe extern "C" fn(
     *const MethodInfo,
@@ -54,6 +72,12 @@ pub struct Il2CppApi {
     pub assembly_get_image: Il2CppAssemblyGetImageFn,
     pub class_from_name: Il2CppClassFromNameFn,
     pub class_get_method_from_name: Il2CppClassGetMethodFromNameFn,
+    pub method_get_return_type: Il2CppMethodGetReturnTypeFn,
+    pub method_get_param: Il2CppMethodGetParamFn,
+    pub method_get_flags: Il2CppMethodGetFlagsFn,
+    pub type_get_type: Il2CppTypeGetTypeFn,
+    pub class_from_type: Il2CppClassFromTypeFn,
+    pub class_is_valuetype: Il2CppClassIsValueTypeFn,
     pub class_get_field_from_name: Il2CppClassGetFieldFromNameFn,
     pub field_get_offset: Il2CppFieldGetOffsetFn,
     pub runtime_invoke: Il2CppRuntimeInvokeFn,
@@ -106,6 +130,12 @@ pub fn load() -> Result<Il2CppApi, Il2CppError> {
             assembly_get_image: resolve(lib, "il2cpp_assembly_get_image\0")?,
             class_from_name: resolve(lib, "il2cpp_class_from_name\0")?,
             class_get_method_from_name: resolve(lib, "il2cpp_class_get_method_from_name\0")?,
+            method_get_return_type: resolve(lib, "il2cpp_method_get_return_type\0")?,
+            method_get_param: resolve(lib, "il2cpp_method_get_param\0")?,
+            method_get_flags: resolve(lib, "il2cpp_method_get_flags\0")?,
+            type_get_type: resolve(lib, "il2cpp_type_get_type\0")?,
+            class_from_type: resolve(lib, "il2cpp_class_from_type\0")?,
+            class_is_valuetype: resolve(lib, "il2cpp_class_is_valuetype\0")?,
             class_get_field_from_name: resolve(lib, "il2cpp_class_get_field_from_name\0")?,
             field_get_offset: resolve(lib, "il2cpp_field_get_offset\0")?,
             runtime_invoke: resolve(lib, "il2cpp_runtime_invoke\0")?,

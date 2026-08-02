@@ -179,7 +179,7 @@ fn display_string(ptr: *const Il2CppString) -> String {
     if ptr.is_null() {
         return "<null>".to_string();
     }
-    unsafe { Il2CppString::to_rust_string(ptr) }.unwrap_or_else(|| "<invalid>".to_string())
+    unsafe { Il2CppString::decode(ptr) }.unwrap_or_else(|| "<invalid>".to_string())
 }
 
 /// Create an `Il2CppString` from a Rust string using the IL2CPP API.

@@ -28,6 +28,8 @@
     "test:app:backend:coverage": "node scripts/build.ts test:backend:coverage",
     "test:mod": "node scripts/build.ts test:mod",
     "test:mod:coverage": "node scripts/build.ts test:mod:coverage",
+    "check:mod:dump": "node scripts/build.ts check:mod:dump",
+    "release:verify": "node scripts/build.ts release:verify",
     "build": "node scripts/build.ts build",
     "build:app": "node scripts/build.ts build:app",
     "build:mod": "node scripts/build.ts build:mod",
