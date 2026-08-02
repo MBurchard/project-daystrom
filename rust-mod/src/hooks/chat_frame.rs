@@ -19,6 +19,8 @@ use log::debug;
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::{invoke, resolver, types::*};
 
 // ---- Constants ------------------------------------------------------------
@@ -271,9 +273,7 @@ fn get_max_width(mgr: *mut Il2CppObject) -> f32 {
 
 /// Helper to resolve a method pointer, install a hook, and store the original.
 fn install_hook(api: &Il2CppApi, class: *mut Il2CppClass, name: &str, hook_fn: *const (), original: &AtomicPtr<()>) {
-    tracker::install_resolved_hook(api, class, name, 0, name, hook_fn, |orig| {
-        original.store(orig as *mut (), Relaxed)
-    });
+    tracker::install_resolved_hook_if_missing(api, class, name, 0, name, hook_fn, original);
 }
 
 /// Install chat sidebar hooks.
@@ -283,6 +283,10 @@ fn install_hook(api: &Il2CppApi, class: *mut Il2CppClass, name: &str, hook_fn: *
 /// debounce check, and resolves `OnSidePanelButtonClicked`. On `ChatService`, hooks `HandleMessageReceived`
 /// to track when server messages arrive.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::CHAT_FRAME) {
+        return;
+    }
+
     // ---- UIFrameManager ----
     let Some(frame_mgr_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "UIFrameManager")
     else {
@@ -293,8 +297,12 @@ pub fn install(api: &Il2CppApi) {
     install_hook(api, frame_mgr_class, "OnEnable", hook_mgr_enable as *const (), &ORIG_MGR_ENABLE);
 
     // Resolve ResizeSideFrame and GetMaxSideFrameWidth (called during restore, not hooked).
-    resolver::resolve_method_into(api, frame_mgr_class, "ResizeSideFrame", 1, &RESIZE_FN);
-    resolver::resolve_method_into(api, frame_mgr_class, "GetMaxSideFrameWidth", 0, &MAX_WIDTH_FN);
+    if RESIZE_FN.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, frame_mgr_class, "ResizeSideFrame", 1, &RESIZE_FN);
+    }
+    if MAX_WIDTH_FN.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, frame_mgr_class, "GetMaxSideFrameWidth", 0, &MAX_WIDTH_FN);
+    }
 
     // ---- ChatPreviewController ----
     let Some(chat_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController")
@@ -303,7 +311,9 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    resolver::resolve_field_offset_into(api, chat_class, "_focusedPanel", &OFFSET_FOCUSED_PANEL);
+    if OFFSET_FOCUSED_PANEL.load(Relaxed) == 0 {
+        resolver::resolve_field_offset_into(api, chat_class, "_focusedPanel", &OFFSET_FOCUSED_PANEL);
+    }
 
     install_hook(
         api,
@@ -316,7 +326,9 @@ pub fn install(api: &Il2CppApi) {
     install_hook(api, chat_class, "Update", hook_chat_update as *const (), &ORIG_CHAT_UPDATE);
 
     // Resolve OnSidePanelButtonClicked (called during restore, not hooked).
-    resolver::resolve_method_into(api, chat_class, "OnSidePanelButtonClicked", 0, &CLICK_FN);
+    if CLICK_FN.load(Relaxed).is_null() {
+        resolver::resolve_method_into(api, chat_class, "OnSidePanelButtonClicked", 0, &CLICK_FN);
+    }
 
     // ---- ChatService (different assembly) ----
     let Some(chat_service_class) = resolver::resolve_class(
@@ -329,13 +341,13 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         chat_service_class,
         "HandleMessageReceived",
         1,
         "HandleMessageReceived",
         hook_msg_received as *const (),
-        |orig| ORIG_MSG_RECEIVED.store(orig as *mut (), Relaxed),
+        &ORIG_MSG_RECEIVED,
     );
 }

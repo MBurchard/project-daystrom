@@ -11,6 +11,8 @@ use crate::hook::safety::HookInfo;
 use crate::hooks::fleet_scanner;
 use crate::hooks::tracker::{self, instance_tracker};
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -591,6 +593,10 @@ fn resolve_required_field(
 /// Resolves viewer classes, hooks Awake/OnDestroy for instance tracking, and resolves action methods.
 /// Called from `hotkeys::install()`.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::MAIN_ACTION) {
+        return;
+    }
+
     fleet_scanner::install(api);
 
     if is_ready() {
@@ -838,31 +844,25 @@ fn install_prescan_hooks_once(api: &Il2CppApi, class: *mut Il2CppClass) {
         return;
     }
 
-    let mut awake_installed = !ORIG_PRESCAN_AWAKE.load(Relaxed).is_null();
-    if !awake_installed {
-        awake_installed = tracker::install_resolved_hook(
-            api,
-            class,
-            "Awake",
-            0,
-            "PreScanAwake",
-            hook_prescan_awake as *const (),
-            |orig| ORIG_PRESCAN_AWAKE.store(orig as *mut (), Relaxed),
-        );
-    }
+    let awake_installed = tracker::install_resolved_hook_if_missing(
+        api,
+        class,
+        "Awake",
+        0,
+        "PreScanAwake",
+        hook_prescan_awake as *const (),
+        &ORIG_PRESCAN_AWAKE,
+    );
 
-    let mut destroy_installed = !ORIG_PRESCAN_DESTROY.load(Relaxed).is_null();
-    if !destroy_installed {
-        destroy_installed = tracker::install_resolved_hook(
-            api,
-            class,
-            "OnDestroy",
-            0,
-            "PreScanDestroy",
-            hook_prescan_destroy as *const (),
-            |orig| ORIG_PRESCAN_DESTROY.store(orig as *mut (), Relaxed),
-        );
-    }
+    let destroy_installed = tracker::install_resolved_hook_if_missing(
+        api,
+        class,
+        "OnDestroy",
+        0,
+        "PreScanDestroy",
+        hook_prescan_destroy as *const (),
+        &ORIG_PRESCAN_DESTROY,
+    );
 
     if awake_installed && destroy_installed {
         PRESCAN_HOOKS_INSTALLED.store(true, Relaxed);
@@ -929,17 +929,14 @@ fn resolve_required_field_if_missing(
 /// Only installs once (idempotent). Resolves OnDestroy from the given class, which for non-overriding
 /// subclasses points to the base class implementation.
 fn install_shared_destroy(api: &Il2CppApi, class: *mut Il2CppClass) {
-    if !ORIG_VIEWER_DESTROY.load(Relaxed).is_null() {
-        return; // Already installed.
-    }
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "OnDestroy",
         0,
         "ViewerDestroy",
         hook_viewer_destroy as *const (),
-        |orig| ORIG_VIEWER_DESTROY.store(orig as *mut (), Relaxed),
+        &ORIG_VIEWER_DESTROY,
     );
 }
 

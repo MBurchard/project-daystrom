@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -56,18 +58,22 @@ extern "C" fn hook_should_show(this: *mut Il2CppObject, ignore: bool) -> bool {
 ///
 /// Hooks `ShopSceneManager.ShouldShowRevealSequence` to allow skipping the loot box animation.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::SHOP_REVEAL) {
+        return;
+    }
+
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager") else {
         log::warn!(target: "ShopReveal", "ShopSceneManager not found");
         return;
     };
 
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "ShouldShowRevealSequence",
         1,
         "ShopReveal",
         hook_should_show as *const (),
-        |orig| ORIGINAL_FN.store(orig as *mut (), Relaxed),
+        &ORIGINAL_FN,
     );
 }

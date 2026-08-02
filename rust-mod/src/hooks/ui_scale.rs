@@ -5,6 +5,8 @@ use log::{debug, warn};
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -174,26 +176,34 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
 /// computed root canvas scale factor by the user's scale setting. Only the root
 /// canvas is affected.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::UI_SCALE) {
+        return;
+    }
+
     let Some(sm_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") else {
         return;
     };
 
     // Resolve field offsets dynamically via IL2CPP reflection.
-    resolver::resolve_field_offset_into(api, sm_class, "m_canvasRootScaler", &OFFSET_ROOT_SCALER);
-
-    if let Some(cs_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.UI", "CanvasScaler") {
-        resolver::resolve_field_offset_into(api, cs_class, "m_ScaleFactor", &OFFSET_SCALE_FACTOR);
-    } else {
-        warn!(target: "UiScale", "CanvasScaler class not found");
+    if OFFSET_ROOT_SCALER.load(Relaxed) == 0 {
+        resolver::resolve_field_offset_into(api, sm_class, "m_canvasRootScaler", &OFFSET_ROOT_SCALER);
     }
 
-    tracker::install_resolved_hook(
+    if OFFSET_SCALE_FACTOR.load(Relaxed) == 0 {
+        if let Some(cs_class) = resolver::resolve_class(api, "UnityEngine.UI", "UnityEngine.UI", "CanvasScaler") {
+            resolver::resolve_field_offset_into(api, cs_class, "m_ScaleFactor", &OFFSET_SCALE_FACTOR);
+        } else {
+            warn!(target: "UiScale", "CanvasScaler class not found");
+        }
+    }
+
+    tracker::install_resolved_hook_if_missing(
         api,
         sm_class,
         "UpdateCanvasRootScaleFactor",
         0,
         "UiScale",
         hook_update as *const (),
-        |original| ORIGINAL_FN.store(original as *mut (), Relaxed),
+        &ORIGINAL_FN,
     );
 }

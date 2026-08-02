@@ -1401,40 +1401,84 @@ pub fn install(api: &Il2CppApi) {
 }
 
 fn is_ready() -> bool {
-    !method_missing(&GET_FLEET_ID_FN)
-        && !method_missing(&GET_FLEET_SYSTEM_POSITION_FN)
-        && !method_missing(&GET_FLEET_ADDRESS_FN)
-        && !method_missing(&GET_FLEET_IS_LOCAL_PLAYER_FN)
-        && !method_missing(&GET_FLEET_TYPE_FN)
-        && !method_missing(&GET_FLEET_STRENGTH_FN)
-        && !method_missing(&GET_FLEET_LEVEL_FN)
-        && !method_missing(&GET_FLEET_IS_MINING_FN)
-        && !method_missing(&GET_FLEET_HULL_FN)
-        && !method_missing(&GET_FLEET_MAX_IMPULSE_SPEED_FN)
-        && !method_missing(&GET_FLEET_MAX_WARP_SPEED_FN)
-        && !method_missing(&GET_FLEET_TRAVEL_DIRECTION_FN)
-        && !method_missing(&GET_FLEET_TIME_SINCE_LAST_UPDATE_FN)
-        && !method_missing(&GET_HULL_TYPE_FN)
-        && !method_missing(&GET_HULL_NAME_FN)
-        && !method_missing(&GET_NODE_ADDRESS_SYSTEM_FN)
-        && !method_missing(&NAVIGATION_MANAGER_CAN_SELECT_POI_METHOD)
-        && !method_missing(&NAVIGATION_MANAGER_SELECT_POI_METHOD)
-        && !method_missing(&GET_COURSE_FLEET_ID_FN)
-        && !method_missing(&GET_COURSE_SYSTEM_POSITION_FN)
+    fleet_model_accessors_ready()
+        && node_address_accessors_ready()
+        && course_accessors_ready()
         && !field_missing(&OFFSET_CHANGE_VIEW_DATA_ADDRESS)
-        && !ORIG_CHANGE_VIEW.load(Relaxed).is_null()
-        && !ORIG_NAVIGATION_MANAGER_ENABLE.load(Relaxed).is_null()
-        && !ORIG_NAVIGATION_MANAGER_DISABLE.load(Relaxed).is_null()
+        && navigation_selection_ready()
         && fleet_data_system_hooks_ready()
-        && !ORIG_COURSE_END.load(Relaxed).is_null()
+        && fleet_event_container_hooks_ready()
+        && deployment_events_ready()
+}
+
+fn fleet_model_accessors_ready() -> bool {
+    all_pointers_ready(fleet_model_accessor_slots())
+}
+
+fn fleet_model_accessor_slots() -> [&'static AtomicPtr<MethodInfo>; 16] {
+    [
+        &GET_FLEET_ID_FN,
+        &GET_FLEET_SYSTEM_POSITION_FN,
+        &GET_FLEET_ADDRESS_FN,
+        &GET_FLEET_IS_LOCAL_PLAYER_FN,
+        &GET_FLEET_TYPE_FN,
+        &GET_FLEET_STRENGTH_FN,
+        &GET_FLEET_LEVEL_FN,
+        &GET_FLEET_IS_MINING_FN,
+        &GET_FLEET_HULL_FN,
+        &GET_FLEET_MAX_IMPULSE_SPEED_FN,
+        &GET_FLEET_MAX_WARP_SPEED_FN,
+        &GET_FLEET_TRAVEL_DIRECTION_FN,
+        &GET_FLEET_TIME_SINCE_LAST_UPDATE_FN,
+        &GET_FLEET_CURRENT_STATE_FN,
+        &GET_HULL_TYPE_FN,
+        &GET_HULL_NAME_FN,
+    ]
+}
+
+fn node_address_accessors_ready() -> bool {
+    all_pointers_ready([&GET_NODE_ADDRESS_SYSTEM_FN])
+}
+
+fn course_accessors_ready() -> bool {
+    all_pointers_ready([&GET_COURSE_FLEET_ID_FN, &GET_COURSE_SYSTEM_POSITION_FN])
+}
+
+fn navigation_selection_ready() -> bool {
+    all_pointers_ready([&NAVIGATION_MANAGER_CAN_SELECT_POI_METHOD, &NAVIGATION_MANAGER_SELECT_POI_METHOD])
+        && all_pointers_ready([&ORIG_CHANGE_VIEW, &ORIG_NAVIGATION_MANAGER_ENABLE, &ORIG_NAVIGATION_MANAGER_DISABLE])
 }
 
 fn fleet_data_system_hooks_ready() -> bool {
-    !ORIG_FLEET_DATA_ADDED.load(Relaxed).is_null()
-        && !ORIG_FLEET_DATA_UPDATED.load(Relaxed).is_null()
-        && !ORIG_FLEET_DATA_DISPOSED.load(Relaxed).is_null()
-        && !ORIG_FLEET_DATA_ENTER_SYSTEM.load(Relaxed).is_null()
-        && !ORIG_FLEET_DATA_EXIT_SYSTEM.load(Relaxed).is_null()
+    all_pointers_ready([
+        &ORIG_FLEET_DATA_ADDED,
+        &ORIG_FLEET_DATA_UPDATED,
+        &ORIG_FLEET_DATA_DISPOSED,
+        &ORIG_FLEET_DATA_ENTER_SYSTEM,
+        &ORIG_FLEET_DATA_EXIT_SYSTEM,
+    ])
+}
+
+fn fleet_event_container_hooks_ready() -> bool {
+    all_pointers_ready(fleet_event_container_hook_slots())
+}
+
+fn fleet_event_container_hook_slots() -> [&'static AtomicPtr<()>; 5] {
+    [
+        &ORIG_EVENT_FLEET_ADDED,
+        &ORIG_EVENT_FLEET_DISPOSED,
+        &ORIG_EVENT_FLEET_UPDATED,
+        &ORIG_PLAYER_FLEET_UPDATED,
+        &ORIG_EVENT_FLEET_STATE_CHANGED,
+    ]
+}
+
+fn deployment_events_ready() -> bool {
+    all_pointers_ready([&ORIG_COURSE_END])
+}
+
+fn all_pointers_ready<T, const N: usize>(pointers: [&AtomicPtr<T>; N]) -> bool {
+    pointers.into_iter().all(|pointer| !pointer.load(Relaxed).is_null())
 }
 
 /// Resolve all FleetDeployedData and HullSpec getters used for snapshots.
@@ -1653,18 +1697,14 @@ fn install_hook(
     hook: *const (),
     original: &AtomicPtr<()>,
 ) {
-    if !original.load(Relaxed).is_null() {
-        return;
-    }
-
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         method_name,
         param_count,
         &format!("FleetScanner.{method_name}"),
         hook,
-        |orig| original.store(orig as *mut (), Relaxed),
+        original,
     );
 }
 
@@ -1703,9 +1743,33 @@ fn resolve_field_if_missing(api: &Il2CppApi, class: *mut Il2CppClass, field_name
 mod tests {
     use super::*;
 
+    use std::ptr::NonNull;
+    use std::sync::atomic::AtomicPtr;
     use std::time::{Duration, Instant};
 
     use crate::hooks::navigation_view::TEST_LOCK;
+
+    struct PointerStateGuard<'a, T> {
+        previous: Vec<(&'a AtomicPtr<T>, *mut T)>,
+    }
+
+    impl<'a, T> PointerStateGuard<'a, T> {
+        fn set<const N: usize>(pointers: [&'a AtomicPtr<T>; N], value: *mut T) -> Self {
+            let previous = pointers
+                .into_iter()
+                .map(|pointer| (pointer, pointer.swap(value, Relaxed)))
+                .collect();
+            Self { previous }
+        }
+    }
+
+    impl<T> Drop for PointerStateGuard<'_, T> {
+        fn drop(&mut self) {
+            for (pointer, previous) in &self.previous {
+                pointer.store(*previous, Relaxed);
+            }
+        }
+    }
 
     fn reset_store() {
         *FLEET_STORE.lock().unwrap() = None;
@@ -1852,6 +1916,35 @@ mod tests {
 
     fn fleet_ref(id: i64, system_id: Option<i64>) -> FleetRef {
         FleetRef { id, system_id }
+    }
+
+    #[test]
+    fn fleet_model_readiness_rejects_missing_current_state_accessor() {
+        let _test_guard = TEST_LOCK.lock().unwrap();
+        let resolved = NonNull::<MethodInfo>::dangling().as_ptr();
+        let _state_guard = PointerStateGuard::set(fleet_model_accessor_slots(), resolved);
+
+        assert!(fleet_model_accessors_ready());
+
+        GET_FLEET_CURRENT_STATE_FN.store(std::ptr::null_mut(), Relaxed);
+
+        assert!(!fleet_model_accessors_ready());
+    }
+
+    #[test]
+    fn fleet_event_readiness_rejects_each_missing_required_hook() {
+        let _test_guard = TEST_LOCK.lock().unwrap();
+        let installed = NonNull::<()>::dangling().as_ptr();
+        let hooks = fleet_event_container_hook_slots();
+        let _state_guard = PointerStateGuard::set(hooks, installed);
+
+        assert!(fleet_event_container_hooks_ready());
+
+        for hook in &hooks {
+            hook.store(std::ptr::null_mut(), Relaxed);
+            assert!(!fleet_event_container_hooks_ready());
+            hook.store(installed, Relaxed);
+        }
     }
 
     #[test]

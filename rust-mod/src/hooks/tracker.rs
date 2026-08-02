@@ -97,6 +97,45 @@ pub fn install_resolved_hook(
     })
 }
 
+fn install_resolved_hook_if_missing_with<StoreOriginal: FnOnce(*const ())>(
+    request: ResolvedHookInstall<'_, StoreOriginal>,
+    original: &AtomicPtr<()>,
+) -> bool {
+    if !original.load(Relaxed).is_null() {
+        return true;
+    }
+
+    install_resolved_hook_with(request)
+}
+
+/// Install a resolved IL2CPP hook only while its original trampoline slot is empty.
+///
+/// Returns `true` when the hook was already installed or installs successfully. Failed resolution or installation
+/// leaves the slot empty, allowing a later call to retry.
+pub fn install_resolved_hook_if_missing(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+    hook_name: &str,
+    replacement: *const (),
+    original: &AtomicPtr<()>,
+) -> bool {
+    install_resolved_hook_if_missing_with(
+        ResolvedHookInstall {
+            api,
+            class,
+            method_name,
+            param_count,
+            hook_name,
+            replacement,
+            original: |pointer| original.store(pointer as *mut (), Relaxed),
+            install: engine::install_hook,
+        },
+        original,
+    )
+}
+
 // ---- IL2CPP field access --------------------------------------------------
 
 /// Read a pointer-sized field at `offset` bytes from an IL2CPP object.
@@ -587,6 +626,50 @@ mod tests {
         assert!(!installed);
         assert_eq!(INSTALLED_TARGET.load(Relaxed), fake_target as *const () as usize);
         assert!(original.load(Relaxed).is_null());
+    }
+
+    #[test]
+    fn install_resolved_hook_if_missing_skips_an_existing_hook() {
+        let _guard = HOOK_HELPER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_hook_helper_test_state();
+        let api = fake_api();
+        let original = AtomicPtr::new(std::ptr::null_mut());
+
+        assert!(install_resolved_hook_if_missing_with(
+            test_resolved_hook_install(&api, &original),
+            &original,
+        ));
+        assert!(install_resolved_hook_if_missing_with(
+            test_resolved_hook_install(&api, &original),
+            &original,
+        ));
+
+        assert_eq!(original.load(Relaxed), fake_original as *mut ());
+        assert_eq!(INSTALL_CALLS.load(Relaxed), 1);
+    }
+
+    #[test]
+    fn install_resolved_hook_if_missing_retries_after_failure() {
+        let _guard = HOOK_HELPER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_hook_helper_test_state();
+        INSTALL_SHOULD_FAIL.store(true, Relaxed);
+        let api = fake_api();
+        let original = AtomicPtr::new(std::ptr::null_mut());
+
+        assert!(!install_resolved_hook_if_missing_with(
+            test_resolved_hook_install(&api, &original),
+            &original,
+        ));
+        assert!(original.load(Relaxed).is_null());
+
+        INSTALL_SHOULD_FAIL.store(false, Relaxed);
+        assert!(install_resolved_hook_if_missing_with(
+            test_resolved_hook_install(&api, &original),
+            &original,
+        ));
+
+        assert_eq!(original.load(Relaxed), fake_original as *mut ());
+        assert_eq!(INSTALL_CALLS.load(Relaxed), 2);
     }
 
     #[test]

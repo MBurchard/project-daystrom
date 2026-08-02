@@ -10,6 +10,8 @@ use log::debug;
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 
@@ -213,11 +215,17 @@ extern "C" fn hook_are_toasts_allowed(this: *mut Il2CppObject, toast: *mut Il2Cp
 /// Hooks `ToastObserver.AreToastsAllowed` which is called before any toast is displayed.
 /// A single hook covers all toast enqueue paths.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::TOAST_BANNER) {
+        return;
+    }
+
     // Resolve Toast field offset for reading the toast state in the hook.
-    if let Some(toast_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "Toast") {
-        resolver::resolve_field_offset_into(api, toast_class, "<State>k__BackingField", &TOAST_STATE_OFFSET);
-    } else {
-        log::warn!(target: "ToastBanner", "Toast class not found");
+    if TOAST_STATE_OFFSET.load(Relaxed) == 0 {
+        if let Some(toast_class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "Toast") {
+            resolver::resolve_field_offset_into(api, toast_class, "<State>k__BackingField", &TOAST_STATE_OFFSET);
+        } else {
+            log::warn!(target: "ToastBanner", "Toast class not found");
+        }
     }
 
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.HUD", "ToastObserver") else {
@@ -225,14 +233,14 @@ pub fn install(api: &Il2CppApi) {
         return;
     };
 
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "AreToastsAllowed",
         1,
         "ToastBanner.AreToastsAllowed",
         hook_are_toasts_allowed as *const (),
-        |orig| ORIG_ARE_TOASTS_ALLOWED.store(orig as *mut (), Relaxed),
+        &ORIG_ARE_TOASTS_ALLOWED,
     );
 }
 

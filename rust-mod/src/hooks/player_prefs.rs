@@ -6,6 +6,8 @@ use log::{debug, info, warn};
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
 use crate::profile_store;
@@ -647,9 +649,15 @@ fn install_single(
     replacement: *const (),
     original: &AtomicPtr<()>,
 ) {
-    tracker::install_resolved_hook(api, class, method_name, param_count, display_name, replacement, |orig| {
-        original.store(orig as *mut (), Relaxed)
-    });
+    tracker::install_resolved_hook_if_missing(
+        api,
+        class,
+        method_name,
+        param_count,
+        display_name,
+        replacement,
+        original,
+    );
 }
 
 /// Install PlayerPrefs.GetString and SetString logging hooks.
@@ -657,6 +665,10 @@ fn install_single(
 /// Called from `install_all_hooks()` after IL2CPP is initialized. Uses the IL2CPP
 /// reflection API to resolve the methods, so no hardcoded RVAs are needed.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::PLAYER_PREFS) {
+        return;
+    }
+
     let Some(class) = resolver::resolve_class(api, "UnityEngine.CoreModule", "UnityEngine", "PlayerPrefs") else {
         warn!(target: "PlayerPrefs", "PlayerPrefs class not found, hooks skipped");
         return;

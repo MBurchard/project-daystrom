@@ -12,6 +12,8 @@ use log::debug;
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -76,6 +78,10 @@ fn try_close_first_popup(this: *mut Il2CppObject) -> bool {
 ///
 /// Hooks `InterstitialViewController.AboutToShow` and resolves `CloseWhenReady` for guarded invocation.
 pub fn install(api: &Il2CppApi) {
+    if !compatibility::is_enabled(manifest::INTERSTITIAL) {
+        return;
+    }
+
     let Some(class) =
         resolver::resolve_class(api, "Assembly-CSharp", "Digit.Prime.Interstitial", "InterstitialViewController")
     else {
@@ -84,18 +90,20 @@ pub fn install(api: &Il2CppApi) {
     };
 
     // Resolve CloseWhenReady (0 params) for guarded invocation.
-    if !resolver::resolve_method_into(api, class, "CloseWhenReady", 0, &CLOSE_WHEN_READY_FN) {
+    if CLOSE_WHEN_READY_FN.load(Relaxed).is_null()
+        && !resolver::resolve_method_into(api, class, "CloseWhenReady", 0, &CLOSE_WHEN_READY_FN)
+    {
         return;
     }
 
     // Hook AboutToShow (0 params).
-    tracker::install_resolved_hook(
+    tracker::install_resolved_hook_if_missing(
         api,
         class,
         "AboutToShow",
         0,
         "Interstitial",
         hook_about_to_show as *const (),
-        |orig| ORIGINAL_FN.store(orig as *mut (), Relaxed),
+        &ORIGINAL_FN,
     );
 }
