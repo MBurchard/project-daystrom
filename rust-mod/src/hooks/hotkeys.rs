@@ -70,6 +70,30 @@ static IS_INPUT_FOCUSED_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::nul
 /// Method info for `IsActive() -> bool` (from UIBehaviour, shared by all UI widgets).
 pub(super) static IS_ACTIVE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Optional `GenericButtonWidget.get_Interactable()` method for guarded reward actions.
+static REWARD_BUTTON_INTERACTABLE_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Whether the optional reward-button interactability method has already been resolved once.
+static REWARD_BUTTON_INTERACTABLE_RESOLUTION_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+
+/// Optional `AnimatedRewardsScreenViewController.OnClaimNextClicked()` method.
+static ON_CLAIM_NEXT_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Optional `AnimatedRewardsScreenViewController._claimNextButton` field offset.
+static OFFSET_CLAIM_NEXT_BUTTON: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether the optional claim-next symbols have already been resolved once.
+static CLAIM_NEXT_RESOLUTION_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+
+/// Optional `GenericRewardsScreenViewController.OnBundleClaimClicked()` method.
+static ON_BUNDLE_CLAIM_METHOD: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Optional `GenericRewardsScreenViewController._bundleClaimButtonWidget` field offset.
+static OFFSET_BUNDLE_CLAIM_BUTTON: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether the optional bundle-claim symbols have already been resolved once.
+static BUNDLE_CLAIM_RESOLUTION_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+
 // ---- Reward screen tracking -----------------------------------------------
 
 /// Per-subclass tracking slot for `GenericRewardsScreenViewController` descendants.
@@ -471,10 +495,10 @@ extern "C" fn hook_missions_popout_awake(this: *mut Il2CppObject) {
 
 // ---- Reward collection ----------------------------------------------------
 
-/// Find the first active collect screen and trigger its collect button.
+/// Find the first active reward screen and trigger its most appropriate claim action.
 ///
-/// Checks reward screen ViewControllers (slots 0-3) and widget-based collect screens (MissionsNotificationPopout).
-/// The first active instance wins. Returns `true` only when a collect action was actually invoked.
+/// Prefers the new claim-next and bundle-claim actions when their buttons are active, then falls back to the
+/// established collect action. The first active instance wins. Returns `true` only when an action was invoked.
 fn collect_reward_screen() -> bool {
     let is_active_ptr = IS_ACTIVE_FN.load(Relaxed);
 
@@ -487,7 +511,7 @@ fn collect_reward_screen() -> bool {
     };
 
     // Reward screen ViewControllers (slots 0-3).
-    for target in &REWARD_TARGETS {
+    for (slot, target) in REWARD_TARGETS.iter().enumerate() {
         let instance = target.instance.load(Relaxed);
         if instance.is_null() {
             continue;
@@ -495,6 +519,26 @@ fn collect_reward_screen() -> bool {
         let instance = instance as *mut Il2CppObject;
         if !check_active(instance) {
             continue;
+        }
+
+        if slot == 0
+            && invoke_reward_action_if_button_active(
+                instance,
+                OFFSET_CLAIM_NEXT_BUTTON.load(Relaxed),
+                ON_CLAIM_NEXT_METHOD.load(Relaxed),
+                "AnimatedRewardsScreenViewController.OnClaimNextClicked",
+            )
+        {
+            return true;
+        }
+
+        if invoke_reward_action_if_button_active(
+            instance,
+            OFFSET_BUNDLE_CLAIM_BUTTON.load(Relaxed),
+            ON_BUNDLE_CLAIM_METHOD.load(Relaxed),
+            "GenericRewardsScreenViewController.OnBundleClaimClicked",
+        ) {
+            return true;
         }
 
         let on_collect_ptr = target.on_collect.load(Relaxed);
@@ -523,6 +567,31 @@ fn collect_reward_screen() -> bool {
         }
     }
     false
+}
+
+/// Invoke a reward action only while its corresponding button is present, active, and interactable.
+fn invoke_reward_action_if_button_active(
+    instance: *mut Il2CppObject,
+    button_offset: usize,
+    method: *const MethodInfo,
+    label: &str,
+) -> bool {
+    let is_active = IS_ACTIVE_FN.load(Relaxed);
+    let is_interactable = REWARD_BUTTON_INTERACTABLE_FN.load(Relaxed);
+    if button_offset == 0 || method.is_null() || is_active.is_null() || is_interactable.is_null() {
+        return false;
+    }
+
+    let button = unsafe { tracker::read_ptr(instance as *const (), button_offset) } as *mut Il2CppObject;
+    if button.is_null() || !invoke_bool_noargs(is_active, button, "UIBehaviour.IsActive").unwrap_or(false) {
+        return false;
+    }
+    if !invoke_bool_noargs(is_interactable, button, "GenericButtonWidget.get_Interactable").unwrap_or(false) {
+        return false;
+    }
+
+    debug!(target: "Hotkeys", "ESC: invoking {label}");
+    invoke_void_noargs(method, instance, label)
 }
 
 #[cfg(not(test))]
@@ -858,6 +927,14 @@ fn install_input(api: &Il2CppApi) -> bool {
 /// - `GenericRewardsScreenViewController` (slots 1 + 3, inherited by ShipScrapping and RewardPreview)
 /// - `FirstTimeSpenderScreenViewController` (slot 2, own override)
 fn install_reward_tracking(api: &Il2CppApi) {
+    if !REWARD_BUTTON_INTERACTABLE_RESOLUTION_ATTEMPTED.swap(true, Relaxed)
+        && let Some(class) =
+            resolver::try_resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget")
+        && let Some(method) = resolver::try_resolve_method(api, class, "get_Interactable", 0)
+    {
+        REWARD_BUTTON_INTERACTABLE_FN.store(method as *mut MethodInfo, Relaxed);
+    }
+
     // Subclass definitions: (slot, namespace, class name).
     let subclasses: [(usize, &str, &str); 4] = [
         (0, "Digit.Prime.Missions.UI", "AnimatedRewardsScreenViewController"),
@@ -886,6 +963,18 @@ fn install_reward_tracking(api: &Il2CppApi) {
         }
     }
 
+    let animated_class = REWARD_TARGETS[0].class.load(Relaxed);
+    if !animated_class.is_null() && !CLAIM_NEXT_RESOLUTION_ATTEMPTED.swap(true, Relaxed) {
+        resolve_optional_reward_action(
+            api,
+            animated_class as *mut Il2CppClass,
+            "OnClaimNextClicked",
+            &ON_CLAIM_NEXT_METHOD,
+            "_claimNextButton",
+            &OFFSET_CLAIM_NEXT_BUTTON,
+        );
+    }
+
     // Resolve IsActive from UIBehaviour (shared, only need it once from any resolved class).
     if IS_ACTIVE_FN.load(Relaxed).is_null() {
         for target in &REWARD_TARGETS {
@@ -899,7 +988,6 @@ fn install_reward_tracking(api: &Il2CppApi) {
     }
 
     // Hook AnimatedRewardsScreenViewController.AboutToShow/Hide (slot 0, own override).
-    let animated_class = REWARD_TARGETS[0].class.load(Relaxed);
     if !animated_class.is_null() {
         let class = animated_class as *mut Il2CppClass;
         install_hook_if_missing(
@@ -920,8 +1008,11 @@ fn install_reward_tracking(api: &Il2CppApi) {
         );
     }
 
-    // Hook GenericRewardsScreenViewController.AboutToShow/Hide (shared by slots 1, 3).
-    if ORIG_BASE_SHOW.load(Relaxed).is_null() || ORIG_BASE_HIDE.load(Relaxed).is_null() {
+    // Resolve optional bundle claiming and hook GenericRewardsScreenViewController lifecycle (shared by slots 1, 3).
+    if ORIG_BASE_SHOW.load(Relaxed).is_null()
+        || ORIG_BASE_HIDE.load(Relaxed).is_null()
+        || !BUNDLE_CLAIM_RESOLUTION_ATTEMPTED.load(Relaxed)
+    {
         let Some(base_class) = resolver::resolve_class(
             api,
             "Assembly-CSharp",
@@ -931,6 +1022,17 @@ fn install_reward_tracking(api: &Il2CppApi) {
             warn!(target: "Hotkeys", "GenericRewardsScreenViewController not found");
             return;
         };
+
+        if !BUNDLE_CLAIM_RESOLUTION_ATTEMPTED.swap(true, Relaxed) {
+            resolve_optional_reward_action(
+                api,
+                base_class,
+                "OnBundleClaimClicked",
+                &ON_BUNDLE_CLAIM_METHOD,
+                "_bundleClaimButtonWidget",
+                &OFFSET_BUNDLE_CLAIM_BUTTON,
+            );
+        }
 
         install_hook_if_missing(
             api,
@@ -956,6 +1058,23 @@ fn install_reward_tracking(api: &Il2CppApi) {
         let class = fts_class as *mut Il2CppClass;
         install_hook_if_missing(api, class, "AboutToShow", "RewardFtsShow", hook_fts_show, &ORIG_FTS_SHOW);
         install_hook_if_missing(api, class, "AboutToHide", "RewardFtsHide", hook_fts_hide, &ORIG_FTS_HIDE);
+    }
+}
+
+/// Resolve a paired optional reward action method and button field without warning on older game builds.
+fn resolve_optional_reward_action(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    method_target: &AtomicPtr<MethodInfo>,
+    field_name: &str,
+    field_target: &AtomicUsize,
+) {
+    if let Some(method) = resolver::try_resolve_method(api, class, method_name, 0) {
+        method_target.store(method as *mut MethodInfo, Relaxed);
+    }
+    if resolver::has_field(api, class, field_name) {
+        resolver::resolve_field_offset_into(api, class, field_name, field_target);
     }
 }
 
@@ -1057,6 +1176,14 @@ mod tests {
             target.on_collect.store(std::ptr::null_mut(), Relaxed);
         }
         IS_ACTIVE_FN.store(std::ptr::null_mut(), Relaxed);
+        REWARD_BUTTON_INTERACTABLE_FN.store(std::ptr::null_mut(), Relaxed);
+        REWARD_BUTTON_INTERACTABLE_RESOLUTION_ATTEMPTED.store(false, Relaxed);
+        ON_CLAIM_NEXT_METHOD.store(std::ptr::null_mut(), Relaxed);
+        OFFSET_CLAIM_NEXT_BUTTON.store(0, Relaxed);
+        CLAIM_NEXT_RESOLUTION_ATTEMPTED.store(false, Relaxed);
+        ON_BUNDLE_CLAIM_METHOD.store(std::ptr::null_mut(), Relaxed);
+        OFFSET_BUNDLE_CLAIM_BUTTON.store(0, Relaxed);
+        BUNDLE_CLAIM_RESOLUTION_ATTEMPTED.store(false, Relaxed);
     }
 
     #[test]
@@ -1221,7 +1348,180 @@ mod tests {
         COLLECT_CALLED_SLOT.store(2, Relaxed);
     }
 
+    static REWARD_ACTION_CALLED: AtomicI32 = AtomicI32::new(-1);
+    static INACTIVE_REWARD_BUTTON: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+    static NON_INTERACTABLE_REWARD_BUTTON: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+
+    extern "C" fn fake_claim_next(_: *mut Il2CppObject) {
+        REWARD_ACTION_CALLED.store(1, Relaxed);
+    }
+
+    extern "C" fn fake_bundle_claim(_: *mut Il2CppObject) {
+        REWARD_ACTION_CALLED.store(2, Relaxed);
+    }
+
+    extern "C" fn fake_fallback_collect(_: *mut Il2CppObject) {
+        REWARD_ACTION_CALLED.store(3, Relaxed);
+    }
+
+    extern "C" fn fake_is_active_true(_: *mut Il2CppObject) -> bool {
+        true
+    }
+
+    extern "C" fn fake_is_active_except_reward_button(instance: *mut Il2CppObject) -> bool {
+        instance as *mut () != INACTIVE_REWARD_BUTTON.load(Relaxed)
+    }
+
+    extern "C" fn fake_is_interactable_except_reward_button(instance: *mut Il2CppObject) -> bool {
+        instance as *mut () != NON_INTERACTABLE_REWARD_BUTTON.load(Relaxed)
+    }
+
     use std::sync::atomic::AtomicI32;
+
+    fn exercise_reward_action(
+        slot: usize,
+        action: extern "C" fn(*mut Il2CppObject),
+        method_target: &AtomicPtr<MethodInfo>,
+        offset_target: &AtomicUsize,
+        button_active: bool,
+        button_interactable: bool,
+        competing_action: Option<(extern "C" fn(*mut Il2CppObject), &AtomicPtr<MethodInfo>, &AtomicUsize)>,
+    ) -> i32 {
+        reset_reward_targets();
+        REWARD_ACTION_CALLED.store(-1, Relaxed);
+
+        let button = 0xCA11_0000usize.wrapping_add(slot) as *mut ();
+        let screen = [std::ptr::null_mut(), button];
+        let instance = screen.as_ptr() as *mut Il2CppObject;
+        let is_active = MethodInfo {
+            method_pointer: if button_active {
+                fake_is_active_true as *const ()
+            } else {
+                INACTIVE_REWARD_BUTTON.store(button, Relaxed);
+                fake_is_active_except_reward_button as *const ()
+            },
+        };
+        let action = MethodInfo { method_pointer: action as *const () };
+        let competing_method =
+            competing_action.map(|(action, _, _)| MethodInfo { method_pointer: action as *const () });
+        let is_interactable = MethodInfo {
+            method_pointer: if button_interactable {
+                fake_is_active_true as *const ()
+            } else {
+                NON_INTERACTABLE_REWARD_BUTTON.store(button, Relaxed);
+                fake_is_interactable_except_reward_button as *const ()
+            },
+        };
+        let fallback = MethodInfo {
+            method_pointer: fake_fallback_collect as *const (),
+        };
+
+        IS_ACTIVE_FN.store(&is_active as *const MethodInfo as *mut MethodInfo, Relaxed);
+        REWARD_BUTTON_INTERACTABLE_FN.store(&is_interactable as *const MethodInfo as *mut MethodInfo, Relaxed);
+        offset_target.store(size_of::<*mut ()>(), Relaxed);
+        method_target.store(&action as *const MethodInfo as *mut MethodInfo, Relaxed);
+        if let (Some((_, method_target, offset_target)), Some(method)) = (competing_action, competing_method.as_ref()) {
+            offset_target.store(size_of::<*mut ()>(), Relaxed);
+            method_target.store(method as *const MethodInfo as *mut MethodInfo, Relaxed);
+        }
+        REWARD_TARGETS[slot].instance.store(instance as *mut (), Relaxed);
+        REWARD_TARGETS[slot]
+            .on_collect
+            .store(&fallback as *const MethodInfo as *mut MethodInfo, Relaxed);
+
+        assert!(collect_reward_screen());
+        let called = REWARD_ACTION_CALLED.load(Relaxed);
+
+        INACTIVE_REWARD_BUTTON.store(std::ptr::null_mut(), Relaxed);
+        NON_INTERACTABLE_REWARD_BUTTON.store(std::ptr::null_mut(), Relaxed);
+        reset_reward_targets();
+        called
+    }
+
+    #[test]
+    fn collect_prefers_claim_next_when_its_button_is_active() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        assert_eq!(
+            exercise_reward_action(
+                0,
+                fake_claim_next,
+                &ON_CLAIM_NEXT_METHOD,
+                &OFFSET_CLAIM_NEXT_BUTTON,
+                true,
+                true,
+                None,
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn collect_prefers_claim_next_when_bundle_claim_is_also_available() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        assert_eq!(
+            exercise_reward_action(
+                0,
+                fake_claim_next,
+                &ON_CLAIM_NEXT_METHOD,
+                &OFFSET_CLAIM_NEXT_BUTTON,
+                true,
+                true,
+                Some((fake_bundle_claim, &ON_BUNDLE_CLAIM_METHOD, &OFFSET_BUNDLE_CLAIM_BUTTON,)),
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn collect_falls_back_when_claim_next_button_is_inactive() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        assert_eq!(
+            exercise_reward_action(
+                0,
+                fake_claim_next,
+                &ON_CLAIM_NEXT_METHOD,
+                &OFFSET_CLAIM_NEXT_BUTTON,
+                false,
+                true,
+                None,
+            ),
+            3
+        );
+    }
+
+    #[test]
+    fn collect_falls_back_when_claim_next_button_is_not_interactable() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        assert_eq!(
+            exercise_reward_action(
+                0,
+                fake_claim_next,
+                &ON_CLAIM_NEXT_METHOD,
+                &OFFSET_CLAIM_NEXT_BUTTON,
+                true,
+                false,
+                None,
+            ),
+            3
+        );
+    }
+
+    #[test]
+    fn collect_prefers_bundle_claim_when_its_button_is_active() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        assert_eq!(
+            exercise_reward_action(
+                1,
+                fake_bundle_claim,
+                &ON_BUNDLE_CLAIM_METHOD,
+                &OFFSET_BUNDLE_CLAIM_BUTTON,
+                true,
+                true,
+                None,
+            ),
+            2
+        );
+    }
 
     #[test]
     fn collect_picks_first_active_slot() {
