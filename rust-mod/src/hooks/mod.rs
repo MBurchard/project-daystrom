@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 
 use log::{debug, info};
 
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
+
 const TRACE_LOG_TARGET: &str = "Trace";
 const LOG_TARGET: &str = "HookEngine";
 
@@ -84,18 +87,44 @@ pub fn install_all_hooks() {
         return;
     };
 
-    user_profile::install(api);
-    player_prefs::install(api);
-    ui_scale::install(api);
-    hotkeys::install(api);
-    cargo_view::install(api);
-    chat_frame::install(api);
-    job_queue::install(api);
-    toast_banner::install(api);
-    system_zoom::install(api);
-    shop_reveal::install(api);
-    interstitial::install(api);
-    fleet_scanner::install(api);
+    let compatibility = compatibility::initialize(api);
+
+    if compatibility.is_enabled(manifest::USER_PROFILE) {
+        user_profile::install(api);
+    }
+    if compatibility.is_enabled(manifest::PLAYER_PREFS) {
+        player_prefs::install(api);
+    }
+    if compatibility.is_enabled(manifest::UI_SCALE) {
+        ui_scale::install(api);
+    }
+    if compatibility.is_enabled(manifest::HOTKEYS) {
+        hotkeys::install(api);
+    }
+    if compatibility.is_enabled(manifest::CARGO_VIEW) {
+        cargo_view::install(api);
+    }
+    if compatibility.is_enabled(manifest::CHAT_FRAME) {
+        chat_frame::install(api);
+    }
+    if compatibility.is_enabled(manifest::JOB_QUEUE) {
+        job_queue::install(api);
+    }
+    if compatibility.is_enabled(manifest::TOAST_BANNER) {
+        toast_banner::install(api);
+    }
+    if compatibility.is_enabled(manifest::SYSTEM_ZOOM) {
+        system_zoom::install(api);
+    }
+    if compatibility.is_enabled(manifest::SHOP_REVEAL) {
+        shop_reveal::install(api);
+    }
+    if compatibility.is_enabled(manifest::INTERSTITIAL) {
+        interstitial::install(api);
+    }
+    if compatibility.is_enabled(manifest::FLEET_SCANNER) {
+        fleet_scanner::install(api);
+    }
 
     debug!(target: LOG_TARGET, "Hook installation complete");
 }

@@ -18,6 +18,8 @@ use crate::hook::engine;
 use crate::hook::safety::HookInfo;
 use crate::hooks::tracker;
 use crate::il2cpp::api::Il2CppApi;
+use crate::il2cpp::compatibility;
+use crate::il2cpp::compatibility_manifest as manifest;
 use crate::il2cpp::invoke;
 use crate::il2cpp::resolver;
 use crate::il2cpp::types::*;
@@ -759,9 +761,13 @@ pub fn install(api: &Il2CppApi) {
     if !install_input(api) {
         return;
     }
-    install_reward_tracking(api);
-    install_widget_collect_tracking(api);
-    super::main_action::install(api);
+    if compatibility::is_enabled(manifest::REWARD_HOTKEYS) {
+        install_reward_tracking(api);
+        install_widget_collect_tracking(api);
+    }
+    if compatibility::is_enabled(manifest::MAIN_ACTION) {
+        super::main_action::install(api);
+    }
     install_update_hook(api);
 }
 

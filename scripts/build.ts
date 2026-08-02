@@ -1,4 +1,4 @@
-import {execSync} from 'node:child_process';
+import {execFileSync, execSync} from 'node:child_process';
 import {cpSync, existsSync, mkdirSync, readdirSync, rmSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import process from 'node:process';
@@ -77,6 +77,8 @@ const COMMANDS: Record<string, () => void> = {
   'test:backend:coverage': testBackendCoverage,
   'test:mod': testMod,
   'test:mod:coverage': testModCoverage,
+  'check:mod:dump': checkModDump,
+  'release:verify': verifyRelease,
   build: buildApp,
   'build:mod': buildMod,
   'build:mod:mac-universal': buildModMacUniversal,
@@ -125,12 +127,12 @@ function cargo(args: string, rustcArgs = ''): void {
 
 /**
  * Run a cargo command in the Rust mod crate.
- * @param args - cargo sub-command and flags, e.g. "clippy"
+ * @param args - cargo sub-command and flags, e.g. `["clippy"]`
  * @param rustcArgs - optional flags forwarded to rustc or clippy after `--`
  */
-function cargoMod(args: string, rustcArgs = ''): void {
-  const forwardedArgs = rustcArgs ? ` -- ${rustcArgs}` : '';
-  execSync(`cargo ${args}${forwardedArgs}`, {cwd: RUST_MOD_DIR, stdio: 'inherit'});
+function cargoMod(args: readonly string[], rustcArgs: readonly string[] = []): void {
+  const forwardedArgs = rustcArgs.length > 0 ? ['--', ...rustcArgs] : [];
+  execFileSync('cargo', [...args, ...forwardedArgs], {cwd: RUST_MOD_DIR, stdio: 'inherit'});
 }
 
 /**
@@ -239,9 +241,9 @@ function lintAppBackendFix(): void {
  */
 function lintMod(): void {
   log.info('Checking mod Rust formatting...');
-  cargoMod('fmt --check');
+  cargoMod(['fmt', '--check']);
   log.info('Linting mod Rust code...');
-  cargoMod('clippy');
+  cargoMod(['clippy']);
 }
 
 /**
@@ -249,9 +251,9 @@ function lintMod(): void {
  */
 function lintModCi(): void {
   log.info('Checking mod Rust formatting...');
-  cargoMod('fmt --check');
+  cargoMod(['fmt', '--check']);
   log.info('Linting mod Rust code in strict mode...');
-  cargoMod('clippy --all-targets', '-D warnings');
+  cargoMod(['clippy', '--all-targets'], ['-D', 'warnings']);
 }
 
 /**
@@ -259,11 +261,11 @@ function lintModCi(): void {
  */
 function lintModFix(): void {
   log.info('Formatting mod Rust code...');
-  cargoMod('fmt');
+  cargoMod(['fmt']);
   log.info('Fixing mod Rust clippy issues...');
-  cargoMod('clippy --fix --allow-dirty --allow-staged');
+  cargoMod(['clippy', '--fix', '--allow-dirty', '--allow-staged']);
   log.info('Formatting mod Rust code after clippy fixes...');
-  cargoMod('fmt');
+  cargoMod(['fmt']);
 }
 
 /**
@@ -342,7 +344,7 @@ function typecheckBackend(): void {
  */
 function typecheckMod(): void {
   log.info('Type-checking mod...');
-  cargoMod('clippy');
+  cargoMod(['clippy']);
 }
 
 /**
@@ -411,7 +413,7 @@ function testBackendCoverage(): void {
  */
 function testMod(): void {
   log.info('Running mod tests...');
-  execSync('cargo test', {cwd: RUST_MOD_DIR, stdio: 'inherit'});
+  cargoMod(['test']);
 }
 
 /**
@@ -419,7 +421,45 @@ function testMod(): void {
  */
 function testModCoverage(): void {
   log.info('Running mod tests with coverage...');
-  execSync('cargo llvm-cov', {cwd: RUST_MOD_DIR, stdio: 'inherit'});
+  cargoMod(['llvm-cov']);
+}
+
+/**
+ * Check one or more IL2CPP dumps against the mod compatibility manifest.
+ */
+function checkModDump(): void {
+  const dumpPaths = forwardedCommandArgs();
+  log.info('Checking IL2CPP dump compatibility...');
+  checkModDumps(dumpPaths);
+}
+
+/**
+ * Verify the macOS and Windows IL2CPP dumps before creating a release.
+ */
+function verifyRelease(): void {
+  const dumpPaths = forwardedCommandArgs();
+  if (dumpPaths.length !== 2) {
+    log.error('Usage: pnpm release:verify -- <macOS-dump> <Windows-dump>');
+    process.exit(2);
+  }
+
+  log.info('Running release compatibility gate for macOS and Windows...');
+  checkModDumps(dumpPaths);
+}
+
+/**
+ * Return command arguments after removing pnpm's optional `--` separator.
+ */
+function forwardedCommandArgs(): string[] {
+  const commandArgs = process.argv.slice(3);
+  return commandArgs[0] === '--' ? commandArgs.slice(1) : commandArgs;
+}
+
+/**
+ * Run the dump compatibility checker for the supplied paths.
+ */
+function checkModDumps(dumpPaths: readonly string[]): void {
+  cargoMod(['run', '--bin', 'check-il2cpp-dump', '--', ...dumpPaths]);
 }
 
 /**
@@ -466,7 +506,7 @@ function cleanModDirs(): void {
  */
 function buildRustMod(config: PlatformConfig): void {
   log.info('Building Rust mod...');
-  execSync('cargo build --release', {cwd: RUST_MOD_DIR, stdio: 'inherit'});
+  cargoMod(['build', '--release', '--lib']);
 
   const src = join(RUST_MOD_DIR, config.rustLibrary);
   const libName = config.outputLibrary;
@@ -512,10 +552,7 @@ function buildModMacUniversal(): void {
 
   for (const target of targets) {
     log.info(`Building Rust mod for ${target}...`);
-    execSync(`cargo build --release --target ${target}`, {
-      cwd: RUST_MOD_DIR,
-      stdio: 'inherit',
-    });
+    cargoMod(['build', '--release', '--lib', '--target', target]);
   }
 
   const arm64Lib = join(RUST_MOD_DIR, 'target', 'aarch64-apple-darwin', 'release', 'libstfc_mod.dylib');

@@ -50,7 +50,7 @@ pub fn object(method: *const MethodInfo, object: *mut Il2CppObject, label: &str)
 /// Invoke a no-argument IL2CPP instance method returning a string reference.
 pub fn string(method: *const MethodInfo, object: *mut Il2CppObject, label: &str) -> Option<String> {
     let result = invoke_raw(method, object, label)?;
-    unsafe { Il2CppString::to_rust_string(result as *const Il2CppString) }
+    unsafe { Il2CppString::decode(result as *const Il2CppString) }
 }
 
 /// Invoke a no-argument IL2CPP static method returning `bool`.

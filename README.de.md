@@ -133,24 +133,26 @@ Dies kompiliert den Mod für die aktuelle Plattform und kopiert das Ergebnis nac
 
 ### Workspace-Root (vom Projektverzeichnis aus ausführen)
 
-| Script                            | Beschreibung                                           |
-|-----------------------------------|--------------------------------------------------------|
-| `pnpm install:all`                | Alle Workspace-Abhängigkeiten forciert installieren    |
-| `pnpm lint`                       | ESLint über das gesamte Projekt ausführen              |
-| `pnpm lint:fix`                   | ESLint mit automatischer Korrektur ausführen           |
-| `pnpm typecheck`                  | TypeScript- + Rust-Typprüfungen                        |
-| `pnpm test`                       | Alle Tests ausführen (Frontend + Backend)              |
-| `pnpm test:app`                   | Alle App-Tests ausführen (Frontend + Backend)          |
-| `pnpm test:app:frontend`          | Nur Frontend-Tests ausführen (vitest)                  |
-| `pnpm test:app:backend`           | Nur Backend-Tests ausführen (cargo test + ts-rs)       |
-| `pnpm test:app:frontend:watch`    | Frontend-Tests im Watch-Modus ausführen                |
-| `pnpm test:app:frontend:coverage` | Frontend-Tests mit v8-Coverage ausführen               |
-| `pnpm test:app:backend:coverage`  | Backend-Tests mit llvm-cov-Coverage ausführen          |
-| `pnpm build`                      | Alles bauen (Mod-dylib → Tauri-App)                    |
-| `pnpm build:mod`                  | Mod-dylib bauen und nach `app/resources/mod/` kopieren |
-| `pnpm build:app`                  | Mod-dylib + Tauri-App-Bundle bauen                     |
-| `pnpm icons`                      | Tauri-Icons aus `resources/daystrom.png` generieren    |
-| `pnpm dev`                        | Mod bauen + Tauri-App mit Hot Reload starten           |
+| Script                                     | Beschreibung                                           |
+|--------------------------------------------|--------------------------------------------------------|
+| `pnpm install:all`                         | Alle Workspace-Abhängigkeiten forciert installieren    |
+| `pnpm lint`                                | ESLint über das gesamte Projekt ausführen              |
+| `pnpm lint:fix`                            | ESLint mit automatischer Korrektur ausführen           |
+| `pnpm typecheck`                           | TypeScript- + Rust-Typprüfungen                        |
+| `pnpm test`                                | Alle Tests ausführen (Frontend + Backend)              |
+| `pnpm test:app`                            | Alle App-Tests ausführen (Frontend + Backend)          |
+| `pnpm test:app:frontend`                   | Nur Frontend-Tests ausführen (vitest)                  |
+| `pnpm test:app:backend`                    | Nur Backend-Tests ausführen (cargo test + ts-rs)       |
+| `pnpm test:app:frontend:watch`             | Frontend-Tests im Watch-Modus ausführen                |
+| `pnpm test:app:frontend:coverage`          | Frontend-Tests mit v8-Coverage ausführen               |
+| `pnpm test:app:backend:coverage`           | Backend-Tests mit llvm-cov-Coverage ausführen          |
+| `pnpm check:mod:dump -- <Pfade>`           | IL2CPP-Dumps gegen das Kompatibilitätsmanifest prüfen  |
+| `pnpm release:verify -- <macOS> <Windows>` | Kompatible Plattform-Dumps vor Releases voraussetzen   |
+| `pnpm build`                               | Alles bauen (Mod-dylib → Tauri-App)                    |
+| `pnpm build:mod`                           | Mod-dylib bauen und nach `app/resources/mod/` kopieren |
+| `pnpm build:app`                           | Mod-dylib + Tauri-App-Bundle bauen                     |
+| `pnpm icons`                               | Tauri-Icons aus `resources/daystrom.png` generieren    |
+| `pnpm dev`                                 | Mod bauen + Tauri-App mit Hot Reload starten           |
 
 ### Pfad-Aliase
 
