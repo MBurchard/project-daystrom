@@ -28,6 +28,7 @@ pub fn resolve_fn(api: &Il2CppApi, class: *mut Il2CppClass, method_name: &str, p
 // ---- Resolved hook installation -------------------------------------------
 
 type HookInstaller = fn(&str, *const (), *const ()) -> Result<*const (), engine::HookError>;
+type MethodResolver = fn(&Il2CppApi, *mut Il2CppClass, &str, i32) -> Option<*const MethodInfo>;
 
 struct ResolvedHookInstall<'a, StoreOriginal> {
     api: &'a Il2CppApi,
@@ -38,6 +39,7 @@ struct ResolvedHookInstall<'a, StoreOriginal> {
     replacement: *const (),
     original: StoreOriginal,
     install: HookInstaller,
+    resolve: MethodResolver,
 }
 
 fn install_resolved_hook_with<StoreOriginal: FnOnce(*const ())>(
@@ -52,9 +54,10 @@ fn install_resolved_hook_with<StoreOriginal: FnOnce(*const ())>(
         replacement,
         original,
         install,
+        resolve,
     } = request;
 
-    let Some(method) = resolver::resolve_method(api, class, method_name, param_count) else {
+    let Some(method) = resolve(api, class, method_name, param_count) else {
         return false;
     };
 
@@ -94,6 +97,7 @@ pub fn install_resolved_hook(
         replacement,
         original,
         install: engine::install_hook,
+        resolve: resolver::resolve_method,
     })
 }
 
@@ -131,6 +135,36 @@ pub fn install_resolved_hook_if_missing(
             replacement,
             original: |pointer| original.store(pointer as *mut (), Relaxed),
             install: engine::install_hook,
+            resolve: resolver::resolve_method,
+        },
+        original,
+    )
+}
+
+/// Silently resolve an optional IL2CPP method and install its hook only while the original slot is empty.
+///
+/// Returns `true` when the hook was already installed or installs successfully. Normal lookup misses are not logged;
+/// failed hook installations still are. The empty slot allows a later call to retry.
+pub fn try_install_resolved_hook_if_missing(
+    api: &Il2CppApi,
+    class: *mut Il2CppClass,
+    method_name: &str,
+    param_count: i32,
+    hook_name: &str,
+    replacement: *const (),
+    original: &AtomicPtr<()>,
+) -> bool {
+    install_resolved_hook_if_missing_with(
+        ResolvedHookInstall {
+            api,
+            class,
+            method_name,
+            param_count,
+            hook_name,
+            replacement,
+            original: |pointer| original.store(pointer as *mut (), Relaxed),
+            install: engine::install_hook,
+            resolve: resolver::try_resolve_method,
         },
         original,
     )
@@ -213,6 +247,7 @@ pub(crate) fn install_lifecycle_hooks_once_with(request: LifecycleHookInstall<'_
             replacement: awake_hook as *const (),
             original: |p| original_awake.store(p as *mut (), Relaxed),
             install,
+            resolve: resolver::resolve_method,
         });
     }
 
@@ -228,6 +263,7 @@ pub(crate) fn install_lifecycle_hooks_once_with(request: LifecycleHookInstall<'_
             replacement: destroy_hook as *const (),
             original: |p| original_destroy.store(p as *mut (), Relaxed),
             install,
+            resolve: resolver::resolve_method,
         });
     }
 
@@ -545,6 +581,14 @@ mod tests {
         api: &'a Il2CppApi,
         original: &'a AtomicPtr<()>,
     ) -> ResolvedHookInstall<'a, impl FnOnce(*const ()) + 'a> {
+        test_resolved_hook_install_with(api, original, resolver::resolve_method)
+    }
+
+    fn test_resolved_hook_install_with<'a>(
+        api: &'a Il2CppApi,
+        original: &'a AtomicPtr<()>,
+        resolve: MethodResolver,
+    ) -> ResolvedHookInstall<'a, impl FnOnce(*const ()) + 'a> {
         ResolvedHookInstall {
             api,
             class: 0xABCDusize as *mut Il2CppClass,
@@ -554,6 +598,7 @@ mod tests {
             replacement: fake_replacement as *const (),
             original: |orig| original.store(orig as *mut (), Relaxed),
             install: fake_installer,
+            resolve,
         }
     }
 
@@ -670,6 +715,31 @@ mod tests {
 
         assert_eq!(original.load(Relaxed), fake_original as *mut ());
         assert_eq!(INSTALL_CALLS.load(Relaxed), 2);
+    }
+
+    #[test]
+    fn try_install_resolved_hook_if_missing_retries_after_lookup_miss() {
+        let _guard = HOOK_HELPER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_hook_helper_test_state();
+        METHOD_AVAILABLE.store(false, Relaxed);
+        let api = fake_api();
+        let original = AtomicPtr::new(std::ptr::null_mut());
+
+        assert!(!install_resolved_hook_if_missing_with(
+            test_resolved_hook_install_with(&api, &original, resolver::try_resolve_method),
+            &original,
+        ));
+        assert!(original.load(Relaxed).is_null());
+        assert_eq!(INSTALL_CALLS.load(Relaxed), 0);
+
+        METHOD_AVAILABLE.store(true, Relaxed);
+        assert!(install_resolved_hook_if_missing_with(
+            test_resolved_hook_install_with(&api, &original, resolver::try_resolve_method),
+            &original,
+        ));
+
+        assert_eq!(original.load(Relaxed), fake_original as *mut ());
+        assert_eq!(INSTALL_CALLS.load(Relaxed), 1);
     }
 
     #[test]

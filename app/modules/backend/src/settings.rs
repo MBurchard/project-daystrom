@@ -228,7 +228,7 @@ pub struct GameUiSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub skip_reveal_sequence: Option<bool>,
-    /// Whether to skip the first interstitial popup (ad) after game start.
+    /// Whether to skip the first interstitial and suppress automatic purchase-offer popups.
     #[serde(
         default,
         deserialize_with = "lenient_option",
