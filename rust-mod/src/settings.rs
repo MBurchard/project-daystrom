@@ -18,6 +18,13 @@ fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(deserializer: 
     Ok(T::deserialize(deserializer).ok())
 }
 
+const STANDARD_RECRUIT_MAX: u32 = 150;
+
+/// Deserialize the Standard Recruit limit leniently and enforce the highest verified safe batch size.
+fn standard_recruit_max<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
+    Ok(u32::deserialize(deserializer).ok().map(|value| value.min(STANDARD_RECRUIT_MAX)))
+}
+
 // ---- Data model ------------------------------------------------------------
 
 /// UI settings that control in-game appearance.
@@ -95,6 +102,17 @@ impl GameCargoViewSettings {
     }
 }
 
+/// Optional upper bounds for selected in-game sliders.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+pub struct GameSliderLimitSettings {
+    /// Maximum number of Standard Recruit bundles selectable at once.
+    #[serde(default, deserialize_with = "standard_recruit_max")]
+    pub standard_recruit_max: Option<u32>,
+    /// Maximum number of alliance-donation units selectable at once.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub alliance_donation_max: Option<u32>,
+}
+
 /// Game settings received from Daystrom.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct GameSettings {
@@ -107,6 +125,9 @@ pub struct GameSettings {
     /// Cargo auto-open behavior.
     #[serde(default)]
     pub cargo_view: GameCargoViewSettings,
+    /// Optional upper bounds for selected in-game sliders.
+    #[serde(default)]
+    pub slider_limits: GameSliderLimitSettings,
     /// Keyboard shortcut overrides. Key = action name, value = bound key (empty = disabled).
     #[serde(default)]
     pub shortcuts: std::collections::BTreeMap<String, String>,
@@ -163,6 +184,11 @@ pub fn show_cargo_for_stations() -> bool {
 /// Whether player ships should auto-open cargo.
 pub fn show_cargo_for_players() -> bool {
     state().lock().unwrap().cargo_view.show_for_players.unwrap_or(false)
+}
+
+/// Configured upper bounds for selected in-game sliders.
+pub fn slider_limits() -> GameSliderLimitSettings {
+    state().lock().unwrap().slider_limits
 }
 
 /// System view zoom distance (1000-3000, default 1000).
@@ -284,6 +310,13 @@ pub fn apply_update(key: &str, value: &serde_json::Value) {
             debug!(target: "Settings", "Update: game.cargo_view = {new_val:?}");
             if let Some(new_val) = new_val {
                 s.cargo_view = new_val;
+            }
+        }
+        "game.slider_limits" => {
+            let new_val = serde_json::from_value::<GameSliderLimitSettings>(value.clone()).ok();
+            debug!(target: "Settings", "Update: game.slider_limits = {new_val:?}");
+            if let Some(new_val) = new_val {
+                s.slider_limits = new_val;
             }
         }
         other => {
@@ -552,6 +585,35 @@ mod tests {
         assert!(show_cargo_for_armadas());
         assert!(!show_cargo_for_stations());
         assert!(show_cargo_for_players());
+
+        reset();
+    }
+
+    #[test]
+    fn slider_limits_default_to_game_values() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        assert_eq!(slider_limits(), GameSliderLimitSettings::default());
+
+        reset();
+    }
+
+    #[test]
+    fn apply_update_patches_slider_limits() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+
+        apply_update(
+            "game.slider_limits",
+            &serde_json::json!({
+                "standard_recruit_max": 500,
+                "alliance_donation_max": 80
+            }),
+        );
+
+        assert_eq!(slider_limits().standard_recruit_max, Some(150));
+        assert_eq!(slider_limits().alliance_donation_max, Some(80));
 
         reset();
     }

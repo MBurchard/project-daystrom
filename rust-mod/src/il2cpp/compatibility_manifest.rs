@@ -15,6 +15,7 @@ pub const JOB_QUEUE: &str = "job-queue";
 pub const TOAST_BANNER: &str = "toast-banner";
 pub const SYSTEM_ZOOM: &str = "system-zoom";
 pub const SHOP_REVEAL: &str = "shop-reveal";
+pub const SLIDER_LIMITS: &str = "slider-limits";
 pub const INTERSTITIAL: &str = "interstitial";
 pub const FLEET_SCANNER: &str = "fleet-scanner";
 
@@ -31,6 +32,7 @@ pub const FEATURES: &[&str] = &[
     TOAST_BANNER,
     SYSTEM_ZOOM,
     SHOP_REVEAL,
+    SLIDER_LIMITS,
     INTERSTITIAL,
     FLEET_SCANNER,
 ];
@@ -1182,6 +1184,64 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         &["ShouldShowRevealSequence"],
         "bool",
         &["bool"],
+        false,
+        Requirement::Required,
+    ),
+    method(
+        SLIDER_LIMITS,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Inventories",
+        "InventoryUseRowWidget",
+        &["OnDidBindContext"],
+        "void",
+        &[],
+        false,
+        Requirement::Required,
+    ),
+    field(
+        SLIDER_LIMITS,
+        PRIME_ASSEMBLIES,
+        "Digit.Client.UI",
+        "Widget",
+        &["m_untypedContext"],
+        "object",
+        Requirement::Required,
+    ),
+    field(
+        SLIDER_LIMITS,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Inventories",
+        "InventoryForPopup",
+        &["_maxItemsToUse"],
+        "long",
+        Requirement::Required,
+    ),
+    fields(
+        SLIDER_LIMITS,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Inventories",
+        "InventoryForPopup",
+        &["<IsDonationUse>k__BackingField", "<IsChestPurchase>k__BackingField"],
+        "bool",
+        Requirement::Required,
+    ),
+    field(
+        SLIDER_LIMITS,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Inventories",
+        "InventoryForPopup",
+        &["<ActionTarget>k__BackingField"],
+        "IActionData",
+        Requirement::Required,
+    ),
+    method(
+        SLIDER_LIMITS,
+        PRIME_ASSEMBLIES,
+        "Digit.PrimePlatform.Content",
+        "Bundle",
+        &["get_BundleId"],
+        "long",
+        &[],
         false,
         Requirement::Required,
     ),

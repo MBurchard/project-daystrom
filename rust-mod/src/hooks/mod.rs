@@ -24,6 +24,7 @@ pub(crate) mod main_thread;
 pub(crate) mod navigation_view;
 mod player_prefs;
 mod shop_reveal;
+mod slider_limits;
 pub(crate) mod system_zoom;
 mod target_viewer;
 pub(crate) mod toast_banner;
@@ -98,6 +99,7 @@ pub fn install_all_hooks() {
     toast_banner::install(api);
     system_zoom::install(api);
     shop_reveal::install(api);
+    slider_limits::install(api);
     interstitial::install(api);
     fleet_scanner::install(api);
 

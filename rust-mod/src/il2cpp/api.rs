@@ -43,6 +43,9 @@ type Il2CppClassFromTypeFn = unsafe extern "C" fn(*const Il2CppType) -> *mut Il2
 /// Type alias for `il2cpp_class_is_valuetype(class) -> bool`.
 type Il2CppClassIsValueTypeFn = unsafe extern "C" fn(*const Il2CppClass) -> bool;
 
+/// Type alias for `il2cpp_object_get_class(object) -> class`.
+type Il2CppObjectGetClassFn = unsafe extern "C" fn(*mut Il2CppObject) -> *mut Il2CppClass;
+
 /// Type alias for `il2cpp_runtime_invoke(method, obj, params, exc) -> result`.
 pub type Il2CppRuntimeInvokeFn = unsafe extern "C" fn(
     *const MethodInfo,
@@ -78,6 +81,7 @@ pub struct Il2CppApi {
     pub type_get_type: Il2CppTypeGetTypeFn,
     pub class_from_type: Il2CppClassFromTypeFn,
     pub class_is_valuetype: Il2CppClassIsValueTypeFn,
+    pub object_get_class: Il2CppObjectGetClassFn,
     pub class_get_field_from_name: Il2CppClassGetFieldFromNameFn,
     pub field_get_offset: Il2CppFieldGetOffsetFn,
     pub runtime_invoke: Il2CppRuntimeInvokeFn,
@@ -136,6 +140,7 @@ pub fn load() -> Result<Il2CppApi, Il2CppError> {
             type_get_type: resolve(lib, "il2cpp_type_get_type\0")?,
             class_from_type: resolve(lib, "il2cpp_class_from_type\0")?,
             class_is_valuetype: resolve(lib, "il2cpp_class_is_valuetype\0")?,
+            object_get_class: resolve(lib, "il2cpp_object_get_class\0")?,
             class_get_field_from_name: resolve(lib, "il2cpp_class_get_field_from_name\0")?,
             field_get_offset: resolve(lib, "il2cpp_field_get_offset\0")?,
             runtime_invoke: resolve(lib, "il2cpp_runtime_invoke\0")?,
