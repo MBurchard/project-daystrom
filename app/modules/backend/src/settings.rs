@@ -53,6 +53,8 @@ pub enum SettingsEvent {
     Shortcuts(BTreeMap<String, String>),
     /// Cargo auto-open settings changed.
     CargoView(GameCargoViewSettings),
+    /// Configured upper bounds for selected in-game sliders changed.
+    SliderLimits(GameSliderLimitSettings),
 }
 
 impl SettingsEvent {
@@ -70,6 +72,7 @@ impl SettingsEvent {
             Self::SkipFirstPopup(_) => "game.ui.skip_first_popup",
             Self::Shortcuts(_) => "game.shortcuts",
             Self::CargoView(_) => "game.cargo_view",
+            Self::SliderLimits(_) => "game.slider_limits",
         }
     }
 
@@ -87,6 +90,7 @@ impl SettingsEvent {
             Self::SkipFirstPopup(v) => serde_json::json!(v),
             Self::Shortcuts(v) => serde_json::json!(v),
             Self::CargoView(v) => serde_json::json!(v),
+            Self::SliderLimits(v) => serde_json::json!(v),
         }
     }
 }
@@ -115,6 +119,13 @@ pub fn subscribe() -> broadcast::Receiver<SettingsEvent> {
 /// rest of the settings.
 fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
     Ok(T::deserialize(deserializer).ok())
+}
+
+const STANDARD_RECRUIT_MAX: u32 = 150;
+
+/// Deserialize the Standard Recruit limit leniently and enforce the highest verified safe batch size.
+fn standard_recruit_max<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
+    Ok(u32::deserialize(deserializer).ok().map(|value| value.min(STANDARD_RECRUIT_MAX)))
 }
 
 // ---- Data model -----------------------------------------------------------------
@@ -316,6 +327,29 @@ impl GameCargoViewSettings {
     }
 }
 
+/// Optional upper bounds for selected in-game sliders.
+///
+/// Missing values preserve the maximum supplied by the game. Configured values only extend that maximum; they never
+/// reduce it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GameSliderLimitSettings {
+    /// Maximum number of Standard Recruit bundles selectable at once.
+    #[serde(
+        default,
+        deserialize_with = "standard_recruit_max",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub standard_recruit_max: Option<u32>,
+    /// Maximum number of alliance-donation units selectable at once.
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub alliance_donation_max: Option<u32>,
+}
+
 /// Game-related settings that are sent to the mod.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -329,6 +363,9 @@ pub struct GameSettings {
     /// Cargo auto-open behavior.
     #[serde(default)]
     pub cargo_view: GameCargoViewSettings,
+    /// Optional upper bounds for selected in-game sliders.
+    #[serde(default)]
+    pub slider_limits: GameSliderLimitSettings,
     /// Keyboard shortcut overrides. Key = action name, value = bound key (empty = disabled).
     /// Absent keys use their default binding.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -389,6 +426,10 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
         },
         banners: GameBannerSettings { disable_all: None, disabled_types: None },
         cargo_view: GameCargoViewSettings::default_values(),
+        slider_limits: GameSliderLimitSettings {
+            standard_recruit_max: None,
+            alliance_donation_max: None,
+        },
         shortcuts: BTreeMap::new(),
     },
     log_levels: LogLevelScopes {
@@ -646,6 +687,9 @@ pub fn set_game_settings(settings: GameSettings) {
         if s.game.cargo_view != old.cargo_view {
             events.push(SettingsEvent::CargoView(s.game.cargo_view.clone()));
         }
+        if s.game.slider_limits != old.slider_limits {
+            events.push(SettingsEvent::SliderLimits(s.game.slider_limits.clone()));
+        }
         events
     };
 
@@ -667,6 +711,7 @@ pub fn set_game_settings(settings: GameSettings) {
                 SettingsEvent::SkipFirstPopup(v) => log_debug!("Skip first popup set to {v:?}"),
                 SettingsEvent::Shortcuts(v) => log_debug!("Shortcuts changed: {v:?}"),
                 SettingsEvent::CargoView(v) => log_debug!("Cargo view settings changed: {v:?}"),
+                SettingsEvent::SliderLimits(v) => log_debug!("Slider limits changed: {v:?}"),
             }
         }
     }
@@ -1273,5 +1318,28 @@ mod tests {
         assert!(serialized.contains("[game.cargo_view]"));
         assert!(serialized.contains("enabled = true"));
         assert!(serialized.contains("show_for_hostiles = false"));
+    }
+
+    #[test]
+    fn slider_limits_default_to_game_values() {
+        let settings = GameSliderLimitSettings::default();
+        assert_eq!(settings.standard_recruit_max, None);
+        assert_eq!(settings.alliance_donation_max, None);
+    }
+
+    #[test]
+    fn slider_limits_serde_round_trip() {
+        let toml_str = "\
+            [game.slider_limits]\n\
+            standard_recruit_max = 500\n\
+            alliance_donation_max = 80\n";
+        let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.game.slider_limits.standard_recruit_max, Some(150));
+        assert_eq!(parsed.game.slider_limits.alliance_donation_max, Some(80));
+
+        let serialized = toml::to_string_pretty(&parsed).unwrap();
+        assert!(serialized.contains("[game.slider_limits]"));
+        assert!(serialized.contains("standard_recruit_max = 150"));
+        assert!(serialized.contains("alliance_donation_max = 80"));
     }
 }

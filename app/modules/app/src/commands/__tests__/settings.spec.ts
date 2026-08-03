@@ -23,6 +23,7 @@ describe('settings commands', () => {
         ui: {scale: 120, auto_open_sidebar: false},
         banners: {},
         cargo_view: {},
+        slider_limits: {},
         shortcuts: {},
       };
       mockInvoke.mockResolvedValue(expected);
@@ -44,6 +45,7 @@ describe('settings commands', () => {
         ui: {scale: 75, auto_open_sidebar: false},
         banners: {},
         cargo_view: {},
+        slider_limits: {},
         shortcuts: {},
       };
       await setGameSettings(settings);
@@ -61,6 +63,7 @@ describe('settings commands', () => {
         ui: {scale: 100, auto_open_sidebar: false},
         banners: {},
         cargo_view: {},
+        slider_limits: {},
         shortcuts: {},
       };
       await setGameSettings(settings);

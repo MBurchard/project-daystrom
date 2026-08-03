@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import {useSettings} from '@app/composables/useSettings';
-import {computed, onBeforeUnmount, ref} from 'vue';
+import {
+  GAME_DEFAULT_SLIDER_MAX,
+  MAX_CONFIGURED_SLIDER_LIMIT,
+  shortcutActions,
+  STANDARD_RECRUIT_MAX,
+  useSettingsView,
+} from '@app/composables/useSettingsView';
 
 import bannerCategories from './toast-banner-categories.json';
 
@@ -8,284 +13,30 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const {settings, save} = useSettings();
-
-/**
- * Handle slider input: update the settings ref and send to backend.
- *
- * @param event - Native input event from the range slider.
- */
-function onSliderInput(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.ui.scale = Number(target.value);
-  save();
-}
-
-/**
- * Toggle the "Auto-open Chat Sidebar" checkbox and send to backend.
- *
- * @param event - Native change event from the checkbox.
- */
-function onAutoOpenSidebarChange(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.ui.auto_open_sidebar = target.checked;
-  save();
-}
-
-/**
- * Toggle the "Auto-expand Job Queue" checkbox and send to backend.
- *
- * @param event - Native change event from the checkbox.
- */
-function onAutoExpandJobQueueChange(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.ui.auto_expand_job_queue = target.checked;
-  save();
-}
-
-/**
- * Toggle the "Skip Reveal Sequence" checkbox and send to backend.
- *
- * @param event - Native change event from the checkbox.
- */
-function onSkipRevealSequenceChange(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.ui.skip_reveal_sequence = target.checked;
-  save();
-}
-
-/**
- * Toggle the "Skip First Popup" checkbox and send to backend.
- *
- * @param event - Native change event from the checkbox.
- */
-function onSkipFirstPopupChange(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.ui.skip_first_popup = target.checked;
-  save();
-}
-
-/**
- * Toggle the cargo auto-open master switch and send to backend.
- *
- * @param event - Native change event from the checkbox.
- */
-function onCargoViewEnabledChange(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.cargo_view.enabled = target.checked;
-  save();
-}
-
-/**
- * Toggle one target type in the cargo auto-open settings.
- *
- * @param key - Cargo view setting key to patch.
- * @param event - Native change event from the checkbox.
- */
-function onCargoViewTargetChange(
-  key: 'show_for_hostiles' | 'show_for_armadas' | 'show_for_stations' | 'show_for_players',
-  event: Event,
-) {
-  const target = event.target as HTMLInputElement;
-  settings.value.cargo_view[key] = target.checked;
-  save();
-}
-
-/** Effective UI scale, defaulting to 100% when not set. */
-const effectiveScale = computed(() => settings.value.ui.scale ?? 100);
-
-/** Effective system zoom distance, defaulting to 1000 when not set. */
-const effectiveSystemZoom = computed(() => settings.value.ui.system_zoom ?? 1000);
-
-/** Effective ship names visibility distance, defaulting to 1800 when not set. */
-const effectiveShipNamesVisible = computed(() => settings.value.ui.ship_names_visible ?? 1800);
-
-/**
- * Handle system zoom slider input: update the settings ref and send to backend.
- *
- * @param event - Native input event from the range slider.
- */
-function onSystemZoomInput(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.ui.system_zoom = Number(target.value);
-  save();
-}
-
-/**
- * Handle ship names visible slider input: update the settings ref and send to backend.
- *
- * @param event - Native input event from the range slider.
- */
-function onShipNamesVisibleInput(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.ui.ship_names_visible = Number(target.value);
-  save();
-}
-
-// ---- Shortcut handlers ------------------------------------------------------
-
-/** Known shortcut actions with display labels and default bindings (as `event.code` values). */
-const shortcutActions = [
-  {key: 'trigger_main_action', label: 'Trigger Main Action', defaultCode: 'Space'},
-];
-
-/**
- * Display labels for key codes, populated by key capture events.
- * Maps `event.code` (e.g. "Slash") to event.key (e.g. "-" on German layout).
- */
-const keyDisplayLabels: Record<string, string> = {Space: 'Space'};
-
-/**
- * Get the display label for a shortcut action (localized key name or code fallback).
- *
- * @param key - The action identifier.
- * @param defaultCode - The default key code.
- */
-function shortcutDisplayLabel(key: string, defaultCode: string): string {
-  const code = settings.value.shortcuts?.[key] ?? defaultCode;
-  return keyDisplayLabels[code] ?? code;
-}
-
-/**
- * Whether a shortcut is explicitly disabled (empty string).
- *
- * @param key - The action identifier.
- */
-function isShortcutDisabled(key: string): boolean {
-  return settings.value.shortcuts?.[key] === '';
-}
-
-/** The action key currently waiting for a keypress, or null if not capturing. */
-const capturingKey = ref<string | null>(null);
-
-/** Remove the shortcut capture listeners and reset the current capture state. */
-function stopShortcutCapture() {
-  capturingKey.value = null;
-  window.removeEventListener('keydown', onCaptureKey);
-  window.removeEventListener('mousedown', onCaptureMouse);
-}
-
-/**
- * Disable a shortcut by setting it to an empty string.
- *
- * @param key - The action identifier.
- */
-function clearShortcut(key: string) {
-  const shortcuts = settings.value.shortcuts ??= {};
-  shortcuts[key] = '';
-  save();
-}
-
-/**
- * Complete a capture with the given code and display label.
- *
- * @param code - The physical key/button identifier (e.g. "Space", "Mouse3").
- * @param label - The display label shown in the UI.
- */
-function finishCapture(code: string, label: string) {
-  const key = capturingKey.value;
-  stopShortcutCapture();
-  if (!key) {
-    return;
-  }
-
-  keyDisplayLabels[code] = label;
-  const shortcuts = settings.value.shortcuts ??= {};
-  shortcuts[key] = code;
-  save();
-}
-
-/**
- * Start capturing a keypress or mouse button for a shortcut action.
- *
- * Listens for both keyboard and mouse events. Mouse buttons 0-2 (left, right, middle) are
- * ignored because the game needs them. Buttons 3+ (side/extra) are accepted.
- *
- * @param key - The action identifier.
- */
-function startCapture(key: string) {
-  stopShortcutCapture();
-  capturingKey.value = key;
-  window.addEventListener('keydown', onCaptureKey);
-  window.addEventListener('mousedown', onCaptureMouse);
-}
-
-/**
- * Handle a captured keypress. Stores `event.code` (physical key) and caches event.key (display label).
- *
- * @param event - The keyboard event.
- */
-function onCaptureKey(event: KeyboardEvent) {
-  event.preventDefault();
-  event.stopPropagation();
-
-  if (event.code === 'Escape') {
-    stopShortcutCapture();
-    return;
-  }
-
-  const label = event.code === 'Space' ? 'Space' : event.key;
-  finishCapture(event.code, label);
-}
-
-/**
- * Handle a captured mouse button. Only accepts buttons 3+ (side/extra buttons on gaming mice).
- * Buttons 0-2 (left, right, middle) are ignored because the game needs them.
- *
- * @param event - The mouse event.
- */
-function onCaptureMouse(event: MouseEvent) {
-  if (event.button < 3) {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-
-  const code = `Mouse${event.button}`;
-  finishCapture(code, code);
-}
-
-onBeforeUnmount(stopShortcutCapture);
-
-// ---- Toast banner handlers --------------------------------------------------
-
-/** Whether all banners are disabled (convenience toggle). */
-const allBannersDisabled = computed(() => settings.value.banners.disable_all ?? false);
-
-/** Set of currently disabled banner type names. */
-const disabledBannerSet = computed(
-  () => new Set(settings.value.banners.disabled_types ?? []),
-);
-
-/**
- * Toggle the "Disable All Banners" kill switch.
- *
- * @param event - Native change event from the checkbox.
- */
-function onDisableAllBannersChange(event: Event) {
-  const target = event.target as HTMLInputElement;
-  settings.value.banners.disable_all = target.checked;
-  save();
-}
-
-/**
- * Toggle an individual banner type.
- *
- * Checked means "show this banner", unchecked means "suppress it".
- *
- * @param name - The ToastState variant name.
- * @param checked - Whether the banner should be shown.
- */
-function onBannerTypeToggle(name: string, checked: boolean) {
-  const current = new Set(settings.value.banners.disabled_types ?? []);
-  if (checked) {
-    current.delete(name);
-  } else {
-    current.add(name);
-  }
-  settings.value.banners.disabled_types = [...current].sort();
-  save();
-}
+const {
+  settings,
+  effectiveScale,
+  effectiveSystemZoom,
+  effectiveShipNamesVisible,
+  effectiveStandardRecruitMax,
+  effectiveAllianceDonationMax,
+  onSliderInput,
+  onSystemZoomInput,
+  onShipNamesVisibleInput,
+  onUiToggle,
+  onCargoViewEnabledChange,
+  onCargoViewTargetChange,
+  onSliderLimitChange,
+  capturingKey,
+  shortcutDisplayLabel,
+  isShortcutDisabled,
+  clearShortcut,
+  startCapture,
+  allBannersDisabled,
+  disabledBannerSet,
+  onDisableAllBannersChange,
+  onBannerTypeToggle,
+} = useSettingsView();
 </script>
 
 <template>
@@ -341,7 +92,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
         <input id="auto-open-sidebar"
             type="checkbox"
             :checked="settings.ui.auto_open_sidebar ?? false"
-            @change="onAutoOpenSidebarChange">
+            @change="onUiToggle('auto_open_sidebar', $event)">
       </div>
 
       <div class="setting-row">
@@ -349,7 +100,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
         <input id="auto-expand-job-queue"
             type="checkbox"
             :checked="settings.ui.auto_expand_job_queue ?? false"
-            @change="onAutoExpandJobQueueChange">
+            @change="onUiToggle('auto_expand_job_queue', $event)">
       </div>
 
       <div class="setting-row">
@@ -357,7 +108,7 @@ function onBannerTypeToggle(name: string, checked: boolean) {
         <input id="skip-reveal-sequence"
             type="checkbox"
             :checked="settings.ui.skip_reveal_sequence ?? true"
-            @change="onSkipRevealSequenceChange">
+            @change="onUiToggle('skip_reveal_sequence', $event)">
       </div>
 
       <div class="setting-row">
@@ -365,7 +116,37 @@ function onBannerTypeToggle(name: string, checked: boolean) {
         <input id="skip-first-popup"
             type="checkbox"
             :checked="settings.ui.skip_first_popup ?? true"
-            @change="onSkipFirstPopupChange">
+            @change="onUiToggle('skip_first_popup', $event)">
+      </div>
+    </section>
+
+    <section class="settings-category">
+      <h3>Slider Limits</h3>
+
+      <div class="setting-row">
+        <label for="standard-recruit-max">Standard Recruit</label>
+        <input id="standard-recruit-max"
+            class="limit-input"
+            type="number"
+            :min="GAME_DEFAULT_SLIDER_MAX"
+            :max="STANDARD_RECRUIT_MAX"
+            step="1"
+            :value="effectiveStandardRecruitMax"
+            @change="onSliderLimitChange('standard_recruit_max', $event)">
+        <span class="setting-hint">Game default: 50</span>
+      </div>
+
+      <div class="setting-row">
+        <label for="alliance-donation-max">Alliance Donation</label>
+        <input id="alliance-donation-max"
+            class="limit-input"
+            type="number"
+            :min="GAME_DEFAULT_SLIDER_MAX"
+            :max="MAX_CONFIGURED_SLIDER_LIMIT"
+            step="1"
+            :value="effectiveAllianceDonationMax"
+            @change="onSliderLimitChange('alliance_donation_max', $event)">
+        <span class="setting-hint">Game default: 50</span>
       </div>
     </section>
 
@@ -526,6 +307,17 @@ function onBannerTypeToggle(name: string, checked: boolean) {
 
 .setting-row input[type="checkbox"] {
   cursor: pointer;
+}
+
+.limit-input {
+  width: 8rem;
+  box-sizing: border-box;
+}
+
+.setting-hint {
+  min-width: 8.5rem;
+  font-size: 0.8rem;
+  opacity: 0.6;
 }
 
 .scale-value {

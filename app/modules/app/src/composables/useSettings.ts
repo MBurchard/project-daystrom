@@ -12,8 +12,11 @@ const settings = ref<GameSettings>({
   ui: {},
   banners: {},
   cargo_view: {},
+  slider_limits: {},
   shortcuts: {},
 });
+
+type SettingsUpdater = (value: GameSettings) => void;
 
 // ---- Public API ------------------------------------------------------------
 
@@ -35,9 +38,7 @@ export function useSettings() {
         settings.value = value;
         log.debug(`Loaded game settings: ${JSON.stringify(value)}`);
       })
-      .catch((err: unknown) => {
-        log.error(`Failed to load game settings: ${err}`);
-      });
+      .catch(reason => log.error(`Failed to load game settings: ${reason}`));
   }
 
   /**
@@ -48,14 +49,55 @@ export function useSettings() {
    */
   function save() {
     setGameSettings(settings.value)
-      .catch((err: unknown) => {
-        log.error(`Failed to save game settings: ${err}`);
-      });
+      .catch(reason => log.error(`Failed to save game settings: ${reason}`));
+  }
+
+  /**
+   * Apply a settings mutation and persist the complete settings object.
+   *
+   * @param updater - Synchronous mutation to apply to the current settings.
+   */
+  function update(updater: SettingsUpdater) {
+    updater(settings.value);
+    save();
+  }
+
+  /**
+   * Assign or disable a keyboard shortcut.
+   *
+   * @param key - Shortcut action identifier.
+   * @param code - Physical key code, or an empty string to disable the shortcut.
+   */
+  function setShortcut(key: string, code: string) {
+    update((value) => {
+      const shortcuts = value.shortcuts ??= {};
+      shortcuts[key] = code;
+    });
+  }
+
+  /**
+   * Enable or suppress an individual toast banner type.
+   *
+   * @param name - ToastState variant name.
+   * @param enabled - Whether the banner should be shown.
+   */
+  function setBannerTypeEnabled(name: string, enabled: boolean) {
+    update((value) => {
+      const disabledTypes = new Set(value.banners.disabled_types ?? []);
+      if (enabled) {
+        disabledTypes.delete(name);
+      } else {
+        disabledTypes.add(name);
+      }
+      value.banners.disabled_types = [...disabledTypes].sort();
+    });
   }
 
   return {
     settings,
-    save,
     init,
+    update,
+    setShortcut,
+    setBannerTypeEnabled,
   };
 }

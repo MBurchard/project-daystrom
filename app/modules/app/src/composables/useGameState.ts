@@ -83,6 +83,11 @@ export function useGameState(): GameState {
 
   // ---- Actions ----------------------------------------------------------------------
 
+  /** Store a rejected backend action as a user-facing error. */
+  function setActionError(reason: unknown): void {
+    actionError.value = String(reason);
+  }
+
   /**
    * Run a backend command triggered by a user action (button click).
    *
@@ -94,9 +99,7 @@ export function useGameState(): GameState {
     actionPending.value = true;
     actionError.value = null;
     invoke(command)
-      .catch((err) => {
-        actionError.value = String(err);
-      })
+      .catch(reason => setActionError(reason))
       .finally(() => {
         actionPending.value = false;
       });
@@ -151,9 +154,7 @@ export function useGameState(): GameState {
     actionPending.value = true;
     actionError.value = null;
     invoke('launch_game', {profile: profile ?? null})
-      .catch((err) => {
-        actionError.value = String(err);
-      })
+      .catch(reason => setActionError(reason))
       .finally(() => {
         actionPending.value = false;
       });

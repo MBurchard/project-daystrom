@@ -497,6 +497,10 @@ mod tests {
         std::ptr::null_mut()
     }
 
+    unsafe extern "C" fn fake_object_get_class(_: *mut Il2CppObject) -> *mut Il2CppClass {
+        std::ptr::null_mut()
+    }
+
     unsafe extern "C" fn fake_class_is_valuetype(_: *const Il2CppClass) -> bool {
         false
     }
@@ -535,6 +539,7 @@ mod tests {
             type_get_type: fake_type_get_type,
             class_from_type: fake_class_from_type,
             class_is_valuetype: fake_class_is_valuetype,
+            object_get_class: fake_object_get_class,
             class_get_field_from_name: fake_class_get_field_from_name,
             field_get_offset: fake_field_get_offset,
             runtime_invoke: fake_runtime_invoke,
