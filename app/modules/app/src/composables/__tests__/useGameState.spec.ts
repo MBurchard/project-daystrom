@@ -364,6 +364,49 @@ describe('useGameState', () => {
 
       expect(state.status.value).toEqual(newStatus);
     });
+
+    it('registers the listener before fetching the cached status', async () => {
+      let resolveListen!: (unlisten: () => void) => void;
+      mockListen.mockReturnValue(new Promise((resolve) => {
+        resolveListen = resolve;
+      }));
+
+      const state = useGameState();
+      state.init();
+
+      expect(mockListen).toHaveBeenCalledWith('game-status', expect.any(Function));
+      expect(mockInvoke).not.toHaveBeenCalledWith('get_cached_game_status');
+
+      resolveListen(vi.fn());
+      await vi.waitFor(() => {
+        expect(mockInvoke).toHaveBeenCalledWith('get_cached_game_status');
+      });
+    });
+
+    it('does not overwrite an event received while the cached status is loading', async () => {
+      const cached = makeGameStatus({remote_version: null, version_check_class: 'neutral'});
+      const event = makeGameStatus({remote_version: 185, version_check_class: 'ok'});
+      let resolveSnapshot!: (status: GameStatus) => void;
+      mockInvoke.mockImplementation((command: string) => command === 'get_cached_game_status' ?
+          new Promise((resolve) => {
+            resolveSnapshot = resolve;
+          }) :
+          Promise.resolve(null));
+      const {emitEvent} = captureListeners();
+
+      const state = useGameState();
+      state.init();
+
+      await vi.waitFor(() => {
+        expect(mockInvoke).toHaveBeenCalledWith('get_cached_game_status');
+      });
+      emitEvent('game-status', event);
+      resolveSnapshot(cached);
+
+      await vi.waitFor(() => {
+        expect(state.status.value).toEqual(event);
+      });
+    });
   });
 
   // ---- getData (cached fetch) -------------------------------------------------------
