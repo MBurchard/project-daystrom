@@ -149,13 +149,14 @@ fn run_loop(app: tauri::AppHandle) {
     let status = commands::get_game_status(app.clone());
     let installed = status.installed;
     crate::game_state::update(&app, |s| *s = status);
+
+    // Profiles are local startup data and must not wait for the remote update check.
+    let profiles = crate::profile_state::scan_profiles();
+    crate::profile_state::update(&app, |s| s.profiles = profiles);
+
     if installed {
         commands::update_check_into_store(&app);
     }
-
-    // Initial profile scan
-    let profiles = crate::profile_state::scan_profiles();
-    crate::profile_state::update(&app, |s| s.profiles = profiles);
 
     let mut state = MonitorState::new();
     let mut last_profile_scan = Instant::now();

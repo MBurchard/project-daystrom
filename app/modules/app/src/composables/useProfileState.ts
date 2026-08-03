@@ -1,8 +1,11 @@
 import type {ProfileState} from '@generated/ProfileState';
 import type {Ref} from 'vue';
+import {getLogger} from '@app/log';
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
 import {computed, ref} from 'vue';
+
+const log = getLogger('Profiles');
 
 // ---- Public Interface -----------------------------------------------------------
 
@@ -86,19 +89,33 @@ export function useProfileState(): ProfileStateComposable {
    * Register the event listener and fetch the initial state.
    */
   function init(): void {
-    listen<ProfileState>('profile-status', (event) => {
-      applyProfileState(event.payload);
-    }).then((fn) => {
-      unlisten = fn;
-    }).catch((err: unknown) => {
-      console.error('Failed to listen for profile-status:', err);
-    });
+    initializeProfileState().catch(reason => log.error('Failed to initialize profile state:', reason));
+  }
 
-    invoke<ProfileState>('get_cached_profile_state').then((state) => {
-      applyProfileState(state);
-    }).catch((err: unknown) => {
-      console.error('Failed to get cached profile state:', err);
-    });
+  /**
+   * Subscribe before reading the initial snapshot so the backend's first profile scan cannot be missed.
+   * An event received during the snapshot request takes precedence over the potentially older snapshot.
+   */
+  async function initializeProfileState(): Promise<void> {
+    let eventReceived = false;
+
+    try {
+      unlisten = await listen<ProfileState>('profile-status', (event) => {
+        eventReceived = true;
+        applyProfileState(event.payload);
+      });
+    } catch (error) {
+      log.error('Failed to listen for profile-status:', error);
+    }
+
+    try {
+      const state = await invoke<ProfileState>('get_cached_profile_state');
+      if (!eventReceived) {
+        applyProfileState(state);
+      }
+    } catch (error) {
+      log.error('Failed to get cached profile state:', error);
+    }
   }
 
   /**

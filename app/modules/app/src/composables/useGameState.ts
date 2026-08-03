@@ -172,21 +172,30 @@ export function useGameState(): GameState {
       version.value = v;
     }).catch(reason => log.error('Failed to get app version:', reason));
 
-    // Fetch cached status from the backend store (maybe null if the monitor hasn't finished
-    // its initial detection yet; the game-status event will arrive shortly after).
-    getData<GameStatus>('get_cached_game_status').then((cached) => {
-      if (cached) {
-        applyGameStatus(cached);
-      }
-    }).catch(/* v8 ignore next @preserve -- only a defensive guard */ reason =>
-      log.error('Failed to apply cached game status:', reason));
+    initializeGameStatus().catch(reason => log.error('Failed to initialize game status:', reason));
+  }
 
-    // Backend store pushes status on every state change (process updates, mod actions, etc.)
-    listen<GameStatus>('game-status', (event) => {
-      applyGameStatus(event.payload);
-    }).then((unlisten) => {
-      unlistenGameStatus = unlisten;
-    }).catch(reason => log.error('Failed to listen for game-status:', reason));
+  /**
+   * Subscribe before reading the initial snapshot so no backend update can be lost between both operations.
+   * If an event arrives while the snapshot request is in flight, the event wins to prevent stale data from
+   * overwriting it.
+   */
+  async function initializeGameStatus(): Promise<void> {
+    let eventReceived = false;
+
+    try {
+      unlistenGameStatus = await listen<GameStatus>('game-status', (event) => {
+        eventReceived = true;
+        applyGameStatus(event.payload);
+      });
+    } catch (reason) {
+      log.error('Failed to listen for game-status:', reason);
+    }
+
+    const cached = await getData<GameStatus>('get_cached_game_status');
+    if (!eventReceived && cached) {
+      applyGameStatus(cached);
+    }
   }
 
   /**
