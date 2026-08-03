@@ -41,7 +41,7 @@ pub struct GameUiSettings {
     /// Whether to skip the shop reveal sequence animation when opening loot boxes.
     #[serde(default, deserialize_with = "lenient_option")]
     pub skip_reveal_sequence: Option<bool>,
-    /// Whether to skip the first interstitial popup (ad) after game start.
+    /// Whether to skip the first interstitial and suppress automatic purchase-offer popups.
     #[serde(default, deserialize_with = "lenient_option")]
     pub skip_first_popup: Option<bool>,
 }
@@ -135,7 +135,7 @@ pub fn skip_reveal_sequence() -> bool {
     state().lock().unwrap().ui.skip_reveal_sequence.unwrap_or(true)
 }
 
-/// Whether to skip the first interstitial popup after game start.
+/// Whether to skip the first interstitial and suppress automatic purchase-offer popups.
 pub fn skip_first_popup() -> bool {
     state().lock().unwrap().ui.skip_first_popup.unwrap_or(true)
 }
