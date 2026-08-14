@@ -1,9 +1,9 @@
 {
   "name": "daystrom-workspace",
   "type": "module",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
-  "packageManager": "pnpm@11.19.0+sha512.7881f3ed590d472c4a955e2b88b2121791116066dcc88cbca3849ec9b60f1bbaa6d2ccb221fa91da4e1c65bef2bcbe379365aea7ac539c7bf86dedc3a1b22dce",
+  "packageManager": "pnpm@11.21.0+sha512.521705bce689924eac72f5a3587122f362689ef6571e55ba80076fd637c11132ecffada26fad4ea79c485bfddbfd3d5a2a5b05805a77e893de71ec8a6cca3bb1",
   "engines": {
     "node": ">=24",
     "pnpm": ">=11"
@@ -40,10 +40,10 @@
     "dev": "node scripts/build.ts dev"
   },
   "devDependencies": {
-    "@antfu/eslint-config": "^9.2.0",
-    "@stylistic/stylelint-plugin": "^5.2.1",
+    "@antfu/eslint-config": "^9.3.0",
+    "@stylistic/stylelint-plugin": "^5.3.0",
     "@tsconfig/node24": "^24.0.4",
-    "eslint": "^10.8.0",
+    "eslint": "^10.8.1",
     "postcss-html": "^1.8.1",
     "stylelint": "^17.14.1",
     "stylelint-config-standard": "^40.0.0",
