@@ -3,9 +3,9 @@ use std::os::unix::process::CommandExt as _;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt as _;
 use std::path::Path;
+use std::process::Child;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use std::process::Command;
-use std::process::{Child, Stdio};
+use std::process::{Command, Stdio};
 
 use super::GameInfo;
 use crate::use_log;

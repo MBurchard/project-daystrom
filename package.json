@@ -12,6 +12,7 @@
     "install:all": "pnpm install --force",
     "lint": "node scripts/build.ts lint",
     "lint:ci": "node scripts/build.ts lint:ci",
+    "lint:native:ci": "node scripts/build.ts lint:native:ci",
     "lint:fix": "node scripts/build.ts lint:fix",
     "lint:app": "node scripts/build.ts lint:app",
     "lint:app:fix": "node scripts/build.ts lint:app:fix",
