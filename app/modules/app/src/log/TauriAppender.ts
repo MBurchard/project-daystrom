@@ -64,6 +64,38 @@ export class TauriAppender extends AbstractBaseAppender {
   /** Once set to `true`, no further IPC calls are attempted. */
   private disabled = false;
 
+  /** IPC operations that have not settled yet. */
+  private readonly pendingOperations = new Set<Promise<void>>();
+
+  /** Shared close operation for concurrent callers. */
+  private closePromise?: Promise<void>;
+
+  /**
+   * Wait until all IPC operations that are currently running have settled.
+   *
+   * The loop also picks up operations started while an earlier batch is settling.
+   * @returns a promise that resolves when no pending operation remains
+   */
+  private async waitForPendingOperations(): Promise<void> {
+    while (this.pendingOperations.size > 0) {
+      await Promise.allSettled(this.pendingOperations);
+    }
+  }
+
+  /**
+   * Flush all pending Tauri log calls during logging shutdown.
+   *
+   * Concurrent calls share the same promise. Once it settles, the appender can be used and closed
+   * again as required by bit-log's appender lifecycle.
+   * @returns a promise that resolves after all pending IPC operations have settled
+   */
+  close(): Promise<void> {
+    this.closePromise ??= this.waitForPendingOperations().finally(() => {
+      this.closePromise = undefined;
+    });
+    return this.closePromise;
+  }
+
   /**
    * Forward a log event to the Rust backend via the appropriate plugin-log function.
    * @param event - the log event from bit-log
@@ -96,11 +128,16 @@ export class TauriAppender extends AbstractBaseAppender {
         {file: stripOrigin(event.callSite.file), line: event.callSite.line} :
       undefined;
 
+    const operation = logFn(text, options);
+    this.pendingOperations.add(operation);
+
     try {
-      await logFn(text, options);
+      await operation;
     } catch {
       // Tauri not available — disable permanently to avoid repeated failures
       this.disabled = true;
+    } finally {
+      this.pendingOperations.delete(operation);
     }
   }
 }

@@ -1,8 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Listener, Manager};
+use tauri::{Emitter, Listener, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 mod commands;
@@ -25,6 +26,64 @@ use_log!("Startup");
 
 /// Set when set_position() is called; cleared by the first Moved event which then shows the window.
 static SHOW_AFTER_REPOSITION: AtomicBool = AtomicBool::new(false);
+
+/// Set after the backend has asked the frontend to flush its logging appenders.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Set after the frontend has completed its asynchronous shutdown work.
+static SHUTDOWN_READY: AtomicBool = AtomicBool::new(false);
+
+/// Return whether the frontend has completed its coordinated shutdown work.
+#[cfg(target_os = "macos")]
+pub(crate) fn shutdown_ready() -> bool {
+    SHUTDOWN_READY.load(Relaxed)
+}
+
+/// Ask the frontend to flush logging before exiting the application.
+///
+/// The main window is hidden immediately while its webview remains alive for the asynchronous flush.
+/// A short timeout keeps the native application terminable when the webview is unavailable or the
+/// frontend listener fails to respond.
+pub(crate) fn request_shutdown(app: &tauri::AppHandle) {
+    if SHUTDOWN_READY.load(Relaxed) {
+        app.exit(0);
+        return;
+    }
+    if SHUTDOWN_REQUESTED.swap(true, Relaxed) {
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    log_debug!("[EVENT] Requesting coordinated frontend shutdown");
+    if let Err(error) = app.emit("shutdown-requested", ()) {
+        log_warn!("Failed to request frontend shutdown: {error}");
+        SHUTDOWN_READY.store(true, Relaxed);
+        app.exit(0);
+        return;
+    }
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if !SHUTDOWN_READY.swap(true, Relaxed) {
+            log_warn!("Frontend shutdown timed out; forcing application exit");
+            app.exit(0);
+        }
+    });
+}
+
+/// Complete a coordinated shutdown after frontend appenders have flushed.
+#[tauri::command]
+fn complete_shutdown(app: tauri::AppHandle) {
+    if SHUTDOWN_READY.swap(true, Relaxed) {
+        return;
+    }
+    log_debug!("[EVENT] Frontend shutdown completed");
+    app.exit(0);
+}
 
 /// Make the window visible and open DevTools in debug builds.
 fn show_window(window: &tauri::WebviewWindow) {
@@ -243,7 +302,7 @@ pub fn run() {
                                 warn_quit_blocked(&window);
                             }
                         } else {
-                            app.exit(0);
+                            request_shutdown(app);
                         }
                     }
                     _ => {}
@@ -276,6 +335,7 @@ pub fn run() {
             prepare_mod,
             remove_mod,
             launch_game,
+            complete_shutdown,
         ])
         .on_window_event(|window, event| {
             match event {
@@ -287,7 +347,8 @@ pub fn run() {
                             warn_quit_blocked(&wv);
                         }
                     } else {
-                        window.app_handle().exit(0);
+                        api.prevent_close();
+                        request_shutdown(window.app_handle());
                     }
                 }
                 tauri::WindowEvent::Moved(..) | tauri::WindowEvent::Resized(..) => {

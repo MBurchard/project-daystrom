@@ -2,8 +2,8 @@
 //!
 //! **Quit guard:** Intercepts all macOS quit paths (Cmd+Q, App menu, Dock "Quit", SIGTERM) by adding
 //! `applicationShouldTerminate:` to tao's `TaoAppDelegateParent` class. Tauri 2 / tao does not fire
-//! `RunEvent::ExitRequested` for `[NSApplication terminate:]`, so the existing quit-blocking logic would
-//! be bypassed without this hook.
+//! `RunEvent::ExitRequested` for `[NSApplication terminate:]`, so the existing quit-blocking and
+//! coordinated-shutdown logic would be bypassed without this hook.
 //!
 //! **Minimize guard:** Overrides `miniaturize:` on tao's NSWindow subclass to prevent the native
 //! Genie animation and instead hide the window to the system tray. This is more reliable than
@@ -71,8 +71,8 @@ pub(crate) fn install_quit_guard() {
 
 /// ObjC callback: decides whether the application is allowed to terminate.
 ///
-/// Returns `NSTerminateCancel` when a Daystrom-started process is still running (and shows a warning),
-/// `NSTerminateNow` otherwise.
+/// Returns `NSTerminateCancel` while a Daystrom-started process is still running or while the frontend
+/// flushes its logging appenders. Once shutdown is ready, the Tauri exit request terminates the app.
 unsafe extern "C-unwind" fn should_terminate(_this: *const AnyObject, _cmd: Sel, _sender: *const AnyObject) -> usize {
     if crate::game_state::get().should_block_quit {
         log_debug!("Quit blocked (Daystrom-started process still running)");
@@ -82,11 +82,21 @@ unsafe extern "C-unwind" fn should_terminate(_this: *const AnyObject, _cmd: Sel,
                 crate::warn_quit_blocked(&window);
             }
         }
-        NSApplicationTerminateReply::TerminateCancel.0
-    } else {
-        log_debug!("Quit permitted");
-        NSApplicationTerminateReply::TerminateNow.0
+        return NSApplicationTerminateReply::TerminateCancel.0;
     }
+
+    if crate::shutdown_ready() {
+        log_debug!("Coordinated shutdown completed; terminating");
+        return NSApplicationTerminateReply::TerminateNow.0;
+    }
+
+    log_debug!("Quit permitted; requesting coordinated shutdown");
+    let Some(handle) = APP_HANDLE.get() else {
+        log_warn!("App handle unavailable during coordinated shutdown; terminating immediately");
+        return NSApplicationTerminateReply::TerminateNow.0;
+    };
+    crate::request_shutdown(handle);
+    NSApplicationTerminateReply::TerminateCancel.0
 }
 
 // ---- Minimize Guard -------------------------------------------------------------
