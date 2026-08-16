@@ -41,5 +41,16 @@
     "resources": {
       "../../resources/mod/*": "mod/"
     }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/MBurchard/project-daystrom/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVERDdDQTU5OTY0MDVDNDQKUldSRVhFQ1dXY3JYN2VYVWoxQmpmbmhlQi9tcnhOSnhGMlR4VkREWDcrZWM5Q3NkSlNxbWRIM2IK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

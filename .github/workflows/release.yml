@@ -1,50 +1,167 @@
-name: Release
+name: Prepare Release Draft
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-draft-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Prepare Draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.metadata.outputs.sha }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      version: ${{ steps.metadata.outputs.version }}
+
+    steps:
+      - name: Checkout selected revision
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid package version: $VERSION" >&2
+            exit 1
+          fi
+          CARGO_VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' app/modules/backend/Cargo.toml | head -1)
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "Cargo version $CARGO_VERSION does not match package version $VERSION" >&2
+            exit 1
+          fi
+          echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or validate draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ steps.metadata.outputs.sha }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            IS_DRAFT=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "Release $RELEASE_TAG is already published" >&2
+              exit 1
+            fi
+            TARGET=$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}" --jq .target_commitish)
+            if [ "$TARGET" != "$RELEASE_SHA" ]; then
+              echo "Draft $RELEASE_TAG targets $TARGET instead of $RELEASE_SHA" >&2
+              exit 1
+            fi
+          else
+            if gh api "repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+              echo "Tag $RELEASE_TAG already exists without a matching draft release" >&2
+              exit 1
+            fi
+            gh release create "$RELEASE_TAG" \
+              --draft \
+              --target "$RELEASE_SHA" \
+              --title "Project Daystrom $RELEASE_VERSION" \
+              --notes "Release candidate for Project Daystrom $RELEASE_VERSION."
+          fi
+
   build-macos:
     name: macOS Build
+    needs: prepare
     uses: ./.github/workflows/build-mac.yml
     permissions:
       contents: read
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      updater: true
     secrets: inherit
 
   build-windows:
     name: Windows Build
+    needs: prepare
     uses: ./.github/workflows/build-windows.yml
     permissions:
       contents: read
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      updater: true
     secrets: inherit
 
   attach-assets:
     name: Attach Release Assets
-    needs: [build-macos, build-windows]
+    needs: [prepare, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Download macOS artifact
+      - name: Checkout release revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+
+      - name: Download macOS installer
         uses: actions/download-artifact@v8
         with:
           name: Project-Daystrom-macOS-universal
           path: assets/
 
-      - name: Download Windows artifact
+      - name: Download macOS updater
+        uses: actions/download-artifact@v8
+        with:
+          name: Project-Daystrom-macOS-updater
+          path: assets/
+
+      - name: Download Windows installer
         uses: actions/download-artifact@v8
         with:
           name: Project-Daystrom-Windows-x64
           path: assets/
 
-      - name: Upload assets to GitHub Release
+      - name: Download Windows updater signature
+        uses: actions/download-artifact@v8
+        with:
+          name: Project-Daystrom-Windows-updater
+          path: assets/
+
+      - name: Generate update manifest and checksums
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: >-
+          node scripts/update-manifest.ts
+          assets
+          "$RELEASE_VERSION"
+          "$GITHUB_REPOSITORY"
+          "$RELEASE_TAG"
+
+      - name: Upload assets to draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "${{ github.event.release.tag_name }}" assets/* --clobber
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" assets/* --clobber
+
+      - name: Summarize draft
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          echo "### Draft release ready" >> "$GITHUB_STEP_SUMMARY"
+          echo "Project Daystrom $RELEASE_VERSION has been built for Windows and macOS." >> "$GITHUB_STEP_SUMMARY"
+          echo "Test both installers, then publish $RELEASE_TAG manually" \
+            "from the GitHub release page." >> "$GITHUB_STEP_SUMMARY"

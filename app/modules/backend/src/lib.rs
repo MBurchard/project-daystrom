@@ -214,6 +214,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(logging::build_plugin())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let version = &app.package_info().version;
             log_info!("Project Daystrom {version} initialised");
