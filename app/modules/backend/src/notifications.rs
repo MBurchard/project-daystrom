@@ -1,17 +1,34 @@
-//! Native desktop notifications that need interaction callbacks.
+//! Native desktop notifications for application hints and interactive update alerts.
 
 use std::thread;
 
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
+
 #[cfg(not(target_os = "macos"))]
 use notify_rust::Timeout;
-#[cfg(target_os = "macos")]
-use notify_rust::error::{ApplicationError, MacOsError};
 use notify_rust::{Notification, NotificationResponse};
 use tauri::Manager;
 
 use crate::use_log;
 
 use_log!("Notifications");
+
+/// Cached macOS notification authorization for the current application process.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+enum NotificationPermission {
+    /// Permission has not been decided or the previous check failed temporarily.
+    Unknown,
+    /// The user granted permission.
+    Authorized,
+    /// The user denied permission.
+    Denied,
+}
+
+/// Current macOS notification authorization state.
+#[cfg(target_os = "macos")]
+static NOTIFICATION_PERMISSION: Mutex<NotificationPermission> = Mutex::new(NotificationPermission::Unknown);
 
 /// Return whether a native notification response represents a body click.
 fn should_focus_window(response: &NotificationResponse) -> bool {
@@ -29,9 +46,9 @@ fn focus_main_window(app: &tauri::AppHandle) {
     let _ = window.set_focus();
 }
 
-/// Configure platform identity fields required for native desktop notifications.
-fn configure_platform_identity(_notification: &mut Notification, _app: &tauri::AppHandle) {
-    #[cfg(target_os = "windows")]
+/// Configure the application identity required for installed Windows notifications.
+#[cfg(target_os = "windows")]
+fn configure_windows_identity(notification: &mut Notification, app: &tauri::AppHandle) {
     if let Ok(executable) = tauri::utils::platform::current_exe()
         && let Some(directory) = executable.parent()
     {
@@ -41,14 +58,8 @@ fn configure_platform_identity(_notification: &mut Notification, _app: &tauri::A
         let debug_suffix = format!("{MAIN_SEPARATOR}target{MAIN_SEPARATOR}debug");
         let release_suffix = format!("{MAIN_SEPARATOR}target{MAIN_SEPARATOR}release");
         if !directory.ends_with(&debug_suffix) && !directory.ends_with(&release_suffix) {
-            _notification.app_id(&_app.config().identifier);
+            notification.app_id(&app.config().identifier);
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    match notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &_app.config().identifier }) {
-        Ok(()) | Err(MacOsError::Application(ApplicationError::AlreadySet(_))) => {}
-        Err(error) => log_warn!("Failed to configure macOS notification identity: {error}"),
     }
 }
 
@@ -56,6 +67,72 @@ fn configure_platform_identity(_notification: &mut Notification, _app: &tauri::A
 fn configure_timeout(_notification: &mut Notification) {
     #[cfg(not(target_os = "macos"))]
     _notification.timeout(Timeout::Milliseconds(15_000));
+}
+
+/// Ensure the current platform permits Daystrom to display native notifications.
+#[cfg(target_os = "macos")]
+fn notification_permission_granted() -> bool {
+    let mut permission = NOTIFICATION_PERMISSION.lock().unwrap();
+    match *permission {
+        NotificationPermission::Authorized => return true,
+        NotificationPermission::Denied => return false,
+        NotificationPermission::Unknown => {}
+    }
+
+    match notify_rust::request_auth_blocking() {
+        Ok(true) => {
+            *permission = NotificationPermission::Authorized;
+            true
+        }
+        Ok(false) => {
+            *permission = NotificationPermission::Denied;
+            log_warn!("macOS notification permission was denied");
+            false
+        }
+        Err(error) => {
+            log_warn!("Failed to request macOS notification permission: {error}");
+            false
+        }
+    }
+}
+
+/// Native desktop notifications require no explicit permission request on this platform.
+#[cfg(not(target_os = "macos"))]
+fn notification_permission_granted() -> bool {
+    true
+}
+
+/// Show the non-interactive tray hint, then hide the Daystrom window.
+///
+/// Keeping the window visible until the worker has requested macOS notification permission avoids
+/// presenting the first system authorization dialog for an application that has already vanished.
+pub fn show_minimize_hint(window: &tauri::WebviewWindow) {
+    let worker_window = window.clone();
+    let fallback_window = window.clone();
+    let spawn_result = thread::Builder::new()
+        .name("daystrom-minimize-notification".into())
+        .spawn(move || {
+            if notification_permission_granted() {
+                let mut notification = Notification::new();
+                notification
+                    .summary("Minimised to Tray")
+                    .body("Project Daystrom is still running. Click the tray icon to reopen.");
+                configure_timeout(&mut notification);
+                #[cfg(target_os = "windows")]
+                configure_windows_identity(&mut notification, worker_window.app_handle());
+
+                if let Err(error) = notification.show() {
+                    log_warn!("Failed to show minimize notification: {error}");
+                }
+            }
+
+            let _ = worker_window.hide();
+        });
+
+    if let Err(error) = spawn_result {
+        log_warn!("Failed to start minimize notification worker: {error}");
+        let _ = fallback_window.hide();
+    }
 }
 
 /// Notify the player about a newly discovered STFC version.
@@ -67,12 +144,17 @@ pub fn show_game_update(app: &tauri::AppHandle, version: u32) {
     let spawn_result = thread::Builder::new()
         .name("daystrom-update-notification".into())
         .spawn(move || {
+            if !notification_permission_granted() {
+                return;
+            }
+
             let mut notification = Notification::new();
             notification.summary("STFC update available").body(&format!(
                 "Version {version} is available. Close the game and open Daystrom to start the update."
             ));
             configure_timeout(&mut notification);
-            configure_platform_identity(&mut notification, &app);
+            #[cfg(target_os = "windows")]
+            configure_windows_identity(&mut notification, &app);
 
             let handle = match notification.show() {
                 Ok(handle) => handle,

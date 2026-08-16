@@ -194,15 +194,7 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
         }
         HintLevel::Notification => {
             log_debug!("[EVENT] Hiding window to tray (count={count})");
-            let _ = window.hide();
-            use tauri_plugin_notification::NotificationExt;
-            let _ = window
-                .app_handle()
-                .notification()
-                .builder()
-                .title("Minimised to Tray")
-                .body("Project Daystrom is still running. Click the tray icon to reopen.")
-                .show();
+            notifications::show_minimize_hint(window);
         }
         HintLevel::Silent => {
             log_debug!("[EVENT] Hiding window to tray (count={count})");
@@ -222,7 +214,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(logging::build_plugin())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let version = &app.package_info().version;
             log_info!("Project Daystrom {version} initialised");
