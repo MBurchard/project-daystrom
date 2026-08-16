@@ -298,7 +298,7 @@ unsafe fn write_branch(addr: usize, target: usize) {
 ///
 /// Pages are allocated as RW first, then switched to RX after writing trampoline code.
 /// On Apple Silicon, this also satisfies the hardware W^X requirement.
-#[cfg(unix)]
+#[cfg(all(unix, target_arch = "aarch64"))]
 unsafe fn alloc_executable(size: usize) -> Result<*mut c_void, String> {
     let ptr = unsafe {
         libc::mmap(
