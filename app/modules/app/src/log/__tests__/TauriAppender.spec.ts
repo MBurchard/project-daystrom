@@ -34,6 +34,18 @@ function makeEvent(overrides: Partial<ILogEvent> = {}): ILogEvent {
   };
 }
 
+/**
+ * Create a promise whose completion can be controlled by a test.
+ * @returns the promise and its resolve function
+ */
+function createDeferred(): {promise: Promise<void>; resolve: () => void} {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return {promise, resolve};
+}
+
 describe('tauriAppender', () => {
   let appender: TauriAppender;
 
@@ -160,6 +172,47 @@ describe('tauriAppender', () => {
 
       // The second call should be silently skipped
       await (appender as any).doHandle(makeEvent());
+      expect(mockInfo).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('lifecycle', () => {
+    it('waits for pending IPC operations when closed', async () => {
+      const deferred = createDeferred();
+      mockInfo.mockReturnValueOnce(deferred.promise);
+
+      const handlePromise = appender.handle(makeEvent());
+      const closePromise = appender.close();
+      let closed = false;
+      let closeFailure: unknown;
+      closePromise.then(() => {
+        closed = true;
+      }).catch((reason) => {
+        closeFailure = reason;
+      });
+
+      await Promise.resolve();
+      expect(closed).toBe(false);
+
+      deferred.resolve();
+      try {
+        await Promise.all([handlePromise, closePromise]);
+      } catch (error) {
+        expect.fail(`Closing the appender failed: ${String(error)}`);
+      }
+      expect(closed).toBe(true);
+      expect(closeFailure).toBeUndefined();
+    });
+
+    it('shares concurrent close calls and remains reusable afterwards', async () => {
+      const firstClose = appender.close();
+      const secondClose = appender.close();
+
+      expect(secondClose).toBe(firstClose);
+      await firstClose;
+
+      await appender.handle(makeEvent());
+      await appender.close();
       expect(mockInfo).toHaveBeenCalledOnce();
     });
   });
