@@ -53,6 +53,8 @@ pub struct ProfileState {
     pub running_profiles: Vec<String>,
     /// Whether a game process is running that was NOT launched by Daystrom.
     pub external_game_running: bool,
+    /// Whether Daystrom is waiting for a running game to restore its launch identity.
+    pub game_origin_pending: bool,
 }
 
 /// Global profile state.
@@ -60,6 +62,7 @@ static STATE: Mutex<ProfileState> = Mutex::new(ProfileState {
     profiles: Vec::new(),
     running_profiles: Vec::new(),
     external_game_running: false,
+    game_origin_pending: false,
 });
 
 /// Return a snapshot of the current profile state.

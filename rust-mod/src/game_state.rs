@@ -25,6 +25,26 @@ fn state() -> &'static Mutex<PlayerData> {
     STATE.get_or_init(|| Mutex::new(PlayerData::default()))
 }
 
+/// Return the current player fields as `player.update` payloads for reconnect synchronization.
+///
+/// Missing fields are omitted because the game has not observed them yet.
+pub fn snapshot_updates() -> Vec<serde_json::Value> {
+    let data = state().lock().unwrap();
+    let mut updates = Vec::with_capacity(3);
+
+    if let Some(ref value) = data.name {
+        updates.push(serde_json::json!({"key": "name", "value": value}));
+    }
+    if let Some(value) = data.level {
+        updates.push(serde_json::json!({"key": "level", "value": value}));
+    }
+    if let Some(value) = data.might {
+        updates.push(serde_json::json!({"key": "might", "value": value}));
+    }
+
+    updates
+}
+
 /// Update player data from the user profile hook.
 ///
 /// Compares each field against the stored state.
@@ -119,6 +139,26 @@ mod tests {
         assert_eq!(data.name.as_deref(), Some("Nabor"));
         assert_eq!(data.level, Some(43));
         assert_eq!(data.might, Some(12345));
+    }
+
+    #[test]
+    fn snapshot_contains_all_observed_player_fields() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset();
+        *state().lock().unwrap() = PlayerData {
+            name: Some("Nabor".into()),
+            level: Some(42),
+            might: Some(12345),
+        };
+
+        assert_eq!(
+            snapshot_updates(),
+            vec![
+                serde_json::json!({"key": "name", "value": "Nabor"}),
+                serde_json::json!({"key": "level", "value": 42}),
+                serde_json::json!({"key": "might", "value": 12345}),
+            ]
+        );
     }
 
     #[test]

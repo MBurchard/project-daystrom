@@ -16,6 +16,8 @@ export interface ProfileStateComposable {
   hasProfiles: Readonly<Ref<boolean>>;
   /** Whether a game is running, that was not started by Daystrom. */
   externalGameRunning: Readonly<Ref<boolean>>;
+  /** Whether Daystrom is waiting for a running game to restore its launch identity. */
+  gameOriginPending: Readonly<Ref<boolean>>;
   /** Check whether a specific profile is currently running or recently launched. */
   isProfileRunning: (stem: string) => boolean;
   /** Mark a profile as recently launched (30s cooldown). */
@@ -30,6 +32,7 @@ const DEFAULT_PROFILE_STATE: ProfileState = {
   profiles: [],
   running_profiles: [],
   external_game_running: false,
+  game_origin_pending: false,
 };
 
 /**
@@ -54,6 +57,8 @@ export function useProfileState(): ProfileStateComposable {
   const hasProfiles = computed(() => profiles.value.profiles.length > 0);
 
   const externalGameRunning = computed(() => profiles.value.external_game_running);
+
+  const gameOriginPending = computed(() => profiles.value.game_origin_pending);
 
   /**
    * Check whether a specific profile is currently running or recently launched.
@@ -130,6 +135,7 @@ export function useProfileState(): ProfileStateComposable {
     profiles,
     hasProfiles,
     externalGameRunning,
+    gameOriginPending,
     isProfileRunning,
     markLaunched,
     init,

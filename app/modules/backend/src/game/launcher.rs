@@ -1,7 +1,11 @@
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt as _;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt as _;
 use std::path::Path;
-use std::process::Child;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
+use std::process::{Child, Stdio};
 
 use super::GameInfo;
 use crate::use_log;
@@ -11,6 +15,40 @@ use_log!("Launcher");
 /// Path to the Scopely launcher application on macOS.
 #[cfg(target_os = "macos")]
 const LAUNCHER_APP: &str = "/Applications/Star Trek Fleet Command.app";
+
+/// Start the Windows game outside Daystrom's console process group.
+#[cfg(target_os = "windows")]
+const DETACHED_PROCESS: u32 = 0x0000_0008;
+
+/// Prevent terminal and development-runner signals from being forwarded to the Windows game.
+#[cfg(target_os = "windows")]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+/// Detach the game from Daystrom's terminal and process group.
+///
+/// Daystrom keeps the returned [`Child`] only for status tracking. The operating system process
+/// must continue independently when the development client or the installed app exits unexpectedly.
+#[cfg(target_os = "macos")]
+fn configure_independent_game_process(command: &mut Command) {
+    command
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+}
+
+/// Detach the game from Daystrom's console and process group.
+///
+/// Daystrom keeps the returned [`Child`] only for status tracking. The operating system process
+/// must continue independently when the development client or the installed app exits unexpectedly.
+#[cfg(target_os = "windows")]
+fn configure_independent_game_process(command: &mut Command) {
+    command
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+}
 
 /// Launch the game with the mod library injected via DYLD environment variables.
 ///
@@ -28,6 +66,7 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
     cmd.current_dir(&game.install_dir)
         .env("DYLD_INSERT_LIBRARIES", mod_library)
         .env("DYLD_LIBRARY_PATH", lib_dir);
+    configure_independent_game_process(&mut cmd);
     if let Some(p) = profile {
         log_info!("Setting DAYSTROM_PROFILE={p}");
         cmd.env("DAYSTROM_PROFILE", p);
@@ -66,6 +105,7 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
 
     let mut cmd = Command::new(&game.executable);
     cmd.current_dir(&game.install_dir);
+    configure_independent_game_process(&mut cmd);
     if let Some(p) = profile {
         log_info!("Setting DAYSTROM_PROFILE={p}");
         cmd.env("DAYSTROM_PROFILE", p);

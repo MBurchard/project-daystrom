@@ -18,12 +18,23 @@ static GAME_STARTED_BY_US: AtomicBool = AtomicBool::new(false);
 /// Whether the Scopely launcher was opened via Daystrom's "Update" button.
 static LAUNCHER_STARTED_BY_US: AtomicBool = AtomicBool::new(false);
 
-/// Map of PID → (child handle, profile stem) for game instances launched by Daystrom.
+/// One game process associated with a Daystrom profile.
+struct TrackedGame {
+    /// Owned handle when this backend instance spawned the process.
+    child: Option<Child>,
+    /// Profile stem used by the corresponding launch button.
+    profile_stem: String,
+    /// WebSocket connection that reconstructed this entry after a backend restart.
+    reconnect_owner: Option<u64>,
+}
+
+/// Map of PID to tracked game metadata for instances launched by Daystrom.
 ///
 /// Storing the [`Child`] handle allows us to call [`Child::try_wait`] to reap exited processes,
 /// preventing zombies on Unix/macOS. Without reaping, `pgrep` would still find zombie processes
-/// and report them as running.
-static LAUNCHED_PROFILES: Mutex<Option<HashMap<u32, (Child, String)>>> = Mutex::new(None);
+/// and report them as running. Reconnected games have no handle because their original Daystrom
+/// parent has already exited; their WebSocket connection owns their reconstructed entry instead.
+static LAUNCHED_PROFILES: Mutex<Option<HashMap<u32, TrackedGame>>> = Mutex::new(None);
 
 /// Mark the game as having been started by Daystrom.
 ///
@@ -65,7 +76,62 @@ pub fn register_launch(child: Child, profile_stem: String) {
     let pid = child.id();
     let mut guard = LAUNCHED_PROFILES.lock().unwrap();
     let map = guard.get_or_insert_with(HashMap::new);
-    map.insert(pid, (child, profile_stem));
+    map.insert(
+        pid,
+        TrackedGame {
+            child: Some(child),
+            profile_stem,
+            reconnect_owner: None,
+        },
+    );
+}
+
+/// Reconstruct a Daystrom-launched game from its WebSocket reconnect handshake.
+///
+/// Existing tracking remains authoritative because its profile stem may already reflect an in-game
+/// rename that the process environment cannot know about.
+pub fn register_reconnected_launch(pid: u32, profile_stem: String, connection_id: u64) {
+    let mut guard = LAUNCHED_PROFILES.lock().unwrap();
+    let map = guard.get_or_insert_with(HashMap::new);
+    match map.get_mut(&pid) {
+        Some(game) => {
+            if game.child.is_none() {
+                game.reconnect_owner = Some(connection_id);
+            }
+        }
+        None => {
+            map.insert(
+                pid,
+                TrackedGame {
+                    child: None,
+                    profile_stem,
+                    reconnect_owner: Some(connection_id),
+                },
+            );
+        }
+    }
+    mark_game_started();
+}
+
+/// Remove a reconstructed launch when its WebSocket connection closes.
+///
+/// Returns whether an entry without an owned child handle was removed.
+pub fn unregister_reconnected_launch(pid: u32, connection_id: u64) -> bool {
+    let mut guard = LAUNCHED_PROFILES.lock().unwrap();
+    let Some(map) = guard.as_mut() else { return false };
+    if map
+        .get(&pid)
+        .is_some_and(|game| game.child.is_none() && game.reconnect_owner == Some(connection_id))
+    {
+        map.remove(&pid);
+        return true;
+    }
+    false
+}
+
+/// Return whether any Daystrom-launched game is currently tracked.
+pub fn has_tracked_game() -> bool {
+    LAUNCHED_PROFILES.lock().unwrap().as_ref().is_some_and(|map| !map.is_empty())
 }
 
 /// Reap zombie child processes spawned by Daystrom.
@@ -76,7 +142,7 @@ pub fn register_launch(child: Child, profile_stem: String) {
 pub fn reap_children() {
     let mut guard = LAUNCHED_PROFILES.lock().unwrap();
     let Some(map) = guard.as_mut() else { return };
-    map.retain(|_, (child, _)| matches!(child.try_wait(), Ok(None)));
+    map.retain(|_, game| game.child.as_mut().is_none_or(|child| matches!(child.try_wait(), Ok(None))));
 }
 
 /// Update the stored stem for a running profile after an in-game rename.
@@ -86,9 +152,9 @@ pub fn reap_children() {
 pub fn update_stem(old_stem: &str, new_stem: &str) {
     let mut guard = LAUNCHED_PROFILES.lock().unwrap();
     let Some(map) = guard.as_mut() else { return };
-    for (_, stem) in map.values_mut() {
-        if *stem == old_stem {
-            *stem = new_stem.to_string();
+    for game in map.values_mut() {
+        if game.profile_stem == old_stem {
+            game.profile_stem = new_stem.to_string();
             break;
         }
     }
@@ -103,7 +169,7 @@ pub fn running_profiles() -> Vec<String> {
     let Some(map) = guard.as_ref() else {
         return Vec::new();
     };
-    map.values().map(|(_, stem)| stem.clone()).collect()
+    map.values().map(|game| game.profile_stem.clone()).collect()
 }
 
 // ---- Tests ----------------------------------------------------------------------
@@ -159,6 +225,56 @@ mod tests {
         clear_game_started();
         assert!(!GAME_STARTED_BY_US.load(Ordering::SeqCst));
         assert!(LAUNCHER_STARTED_BY_US.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn reconnect_restores_and_unregisters_profile_tracking() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_flags();
+
+        register_reconnected_launch(4242, "106_Nabor".to_string(), 1);
+
+        assert!(is_game_started());
+        assert!(has_tracked_game());
+        assert_eq!(running_profiles(), vec!["106_Nabor"]);
+        assert!(unregister_reconnected_launch(4242, 1));
+        assert!(!has_tracked_game());
+    }
+
+    #[test]
+    fn disconnecting_one_reconnected_game_preserves_other_tracking() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_flags();
+
+        register_reconnected_launch(4242, "106_Nabor".to_string(), 1);
+        register_reconnected_launch(4343, "107_Spock".to_string(), 2);
+
+        let mut running = running_profiles();
+        running.sort();
+        assert_eq!(running, vec!["106_Nabor", "107_Spock"]);
+
+        assert!(unregister_reconnected_launch(4242, 1));
+        assert!(has_tracked_game());
+        assert!(is_game_started());
+        assert_eq!(running_profiles(), vec!["107_Spock"]);
+
+        assert!(unregister_reconnected_launch(4343, 2));
+        assert!(!has_tracked_game());
+    }
+
+    #[test]
+    fn repeated_reconnect_preserves_reconciled_profile_stem() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_flags();
+
+        register_reconnected_launch(4242, "106_OldName".to_string(), 1);
+        update_stem("106_OldName", "106_NewName");
+        register_reconnected_launch(4242, "106_OldName".to_string(), 2);
+
+        assert_eq!(running_profiles(), vec!["106_NewName"]);
+        assert!(!unregister_reconnected_launch(4242, 1));
+        assert!(has_tracked_game());
+        assert!(unregister_reconnected_launch(4242, 2));
     }
 
     #[test]

@@ -23,6 +23,9 @@ const PROFILE_SCAN_FAST_PHASE: Duration = Duration::from_secs(180);
 /// Interval for re-checking the Scopely update API while Daystrom is running.
 const API_RECHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
+/// Maximum time to wait for a running mod to restore its Daystrom launch identity.
+const GAME_ORIGIN_RECONNECT_GRACE: Duration = Duration::from_secs(10);
+
 /// Flag indicating whether a monitor thread is currently active.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -64,6 +67,19 @@ enum MonitorAction {
     RecheckUpdateApi,
 }
 
+/// Current relationship between a running game process and Daystrom.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GameOrigin {
+    /// No game process is running.
+    None,
+    /// A running game may still restore its Daystrom identity through the WebSocket.
+    Pending,
+    /// The running game has confirmed that Daystrom launched it.
+    Daystrom,
+    /// The running game did not provide a Daystrom launch identity in time.
+    External,
+}
+
 /// Encapsulates the monitor's mutable state between ticks.
 ///
 /// All decision logic lives in [`tick`](MonitorState::tick), making it testable without a Tauri
@@ -73,6 +89,8 @@ struct MonitorState {
     prev_launcher: bool,
     last_api_check: Instant,
     last_seen_remote_version: Option<u32>,
+    game_origin_reconnect_deadline: Option<Instant>,
+    daystrom_origin_confirmed: bool,
 }
 
 impl MonitorState {
@@ -86,7 +104,43 @@ impl MonitorState {
             prev_launcher: false,
             last_api_check: Instant::now(),
             last_seen_remote_version: initial_remote_version,
+            game_origin_reconnect_deadline: None,
+            daystrom_origin_confirmed: false,
         }
+    }
+
+    /// Start origin recovery when Daystrom finds a game already running during startup.
+    fn begin_game_origin_recovery(&mut self, game_running: bool, now: Instant) {
+        if game_running {
+            self.game_origin_reconnect_deadline = Some(now + GAME_ORIGIN_RECONNECT_GRACE);
+        }
+    }
+
+    /// Classify the running game without reporting it as external during a reconnect window.
+    fn classify_game_origin(&mut self, game_running: bool, started_by_daystrom: bool, now: Instant) -> GameOrigin {
+        if !game_running {
+            self.game_origin_reconnect_deadline = None;
+            self.daystrom_origin_confirmed = false;
+            return GameOrigin::None;
+        }
+
+        if started_by_daystrom {
+            self.game_origin_reconnect_deadline = None;
+            self.daystrom_origin_confirmed = true;
+            return GameOrigin::Daystrom;
+        }
+
+        if self.daystrom_origin_confirmed && self.game_origin_reconnect_deadline.is_none() {
+            self.game_origin_reconnect_deadline = Some(now + GAME_ORIGIN_RECONNECT_GRACE);
+        }
+
+        if self.game_origin_reconnect_deadline.is_some_and(|deadline| now < deadline) {
+            return GameOrigin::Pending;
+        }
+
+        self.game_origin_reconnect_deadline = None;
+        self.daystrom_origin_confirmed = false;
+        GameOrigin::External
     }
 
     /// Evaluate one monitoring cycle and return the actions to execute.
@@ -164,17 +218,22 @@ fn run_loop(app: tauri::AppHandle) {
     // Initial full detection populates the store
     let status = commands::get_game_status(app.clone());
     let installed = status.installed;
+    let initial_game_running = status.game_running;
     crate::game_state::update(&app, |s| *s = status);
 
     // Profiles are local startup data and must not wait for the remote update check.
     let profiles = crate::profile_state::scan_profiles();
-    crate::profile_state::update(&app, |s| s.profiles = profiles);
+    crate::profile_state::update(&app, |s| {
+        s.profiles = profiles;
+        s.game_origin_pending = initial_game_running && !crate::process_origin::is_game_started();
+    });
 
     if installed {
         commands::update_check_into_store(&app);
     }
 
     let mut state = MonitorState::new(crate::game_state::get().remote_version);
+    state.begin_game_origin_recovery(initial_game_running, Instant::now());
     let mut last_profile_scan = Instant::now();
     let start_time = Instant::now();
 
@@ -266,10 +325,11 @@ fn run_loop(app: tauri::AppHandle) {
             }
         }
         let running = crate::process_origin::running_profiles();
-        let external = game && running.is_empty() && !crate::process_origin::is_game_started();
+        let origin = state.classify_game_origin(game, crate::process_origin::is_game_started(), Instant::now());
         crate::profile_state::update(&app, |s| {
             s.running_profiles = running;
-            s.external_game_running = external;
+            s.external_game_running = origin == GameOrigin::External;
+            s.game_origin_pending = origin == GameOrigin::Pending;
         });
 
         thread::sleep(POLL_INTERVAL);
@@ -487,6 +547,49 @@ mod tests {
         // Timer expired without launcher: recheck still runs.
         let actions = state.tick(true, false, true);
         assert!(actions.contains(&MonitorAction::RecheckUpdateApi));
+    }
+
+    #[test]
+    fn startup_game_waits_for_origin_recovery_before_becoming_external() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+        state.begin_game_origin_recovery(true, now);
+
+        assert_eq!(state.classify_game_origin(true, false, now), GameOrigin::Pending);
+        assert_eq!(
+            state.classify_game_origin(true, false, now + GAME_ORIGIN_RECONNECT_GRACE),
+            GameOrigin::External
+        );
+    }
+
+    #[test]
+    fn reconnect_hello_resolves_pending_origin_immediately() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+        state.begin_game_origin_recovery(true, now);
+
+        assert_eq!(state.classify_game_origin(true, true, now), GameOrigin::Daystrom);
+    }
+
+    #[test]
+    fn confirmed_daystrom_game_gets_a_new_grace_period_after_disconnect() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+
+        assert_eq!(state.classify_game_origin(true, true, now), GameOrigin::Daystrom);
+        assert_eq!(state.classify_game_origin(true, false, now), GameOrigin::Pending);
+        assert_eq!(
+            state.classify_game_origin(true, true, now + Duration::from_secs(1)),
+            GameOrigin::Daystrom
+        );
+    }
+
+    #[test]
+    fn game_started_after_daystrom_without_identity_is_external_immediately() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+
+        assert_eq!(state.classify_game_origin(true, false, now), GameOrigin::External);
     }
 
     #[test]
