@@ -36,6 +36,7 @@ function makeProfileState(name: string): ProfileState {
     }],
     running_profiles: [],
     external_game_running: false,
+    game_origin_pending: false,
   };
 }
 

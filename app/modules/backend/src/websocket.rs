@@ -7,11 +7,12 @@
 //!
 //! Messages use a JSON envelope: `{"type": "...", "payload": {...}}`.
 
-use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,9 @@ use crate::use_log;
 
 use_log!("WebSocket");
 
+/// How often the backend repairs a missing port discovery file.
+const PORT_FILE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
 // ---- Message schema --------------------------------------------------------
 
 /// JSON envelope for all WebSocket messages.
@@ -39,6 +43,15 @@ pub struct WsMessage {
     pub payload: serde_json::Value,
 }
 
+/// Identity announced by a Daystrom-injected mod after each WebSocket connection.
+#[derive(Debug, Deserialize, PartialEq)]
+struct ClientHello {
+    /// Operating-system process identifier of the game.
+    pid: u32,
+    /// Profile stem inherited through `DAYSTROM_PROFILE`.
+    profile: String,
+}
+
 // ---- Server state ----------------------------------------------------------
 
 /// Broadcast channel for outgoing messages (Daystrom -> Mod).
@@ -46,13 +59,8 @@ pub struct WsMessage {
 /// Any part of the backend can call [`send`] to push a message to all connected clients.
 static BROADCAST: std::sync::OnceLock<broadcast::Sender<String>> = std::sync::OnceLock::new();
 
-/// Port file path, stored so we can clean it up on exit.
-static PORT_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-
-/// Connected clients, keyed by peer address.
-///
-/// Used for logging and future per-client targeting.
-type ClientMap = Arc<Mutex<HashMap<SocketAddr, String>>>;
+/// Monotonic identifier used to make reconnect clean-up connection-specific.
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 // ---- Public API ------------------------------------------------------------
 
@@ -83,16 +91,6 @@ pub fn start(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(run_server(app));
 }
 
-/// Remove the port discovery file.
-///
-/// Called during app shutdown so stale port files don't confuse the mod.
-pub fn cleanup() {
-    if let Some(path) = PORT_FILE.get().filter(|path| path.exists()) {
-        let _ = fs::remove_file(path);
-        log_debug!("Removed port file {}", path.display());
-    }
-}
-
 // ---- Settings bridge -------------------------------------------------------
 
 /// Forward settings change events to all connected mod instances.
@@ -119,13 +117,40 @@ fn data_dir() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join(env!("TAURI_IDENTIFIER")))
 }
 
-/// Write the port number to the discovery file.
+/// Write the current WebSocket port to the shared discovery file.
+///
+/// The file deliberately remains after shutdown. A stopped backend simply refuses the connection,
+/// while a replacement backend overwrites the file with its new port. Avoiding shutdown deletion
+/// prevents an old process from removing a newer backend's discovery information.
 fn write_port_file(port: u16) -> Result<PathBuf, String> {
     let dir = data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data directory: {e}"))?;
     let path = dir.join("ws.port");
     fs::write(&path, port.to_string()).map_err(|e| format!("Failed to write port file: {e}"))?;
     Ok(path)
+}
+
+/// Restore the discovery file when an older backend removed it during an overlapping restart.
+fn restore_missing_port_file(path: &std::path::Path, port: u16) -> Result<bool, String> {
+    match fs::metadata(path) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Failed to inspect port file: {error}")),
+    }
+    fs::write(path, port.to_string()).map_err(|e| format!("Failed to write port file: {e}"))?;
+    Ok(true)
+}
+
+/// Keep the discovery file available when an older backend exits during a development restart.
+async fn maintain_port_file(path: PathBuf, port: u16) {
+    loop {
+        tokio::time::sleep(PORT_FILE_REFRESH_INTERVAL).await;
+        match restore_missing_port_file(&path, port) {
+            Ok(true) => log_debug!("Restored WebSocket port file {}", path.display()),
+            Ok(false) => {}
+            Err(error) => log_warn!("Failed to refresh WebSocket port file: {error}"),
+        }
+    }
 }
 
 /// Main server loop: bind, write a port file, accept connections.
@@ -152,7 +177,10 @@ async fn run_server(app: tauri::AppHandle) {
 
     match write_port_file(addr.port()) {
         Ok(path) => {
-            let _ = PORT_FILE.set(path);
+            log_debug!("Wrote WebSocket port file {}", path.display());
+            if tauri::is_dev() {
+                tauri::async_runtime::spawn(maintain_port_file(path, addr.port()));
+            }
             log_info!("Server listening on {addr}");
         }
         Err(e) => {
@@ -168,8 +196,6 @@ async fn run_server(app: tauri::AppHandle) {
 
     tauri::async_runtime::spawn(forward_settings_events());
 
-    let clients: ClientMap = Arc::new(Mutex::new(HashMap::new()));
-
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(conn) => conn,
@@ -181,9 +207,7 @@ async fn run_server(app: tauri::AppHandle) {
 
         let tx = tx.clone();
         let app = app.clone();
-        let clients = clients.clone();
-
-        tauri::async_runtime::spawn(handle_client(stream, peer, tx, app, clients));
+        tauri::async_runtime::spawn(handle_client(stream, peer, tx, app));
     }
 }
 
@@ -193,7 +217,6 @@ async fn handle_client(
     peer: SocketAddr,
     tx: broadcast::Sender<String>,
     app: tauri::AppHandle,
-    clients: ClientMap,
 ) {
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
@@ -204,50 +227,104 @@ async fn handle_client(
     };
 
     log_info!("Client connected: {peer}");
-    clients.lock().await.insert(peer, String::new());
+    let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
 
     let (mut sink, mut source) = ws_stream.split();
     let mut rx = tx.subscribe();
+    let client_pid = Arc::new(Mutex::new(None::<u32>));
 
     // Incoming: mod -> Daystrom
     let app_clone = app.clone();
-    let recv_task = tauri::async_runtime::spawn(async move {
+    let recv_client_pid = client_pid.clone();
+    let recv_task = async move {
         while let Some(Ok(msg)) = source.next().await {
-            if let Message::Text(text) = msg {
-                handle_incoming(&app_clone, &text);
+            if let Message::Text(text) = msg
+                && let Some(hello) = handle_incoming(&app_clone, &text)
+            {
+                let mut registered_pid = recv_client_pid.lock().await;
+                if registered_pid.is_some_and(|pid| pid != hello.pid) {
+                    log_warn!("Client {peer} attempted to change its game PID");
+                    continue;
+                }
+                crate::process_origin::register_reconnected_launch(hello.pid, hello.profile.clone(), connection_id);
+                crate::game_state::update(&app_clone, |state| {
+                    state.game_started_by_us = true;
+                });
+                let running_profiles = crate::process_origin::running_profiles();
+                crate::profile_state::update(&app_clone, |state| {
+                    state.running_profiles = running_profiles;
+                    state.external_game_running = false;
+                    state.game_origin_pending = false;
+                });
+                *registered_pid = Some(hello.pid);
+                log_info!("Restored Daystrom game tracking: PID {}, profile {}", hello.pid, hello.profile);
             }
         }
-    });
+    };
 
     // Outgoing: Daystrom -> mod (via a broadcast channel)
-    let send_task = tauri::async_runtime::spawn(async move {
+    let send_task = async move {
         while let Ok(text) = rx.recv().await {
             if sink.send(Message::text(text)).await.is_err() {
                 break;
             }
         }
-    });
+    };
 
-    let _ = tokio::join!(recv_task, send_task);
+    tokio::pin!(recv_task, send_task);
+    tokio::select! {
+        () = &mut recv_task => {}
+        () = &mut send_task => {}
+    }
 
-    clients.lock().await.remove(&peer);
+    if let Some(pid) = *client_pid.lock().await
+        && crate::process_origin::unregister_reconnected_launch(pid, connection_id)
+        && !crate::process_origin::has_tracked_game()
+    {
+        crate::process_origin::clear_game_started();
+        crate::game_state::update(&app, |state| {
+            state.game_started_by_us = false;
+        });
+    }
     log_info!("Client disconnected: {peer}");
+}
+
+/// Parse and validate a mod reconnect identity.
+fn parse_client_hello(payload: serde_json::Value) -> Result<ClientHello, String> {
+    let hello: ClientHello = serde_json::from_value(payload).map_err(|error| error.to_string())?;
+    if hello.pid == 0 {
+        return Err("game PID must not be zero".to_string());
+    }
+    if hello.profile.trim().is_empty() || hello.profile.len() > 255 {
+        return Err("game profile must contain between 1 and 255 bytes".to_string());
+    }
+    Ok(hello)
 }
 
 /// Process an incoming JSON message from the mod.
 ///
 /// Some message types (e.g. `settings.request`) are handled directly, all others are emitted as Tauri events,
 /// so other backend modules and the frontend can react.
-fn handle_incoming(app: &tauri::AppHandle, text: &str) {
+fn handle_incoming(app: &tauri::AppHandle, text: &str) -> Option<ClientHello> {
     let msg: WsMessage = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
             log_error!("Invalid message: {e}");
-            return;
+            return None;
         }
     };
 
     log_debug!("Received: type={} payload={}", msg.msg_type, msg.payload);
+
+    if msg.msg_type == "client.hello" {
+        return match parse_client_hello(msg.payload) {
+            Ok(hello) => Some(hello),
+            Err(error) => {
+                log_warn!("Invalid client.hello message: {error}");
+                None
+            }
+        };
+    }
 
     // Settings request: respond with current game settings as a full sync.
     if msg.msg_type == "settings.request" {
@@ -258,12 +335,13 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) {
             }),
             Err(e) => log_error!("Failed to serialise settings: {e}"),
         }
-        return;
+        return None;
     }
 
     // Everything else: emit as Tauri event.
     let event_name = format!("ws:{}", msg.msg_type);
     let _ = app.emit(&event_name, msg.payload);
+    None
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -312,20 +390,42 @@ mod tests {
         assert!(serde_json::from_str::<WsMessage>(json).is_err());
     }
 
+    #[test]
+    fn client_hello_accepts_game_identity() {
+        let hello = parse_client_hello(serde_json::json!({
+            "pid": 4242,
+            "profile": "106_Nabor",
+        }))
+        .unwrap();
+
+        assert_eq!(
+            hello,
+            ClientHello {
+                pid: 4242,
+                profile: "106_Nabor".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn client_hello_rejects_missing_profile() {
+        assert!(parse_client_hello(serde_json::json!({"pid": 4242, "profile": ""})).is_err());
+    }
+
     // -- Port file --
 
     #[test]
-    fn port_file_write_and_read() {
-        let dir = std::env::temp_dir().join("daystrom-ws-test-port");
+    fn running_backend_restores_removed_port_file() {
+        let dir = std::env::temp_dir().join(format!("daystrom-ws-test-port-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
         let path = dir.join("ws.port");
-        fs::write(&path, 54321_u16.to_string()).unwrap();
+        fs::write(&path, "54321").unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(restore_missing_port_file(&path, 54322).unwrap());
 
-        let content = fs::read_to_string(&path).unwrap();
-        let port: u16 = content.parse().unwrap();
-        assert_eq!(port, 54321);
+        assert_eq!(fs::read_to_string(path).unwrap(), "54322");
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -365,7 +465,7 @@ mod tests {
         tx.send(serde_json::to_string(&msg).unwrap()).unwrap();
 
         // Client should receive it
-        let received = tokio::time::timeout(std::time::Duration::from_secs(2), source.next())
+        let received = tokio::time::timeout(Duration::from_secs(2), source.next())
             .await
             .expect("timeout waiting for message")
             .unwrap()
@@ -411,7 +511,7 @@ mod tests {
         sink.send(Message::text(serde_json::to_string(&msg).unwrap())).await.unwrap();
 
         // Verify the server received it
-        let received = tokio::time::timeout(std::time::Duration::from_secs(2), result_rx)
+        let received = tokio::time::timeout(Duration::from_secs(2), result_rx)
             .await
             .expect("timeout")
             .unwrap();

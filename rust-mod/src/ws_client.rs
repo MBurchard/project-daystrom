@@ -33,19 +33,34 @@ struct WsMessage {
 /// Channel sender for outgoing messages, accessible from sync hook code.
 static SENDER: OnceLock<mpsc::UnboundedSender<String>> = OnceLock::new();
 
+/// Serialize one protocol message for the WebSocket transport.
+///
+/// Returns `None` only when the JSON payload cannot be serialized.
+fn serialize_message(msg_type: &str, payload: serde_json::Value) -> Option<String> {
+    serde_json::to_string(&serde_json::json!({
+        "type": msg_type,
+        "payload": payload,
+    }))
+    .ok()
+}
+
+/// Build the identity payload used to restore Daystrom launch tracking after reconnecting.
+fn client_hello_payload(profile: &str) -> serde_json::Value {
+    serde_json::json!({
+        "pid": std::process::id(),
+        "profile": profile,
+    })
+}
+
 /// Send a JSON message to Daystrom via WebSocket.
 ///
 /// Safe to call from any thread. Messages are queued if the connection is not yet established.
 /// Returns silently if the client has not been initialized or the channel is closed.
 pub fn send(msg_type: &str, payload: serde_json::Value) {
-    if let Some(tx) = SENDER.get() {
-        let msg = serde_json::json!({
-            "type": msg_type,
-            "payload": payload,
-        });
-        if let Ok(json) = serde_json::to_string(&msg) {
-            let _ = tx.send(json);
-        }
+    if let Some(tx) = SENDER.get()
+        && let Some(json) = serialize_message(msg_type, payload)
+    {
+        let _ = tx.send(json);
     }
 }
 
@@ -81,6 +96,11 @@ fn port_file_path() -> Option<std::path::PathBuf> {
 /// Read the port number from the discovery file written by Daystrom.
 fn read_port() -> Option<u16> {
     let path = port_file_path()?;
+    read_port_from(&path)
+}
+
+/// Read a WebSocket port from a discovery file.
+fn read_port_from(path: &std::path::Path) -> Option<u16> {
     let content = std::fs::read_to_string(path).ok()?;
     content.trim().parse().ok()
 }
@@ -91,10 +111,10 @@ fn read_port() -> Option<u16> {
 ///
 /// Runs indefinitely.
 /// On connection, requests the current settings from Daystrom.
-/// When the connection drops or Daystrom is not running, waits with exponential backoff (1s to 30s) before retrying.
+/// When the connection drops or Daystrom is not running, waits with exponential backoff (1s to 5s) before retrying.
 async fn client_loop(mut rx: mpsc::UnboundedReceiver<String>) {
     let mut backoff = Duration::from_secs(1);
-    let max_backoff = Duration::from_secs(30);
+    let max_backoff = Duration::from_secs(5);
 
     loop {
         let port = match read_port() {
@@ -117,15 +137,32 @@ async fn client_loop(mut rx: mpsc::UnboundedReceiver<String>) {
 
                 let (mut sink, mut source) = ws.split();
 
-                // Request current settings on connection
-                let request = serde_json::json!({
-                    "type": "settings.request",
-                    "payload": {},
-                });
-                if let Ok(json) = serde_json::to_string(&request)
-                    && sink.send(Message::text(json)).await.is_err()
+                // Restore process identity, request settings and re-announce the observed player state.
+                let mut initial_messages = Vec::with_capacity(5);
+                let profile = std::env::var(crate::logging::PROFILE_ENV).unwrap_or_default();
+                if !profile.is_empty()
+                    && let Some(hello) = serialize_message("client.hello", client_hello_payload(&profile))
                 {
-                    warn!(target: "WsClient", "Connection lost during settings request");
+                    initial_messages.push(hello);
+                }
+                if let Some(request) = serialize_message("settings.request", serde_json::json!({})) {
+                    initial_messages.push(request);
+                }
+                initial_messages.extend(
+                    crate::game_state::snapshot_updates()
+                        .into_iter()
+                        .filter_map(|payload| serialize_message("player.update", payload)),
+                );
+
+                let mut initial_sync_failed = false;
+                for message in initial_messages {
+                    if sink.send(Message::text(message)).await.is_err() {
+                        initial_sync_failed = true;
+                        break;
+                    }
+                }
+                if initial_sync_failed {
+                    warn!(target: "WsClient", "Connection lost during initial synchronization");
                     continue;
                 }
 
@@ -206,5 +243,57 @@ fn handle_incoming(text: &str) {
         other => {
             debug!(target: "WsClient", "Unknown message type: {other}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a test-specific temporary directory for port discovery tests.
+    ///
+    /// `name` distinguishes tests that the Rust runner executes concurrently.
+    fn test_directory(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("daystrom-mod-ws-test-{}-{name}", std::process::id()))
+    }
+
+    /// Read a numeric port from the discovery file.
+    #[test]
+    fn reads_numeric_port_file() {
+        let dir = test_directory("numeric");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pointer = dir.join("ws.port");
+        std::fs::write(&pointer, "54321").unwrap();
+
+        assert_eq!(read_port_from(&pointer), Some(54321));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Reject a non-numeric discovery port.
+    #[test]
+    fn rejects_non_numeric_port_file() {
+        let dir = test_directory("non-numeric");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pointer = dir.join("ws.port");
+        std::fs::write(&pointer, "not-a-port").unwrap();
+
+        assert_eq!(read_port_from(&pointer), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Include the current game PID and inherited profile in the reconnect identity.
+    #[test]
+    fn client_hello_identifies_daystrom_launch() {
+        assert_eq!(
+            client_hello_payload("106_Nabor"),
+            serde_json::json!({
+                "pid": std::process::id(),
+                "profile": "106_Nabor",
+            })
+        );
     }
 }
