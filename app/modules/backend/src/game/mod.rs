@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tauri::Manager;
 
 use crate::use_log;
@@ -38,11 +39,13 @@ pub(crate) fn silent_command(program: &str) -> Command {
 }
 
 /// INI key (with `=` suffix) that holds the game installation directory.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 const GAME_PATH_KEY: &str = "152033..GAME_PATH=";
 
 /// Extract the GAME_PATH value from the launcher INI file.
 ///
 /// Hand-rolled because rust-ini chokes on the binary REGION_INFO blob that the Scopely launcher writes.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn read_game_path(content: &str) -> Option<&str> {
     for line in content.lines() {
         if let Some(value) = line.strip_prefix(GAME_PATH_KEY) {
@@ -89,6 +92,7 @@ use_log!("Game");
 /// Location of an STFC installation on the local machine.
 pub struct GameInfo {
     /// Root directory of the game installation (the `GAME_PATH` from the Scopely launcher settings).
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub install_dir: PathBuf,
     /// Full path to the game's main executable binary.
     pub executable: PathBuf,
@@ -116,6 +120,7 @@ pub fn detect() -> Option<GameInfo> {
     let (install_dir, executable) = base?;
     let installed_version = version::read_installed(&install_dir);
     Some(GameInfo {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         install_dir,
         executable,
         installed_version,
@@ -197,10 +202,12 @@ pub fn is_launcher_running() -> bool {
 }
 
 /// Base name of the mod library (without platform prefix/suffix).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const MOD_LIBRARY_NAME: &str = "stfc-mod";
 
 /// Locate the bundled mod library in the app's resource directory.
 /// Returns `None` if the resource directory is unavailable or the library does not exist.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     let resource_dir = app.path().resource_dir().ok()?;
 
@@ -208,11 +215,13 @@ pub fn find_mod_library(app: &tauri::AppHandle) -> Option<PathBuf> {
     let library = resource_dir.join(format!("mod/lib{MOD_LIBRARY_NAME}.dylib"));
     #[cfg(target_os = "windows")]
     let library = resource_dir.join(format!("mod/{MOD_LIBRARY_NAME}.dll"));
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    return None;
-
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     if library.exists() { Some(library) } else { None }
+}
+
+/// Return no mod library on platforms where game launching is unsupported.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn find_mod_library(_app: &tauri::AppHandle) -> Option<PathBuf> {
+    None
 }
 
 /// Compute the SHA-256 digest of a file by streaming it in 8 KB chunks.

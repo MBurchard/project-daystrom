@@ -59,6 +59,7 @@ const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
 const COMMANDS: Record<string, () => void> = {
   lint,
   'lint:ci': lintCi,
+  'lint:native:ci': lintNativeCi,
   'lint:fix': lintFix,
   'lint:app': lintApp,
   'lint:app:fix': lintAppFix,
@@ -312,6 +313,14 @@ function lint(): void {
 function lintCi(): void {
   lintModCi();
   lintAppCi();
+}
+
+/**
+ * Run strict Rust lint checks for the native platform without repeating frontend linting.
+ */
+function lintNativeCi(): void {
+  lintModCi();
+  lintAppBackendCi();
 }
 
 /**
