@@ -178,6 +178,50 @@ pub fn show_game_update(app: &tauri::AppHandle, version: u32) {
     }
 }
 
+/// Notify the user about a Daystrom release discovered by a periodic background check.
+///
+/// Clicking the notification only brings Daystrom to the foreground. It never downloads or
+/// installs the release without a separate user action.
+pub fn show_daystrom_update(app: &tauri::AppHandle, version: &str) {
+    let app = app.clone();
+    let version = version.to_string();
+    let spawn_result = thread::Builder::new()
+        .name("daystrom-app-update-notification".into())
+        .spawn(move || {
+            if !notification_permission_granted() {
+                return;
+            }
+
+            let mut notification = Notification::new();
+            notification
+                .summary("Project Daystrom update available")
+                .body(&format!("Version {version} is ready. Open Daystrom to review the update."));
+            configure_timeout(&mut notification);
+            #[cfg(target_os = "windows")]
+            configure_windows_identity(&mut notification, &app);
+
+            let handle = match notification.show() {
+                Ok(handle) => handle,
+                Err(error) => {
+                    log_warn!("Failed to show Daystrom update notification: {error}");
+                    return;
+                }
+            };
+
+            if let Err(error) = handle.wait_for_response(move |response: &NotificationResponse| {
+                if should_focus_window(response) {
+                    focus_main_window(&app);
+                }
+            }) {
+                log_warn!("Failed to receive Daystrom update notification response: {error}");
+            }
+        });
+
+    if let Err(error) = spawn_result {
+        log_warn!("Failed to start Daystrom update notification worker: {error}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use notify_rust::CloseReason;

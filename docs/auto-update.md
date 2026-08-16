@@ -77,7 +77,11 @@ The intended cadence is:
 
 Development builds do not install production updates.
 
+Debug builds may override the discovery manifest with `DAYSTROM_UPDATE_ENDPOINT` and shorten the periodic interval with `DAYSTROM_UPDATE_INTERVAL_SECONDS` for local UI, notification, and failure-path testing. Release builds ignore both environment variables, always use the configured stable GitHub endpoint, and retain the six-hour interval.
+
 When an update is available, Daystrom shows it in the main window and may issue a native notification. A notification click brings Daystrom to the foreground. It never closes the game, starts the Scopely launcher, or installs the update without confirmation.
+
+An update found during the startup check is shown only in the main window. A native notification is reserved for a new version first discovered by a later periodic check. Selecting `Later` dismisses that version for the current process; restarting Daystrom or explicitly checking again shows it again.
 
 The user can choose `Install update` or `Later`. There is no forced background installation in the initial implementation. Download progress and actionable errors remain visible in Daystrom.
 
