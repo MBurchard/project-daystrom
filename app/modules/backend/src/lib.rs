@@ -13,6 +13,7 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod macos_hooks;
 mod monitor;
+mod notifications;
 mod process_origin;
 mod profile_state;
 mod settings;
