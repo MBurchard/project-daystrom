@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SettingsView from '@app/components/SettingsView.vue';
+import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
 import {useGameState} from '@app/composables/useGameState';
 import {useProfileState} from '@app/composables/useProfileState';
 import {useSettings} from '@app/composables/useSettings';
@@ -35,14 +36,24 @@ const {
 
 const {init: initSettings} = useSettings();
 
+const {
+  status: daystromUpdate,
+  check: checkDaystromUpdate,
+  dismiss: dismissDaystromUpdate,
+  init: initDaystromUpdate,
+  destroy: destroyDaystromUpdate,
+} = useDaystromUpdate();
+
 onMounted(() => {
   initGameState();
   initProfileState();
   initSettings();
+  initDaystromUpdate();
 });
 onUnmounted(() => {
   destroyGameState();
   destroyProfileState();
+  destroyDaystromUpdate();
 });
 </script>
 
@@ -58,6 +69,26 @@ onUnmounted(() => {
     <SettingsView v-if="showSettings" @close="showSettings = false" />
 
     <template v-else>
+      <div class="daystrom-update-controls">
+        <button :disabled="daystromUpdate.phase === 'checking'" @click="checkDaystromUpdate">
+          Check for Daystrom updates
+        </button>
+        <span v-if="daystromUpdate.phase === 'checking'">Checking…</span>
+        <span v-else-if="daystromUpdate.phase === 'up_to_date'" class="update-ok">Daystrom is up to date.</span>
+        <span v-else-if="daystromUpdate.error" class="error">{{ daystromUpdate.error }}</span>
+      </div>
+
+      <section v-if="daystromUpdate.phase === 'available' && !daystromUpdate.dismissed"
+          class="daystrom-update-banner">
+        <h2>Project Daystrom {{ daystromUpdate.version }} is available</h2>
+        <p v-if="daystromUpdate.notes" class="release-notes">
+          {{ daystromUpdate.notes }}
+        </p>
+        <button @click="dismissDaystromUpdate">
+          Later
+        </button>
+      </section>
+
       <p v-if="error">
         Failed to load game status: {{ error }}
       </p>
@@ -262,6 +293,41 @@ body {
 .info-message {
   color: #2196f3;
   margin-top: 0.5rem;
+}
+
+.daystrom-update-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.daystrom-update-controls .error {
+  margin: 0;
+}
+
+.update-ok {
+  color: #4caf50;
+}
+
+.daystrom-update-banner {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #ff9800;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, #ff9800 12%, transparent);
+}
+
+.daystrom-update-banner h2 {
+  margin-top: 0;
+}
+
+.release-notes {
+  max-height: 12rem;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  user-select: text;
 }
 
 h1 {

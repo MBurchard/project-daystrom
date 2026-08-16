@@ -72,14 +72,7 @@ pub fn get() -> ProfileState {
 
 /// Update the profile state and emit a `profile-status` event if anything changed.
 pub fn update(app: &tauri::AppHandle, updater: impl FnOnce(&mut ProfileState)) {
-    let changed = {
-        let mut state = STATE.lock().unwrap();
-        let old = state.clone();
-        updater(&mut state);
-        if *state != old { Some(state.clone()) } else { None }
-    };
-
-    if let Some(payload) = changed {
+    if let Some(payload) = crate::state_update::update_if_changed(&STATE, updater) {
         log_debug!("Profile state changed, emitting to frontend");
         let _ = app.emit("profile-status", payload);
     }

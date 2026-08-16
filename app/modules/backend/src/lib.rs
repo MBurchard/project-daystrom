@@ -7,6 +7,7 @@ use tauri::{Emitter, Listener, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 mod commands;
+mod daystrom_update;
 mod game;
 mod game_state;
 mod logging;
@@ -17,9 +18,11 @@ mod notifications;
 mod process_origin;
 mod profile_state;
 mod settings;
+mod state_update;
 mod websocket;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
+use daystrom_update::{check_for_daystrom_update, dismiss_daystrom_update, get_cached_daystrom_update_status};
 use profile_state::get_cached_profile_state;
 use settings::{get_game_settings, set_game_settings};
 
@@ -259,6 +262,7 @@ pub fn run() {
             }
 
             monitor::start(app.handle().clone());
+            daystrom_update::start(app.handle().clone());
             websocket::start(app.handle().clone());
 
             // ---- System Tray --------------------------------------------------------
@@ -321,6 +325,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_cached_game_status,
+            get_cached_daystrom_update_status,
             get_game_settings,
             set_game_settings,
             get_cached_profile_state,
@@ -328,6 +333,8 @@ pub fn run() {
             prepare_mod,
             remove_mod,
             launch_game,
+            check_for_daystrom_update,
+            dismiss_daystrom_update,
             complete_shutdown,
         ])
         .on_window_event(|window, event| {
