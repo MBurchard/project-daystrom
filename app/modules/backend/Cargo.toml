@@ -3,6 +3,11 @@ name = "daystrom"
 version = "0.9.0"
 edition = "2024"
 
+[[example]]
+name = "verify-update-signature"
+path = "examples/verify-update-signature.rs"
+test = true
+
 [lib]
 name = "daystrom_lib"
 crate-type = [
@@ -16,12 +21,15 @@ serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22.1"
 tauri = { version = "2.11.5", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = { version = "2.9.0", features = ["colored"] }
+tauri-plugin-updater = "2.10.1"
 toml = "1"
 colored = "3"
 log = "0.4"
+minisign-verify = "0.2.5"
 notify-rust = { version = "4.18", features = ["preview-macos-un"] }
 time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }
 serde = { version = "1", features = ["derive"] }

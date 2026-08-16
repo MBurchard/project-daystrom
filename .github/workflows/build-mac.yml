@@ -3,6 +3,16 @@ name: Build macOS App
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: Exact source revision to build
+        required: false
+        type: string
+      updater:
+        description: Build signed updater artifacts for a release draft
+        default: false
+        required: false
+        type: boolean
 
 concurrency:
   group: build-mac-${{ github.ref }}
@@ -20,6 +30,27 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Validate release signing secrets
+        if: inputs.updater
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for NAME in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_ID \
+            APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            if [ -z "${!NAME}" ]; then
+              echo "Required release secret $NAME is missing" >&2
+              exit 1
+            fi
+          done
 
       - name: Enable Corepack
         run: corepack enable
@@ -45,7 +76,7 @@ jobs:
             app/modules/backend -> target
             rust-mod -> target
 
-      # Code signing (optional, requires APPLE_CERTIFICATE_BASE64 and related secrets)
+      # Standalone builds may be unsigned; updater release builds validate these secrets above.
       - name: Import Apple signing certificate
         if: env.HAS_APPLE_CERT == 'true'
         env:
@@ -90,11 +121,34 @@ jobs:
         run: pnpm test:app:backend
 
       - name: Build universal macOS app
+        if: ${{ !inputs.updater }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm build:tauri:mac-universal
+
+      - name: Build universal macOS app and updater
+        if: inputs.updater
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm build:tauri:mac-universal:updater
+
+      - name: Verify macOS updater signature
+        if: inputs.updater
+        shell: bash
+        run: |
+          shopt -s nullglob
+          archives=(app/modules/backend/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "Expected exactly one macOS updater archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          pnpm verify:update-signature "${archives[0]}" "${archives[0]}.sig"
 
       - name: Clean up signing keychain
         if: always() && env.HAS_APPLE_CERT == 'true'
@@ -105,5 +159,16 @@ jobs:
         with:
           name: Project-Daystrom-macOS-universal
           path: app/modules/backend/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload macOS updater archive
+        if: inputs.updater
+        uses: actions/upload-artifact@v7
+        with:
+          name: Project-Daystrom-macOS-updater
+          path: |
+            app/modules/backend/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            app/modules/backend/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
           retention-days: 30

@@ -79,12 +79,15 @@ const COMMANDS: Record<string, () => void> = {
   'test:mod:coverage': testModCoverage,
   'check:mod:dump': checkModDump,
   'release:verify': verifyRelease,
+  'verify:update-signature': verifyUpdateSignature,
   build: buildApp,
   'build:mod': buildMod,
   'build:mod:mac-universal': buildModMacUniversal,
   'build:app': buildApp,
   'build:tauri:mac-universal': buildTauriMacUniversal,
+  'build:tauri:mac-universal:updater': buildTauriMacUniversalUpdater,
   'build:tauri:windows': buildTauriWindows,
+  'build:tauri:windows:updater': buildTauriWindowsUpdater,
   icons,
   dev,
 };
@@ -365,7 +368,7 @@ function typecheck(): void {
  */
 function testTooling(): void {
   log.info('Running tooling tests...');
-  execSync('pnpm exec vitest run eslint-rules', {cwd: ROOT, stdio: 'inherit'});
+  execSync('pnpm exec vitest run eslint-rules scripts', {cwd: ROOT, stdio: 'inherit'});
 }
 
 /**
@@ -593,6 +596,20 @@ function buildTauriMacUniversal(): void {
 }
 
 /**
+ * Build the universal macOS bundle and its signed Tauri updater artifact.
+ *
+ * Used only by release CI after the updater signing credentials have been configured.
+ */
+function buildTauriMacUniversalUpdater(): void {
+  if (process.platform !== 'darwin') {
+    log.error('build:tauri:mac-universal:updater is only supported on macOS');
+    process.exit(1);
+  }
+  log.info('Building Project Daystrom app and updater artifact (universal macOS)...');
+  tauri('build --target universal-apple-darwin --config modules/backend/tauri.updater.conf.json');
+}
+
+/**
  * Build only the Tauri Windows NSIS bundle (no mod build).
  *
  * Used in CI where the mod has already been built in a prior step.
@@ -604,6 +621,49 @@ function buildTauriWindows(): void {
   }
   log.info('Building Project Daystrom app (Windows NSIS)...');
   tauri('build --bundles nsis');
+}
+
+/**
+ * Build the Windows NSIS bundle and its signed Tauri updater artifact.
+ *
+ * Used only by release CI after the updater signing credentials have been configured.
+ */
+function buildTauriWindowsUpdater(): void {
+  if (process.platform !== 'win32') {
+    log.error('build:tauri:windows:updater is only supported on Windows');
+    process.exit(1);
+  }
+  log.info('Building Project Daystrom app and updater artifact (Windows NSIS)...');
+  tauri('build --bundles nsis --config modules/backend/tauri.updater.conf.json');
+}
+
+/**
+ * Verify one final updater artifact against the public key embedded in the Tauri configuration.
+ */
+function verifyUpdateSignature(): void {
+  const [artifact, signature, ...unexpected] = process.argv.slice(3);
+  if (!artifact || !signature || unexpected.length > 0) {
+    log.error('Usage: pnpm verify:update-signature <artifact> <signature>');
+    process.exit(1);
+  }
+
+  log.info(`Verifying updater signature for ${artifact}...`);
+  execFileSync(
+    'cargo',
+    [
+      'run',
+      '--quiet',
+      '--manifest-path',
+      MANIFEST_PATH,
+      '--example',
+      'verify-update-signature',
+      '--',
+      resolve(process.cwd(), artifact),
+      resolve(process.cwd(), signature),
+      join(TAURI_APP_PATH, 'tauri.conf.json'),
+    ],
+    {cwd: APP_DIR, stdio: 'inherit'},
+  );
 }
 
 /**
