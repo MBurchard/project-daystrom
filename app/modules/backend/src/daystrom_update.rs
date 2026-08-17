@@ -8,9 +8,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use semver::Version;
 use serde::Serialize;
 use tauri::Emitter;
 use tauri_plugin_updater::{Update, Updater, UpdaterExt};
+use time::OffsetDateTime;
 use ts_rs::TS;
 
 use crate::use_log;
@@ -35,6 +37,12 @@ const DEBUG_UPDATE_INTERVAL_SECONDS: &str = "DAYSTROM_UPDATE_INTERVAL_SECONDS";
 
 /// Delay between automatic checks after the initial startup check.
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Minimum age of a newly published feature release before production discovery exposes it.
+const MINOR_UPDATE_DELAY_SECONDS: i64 = 12 * 60 * 60;
+
+/// Minimum age of a newly published major release before production discovery exposes it.
+const MAJOR_UPDATE_DELAY_SECONDS: i64 = 24 * 60 * 60;
 
 /// Maximum duration of one manifest request before discovery fails visibly.
 const UPDATE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -141,6 +149,17 @@ struct AvailableUpdate {
     version: String,
     /// Optional release notes announced by the manifest.
     notes: Option<String>,
+}
+
+/// Production rollout decision derived from SemVer and the release line's rollout anchor.
+#[derive(Debug, PartialEq)]
+enum RolloutDecision {
+    /// The release has completed its minimum waiting period.
+    Eligible,
+    /// The release remains hidden until this instant.
+    Deferred(OffsetDateTime),
+    /// Publication finalization has not added the required rollout anchor yet.
+    MissingPublicationDate,
 }
 
 impl From<Update> for AvailableUpdate {
@@ -340,7 +359,28 @@ async fn run_check(app: &tauri::AppHandle, trigger: CheckTrigger) {
         return;
     }
     match result {
-        Ok(Some(update)) => apply_available_update(app, update.into(), trigger),
+        Ok(Some(update)) => match rollout_decision(app, &update, OffsetDateTime::now_utc()) {
+            Ok(RolloutDecision::Eligible) => apply_available_update(app, update.into(), trigger),
+            Ok(RolloutDecision::Deferred(available_at)) => {
+                update_state(app, |status| *status = up_to_date_status());
+                log_info!("Daystrom update {} remains staged until {available_at}", update.version);
+            }
+            Ok(RolloutDecision::MissingPublicationDate) => {
+                update_state(app, |status| *status = up_to_date_status());
+                log_warn!(
+                    "Daystrom update {} has no finalized rollout time and remains hidden",
+                    update.version
+                );
+            }
+            Err(error) => {
+                log_warn!("Could not evaluate Daystrom update rollout: {error}");
+                update_state(app, |status| {
+                    if let Some(next) = failure_status(status, trigger, installation_allowed()) {
+                        *status = next;
+                    }
+                });
+            }
+        },
         Ok(None) => {
             update_state(app, |status| *status = up_to_date_status());
             log_debug!("Daystrom is up to date");
@@ -354,6 +394,42 @@ async fn run_check(app: &tauri::AppHandle, trigger: CheckTrigger) {
             });
         }
     }
+}
+
+/// Decide whether a discovered release has completed its production waiting period.
+fn rollout_decision(app: &tauri::AppHandle, update: &Update, now: OffsetDateTime) -> Result<RolloutDecision, String> {
+    #[cfg(debug_assertions)]
+    if std::env::var_os(DEBUG_UPDATE_ENDPOINT).is_some() {
+        return Ok(RolloutDecision::Eligible);
+    }
+
+    rollout_decision_for(&app.package_info().version, &update.version, update.date, now)
+}
+
+/// Pure rollout decision shared by production discovery and unit tests.
+fn rollout_decision_for(
+    current: &Version,
+    target: &str,
+    rollout_at: Option<OffsetDateTime>,
+    now: OffsetDateTime,
+) -> Result<RolloutDecision, String> {
+    let Some(rollout_at) = rollout_at else {
+        return Ok(RolloutDecision::MissingPublicationDate);
+    };
+    let target = Version::parse(target).map_err(|error| format!("invalid update version {target}: {error}"))?;
+    let delay_seconds = if target.major != current.major {
+        MAJOR_UPDATE_DELAY_SECONDS
+    } else if target.minor != current.minor {
+        MINOR_UPDATE_DELAY_SECONDS
+    } else {
+        0
+    };
+    let available_at = rollout_at + time::Duration::seconds(delay_seconds);
+    Ok(if now >= available_at {
+        RolloutDecision::Eligible
+    } else {
+        RolloutDecision::Deferred(available_at)
+    })
 }
 
 /// Acquire the single update-check slot, waiting for a user-requested check when necessary.
@@ -558,6 +634,16 @@ fn update_state(app: &tauri::AppHandle, updater: impl FnOnce(&mut DaystromUpdate
 mod tests {
     use super::*;
 
+    /// Fixed release-line anchor used by rollout-delay tests.
+    fn rollout_time() -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap()
+    }
+
+    /// Parse a current application version for rollout-delay tests.
+    fn current_version(version: &str) -> Version {
+        Version::parse(version).unwrap()
+    }
+
     /// Build minimal metadata for pure transition tests.
     fn available(version: &str) -> AvailableUpdate {
         AvailableUpdate {
@@ -735,6 +821,72 @@ mod tests {
     #[test]
     fn automatic_check_interval_is_six_hours() {
         assert_eq!(UPDATE_CHECK_INTERVAL, Duration::from_secs(21_600));
+    }
+
+    #[test]
+    fn patch_update_is_eligible_immediately() {
+        let rollout_at = rollout_time();
+
+        let decision = rollout_decision_for(&current_version("0.9.0"), "0.9.1", Some(rollout_at), rollout_at).unwrap();
+
+        assert_eq!(decision, RolloutDecision::Eligible);
+    }
+
+    #[test]
+    fn minor_update_is_deferred_for_twelve_hours() {
+        let rollout_at = rollout_time();
+        let available_at = rollout_at + time::Duration::hours(12);
+
+        assert_eq!(
+            rollout_decision_for(
+                &current_version("0.9.4"),
+                "0.10.1",
+                Some(rollout_at),
+                available_at - time::Duration::seconds(1),
+            )
+            .unwrap(),
+            RolloutDecision::Deferred(available_at)
+        );
+        assert_eq!(
+            rollout_decision_for(&current_version("0.9.4"), "0.10.1", Some(rollout_at), available_at,).unwrap(),
+            RolloutDecision::Eligible
+        );
+    }
+
+    #[test]
+    fn major_update_is_deferred_for_twenty_four_hours() {
+        let rollout_at = rollout_time();
+        let available_at = rollout_at + time::Duration::hours(24);
+
+        assert_eq!(
+            rollout_decision_for(
+                &current_version("0.9.4"),
+                "1.0.0",
+                Some(rollout_at),
+                available_at - time::Duration::seconds(1),
+            )
+            .unwrap(),
+            RolloutDecision::Deferred(available_at)
+        );
+        assert_eq!(
+            rollout_decision_for(&current_version("0.9.4"), "1.0.0", Some(rollout_at), available_at,).unwrap(),
+            RolloutDecision::Eligible
+        );
+    }
+
+    #[test]
+    fn update_without_final_publication_time_remains_hidden() {
+        assert_eq!(
+            rollout_decision_for(&current_version("0.9.0"), "0.9.1", None, rollout_time(),).unwrap(),
+            RolloutDecision::MissingPublicationDate
+        );
+    }
+
+    #[test]
+    fn invalid_manifest_version_cannot_bypass_rollout_delay() {
+        let result = rollout_decision_for(&current_version("0.9.0"), "next", Some(rollout_time()), rollout_time());
+
+        assert!(result.unwrap_err().contains("invalid update version next"));
     }
 
     #[test]

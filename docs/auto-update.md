@@ -41,13 +41,20 @@ The repository will provide a manually dispatched `Prepare Release` workflow:
 8. The workflow stops without publishing the release.
 
 The maintainer downloads and tests both installers from the draft. Publication remains a deliberate manual action in the
-GitHub UI. Publishing must not start another build.
+GitHub UI. Publishing does not start another build. A publication-finalization workflow adds GitHub's real publication
+time to `latest.json` as the rollout anchor of a new release line and refreshes only that file's entry in `SHA256SUMS`.
+Patch releases inherit the anchor of the first published release with the same major and minor version.
+
+The finalization workflow does not download, modify, re-sign, or replace installers, updater packages, detached package
+signatures, rollback metadata, or the rollback-metadata signature. Production clients hide a new release line until its
+rollout anchor has been finalized, closing the short interval between publication and metadata finalization.
 
 Draft releases are not served through GitHub's normal `releases/latest` route. Existing installations therefore continue
 to see the previous stable release until the draft is published.
 
 Re-running release preparation may repair or replace assets on the same draft only when the source revision and version
-are unchanged. A published release is immutable from the workflow's perspective.
+are unchanged. After publication, only `latest.json` and its checksum entry may be finalized; all signed release content
+remains immutable from the workflow's perspective.
 
 ## Signing and trust
 
@@ -95,12 +102,27 @@ The intended cadence is:
 - every six hours while Daystrom remains active;
 - immediately when the user selects `Check for Daystrom updates`.
 
+Production discovery applies a minimum waiting period measured from the first GitHub publication in the target major
+and minor release line:
+
+- patch updates within the installed major and minor version are eligible immediately;
+- minor updates within the installed major version are eligible after 12 hours;
+- major updates are eligible after 24 hours.
+
+A patch inherits its release line's original rollout anchor. For example, `0.10.1` supersedes `0.10.0` immediately but
+cannot become visible to a `0.9.x` installation before the 12-hour wait started by `0.10.0` has elapsed. If that wait has
+already elapsed when `0.10.1` is published, the patch is eligible immediately.
+
+The existing six-hour checks remain unchanged. Consequently, an automatic check normally exposes a minor update 12 to
+18 hours after publication and a major update 24 to 30 hours after publication. A manual check honours the same minimum
+waiting periods but can expose the release as soon as its waiting period has elapsed.
+
 Development builds do not install production updates.
 
 Debug builds may override the discovery manifest with `DAYSTROM_UPDATE_ENDPOINT` and shorten the periodic interval with
-`DAYSTROM_UPDATE_INTERVAL_SECONDS` for local UI, notification, download, installation, and failure-path testing. A debug
-build can install an update only while that explicit endpoint is configured. Release builds ignore both environment
-variables, always use the configured stable GitHub endpoint, and retain the six-hour interval.
+`DAYSTROM_UPDATE_INTERVAL_SECONDS` for local UI, notification, download, installation, and failure-path testing. An
+explicit debug endpoint bypasses production rollout delays and can install an update. Release builds ignore both
+environment variables, always use the configured stable GitHub endpoint, and retain the six-hour interval.
 
 When an update is available, Daystrom shows it in the main window and may issue a native notification. A notification
 click brings Daystrom to the foreground. It never closes the game, starts the Scopely launcher, or installs the update
