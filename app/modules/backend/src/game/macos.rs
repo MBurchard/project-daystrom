@@ -28,13 +28,13 @@ pub fn detect() -> Option<(PathBuf, PathBuf)> {
     log_debug!("Raw GAME_PATH value: {raw_path}");
 
     // Scopely launcher quirk: path may start with "//" instead of "/"
-    let normalised = if raw_path.starts_with("//") {
+    let normalized = if raw_path.starts_with("//") {
         raw_path.strip_prefix('/').unwrap_or(raw_path)
     } else {
         raw_path
     };
 
-    let install_dir = PathBuf::from(normalised);
+    let install_dir = PathBuf::from(normalized);
     let executable = install_dir.join(EXECUTABLE_REL);
 
     if !executable.exists() {

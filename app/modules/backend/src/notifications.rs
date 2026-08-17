@@ -100,7 +100,7 @@ fn notification_permission_granted() -> bool {
 /// Show the non-interactive tray hint, then hide the Daystrom window.
 ///
 /// Keeping the window visible until the worker has requested macOS notification permission avoids
-/// presenting the first system authorization dialog for an application that has already vanished.
+/// presenting the first system authorization dialogue for an application that has already vanished.
 pub fn show_minimize_hint(window: &tauri::WebviewWindow) {
     let worker_window = window.clone();
     let fallback_window = window.clone();
@@ -110,7 +110,7 @@ pub fn show_minimize_hint(window: &tauri::WebviewWindow) {
             if notification_permission_granted() {
                 let mut notification = Notification::new();
                 notification
-                    .summary("Minimised to Tray")
+                    .summary("Minimized to Tray")
                     .body("Project Daystrom is still running. Click the tray icon to reopen.");
                 configure_timeout(&mut notification);
                 #[cfg(target_os = "windows")]

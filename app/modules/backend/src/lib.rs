@@ -145,15 +145,15 @@ fn quit_blocked_message(launcher_running: bool, game_running: bool) -> Option<&'
     match (launcher_running, game_running) {
         (true, true) => Some(
             "The launcher and the game are still running.\n\
-             Daystrom has been minimised to the tray instead.",
+             Daystrom has been minimized to the tray instead.",
         ),
         (true, false) => Some(
             "The launcher is still running.\n\
-             Daystrom has been minimised to the tray instead.",
+             Daystrom has been minimized to the tray instead.",
         ),
         (false, true) => Some(
             "The game is still running.\n\
-             Daystrom has been minimised to the tray instead.",
+             Daystrom has been minimized to the tray instead.",
         ),
         (false, false) => None,
     }
@@ -228,7 +228,7 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
                     "Project Daystrom will continue running in the background.\n\
                           Click the tray icon to reopen the window.",
                 )
-                .title("Minimised to Tray")
+                .title("Minimized to Tray")
                 .kind(MessageDialogKind::Info)
                 .show(move |_| {
                     log_debug!("[EVENT] Hiding window to tray (after dialog)");
@@ -259,7 +259,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let version = &app.package_info().version;
-            log_info!("Project Daystrom {version} initialised");
+            log_info!("Project Daystrom {version} initialized");
 
             settings::load();
 

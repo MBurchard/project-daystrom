@@ -22,8 +22,8 @@ use tauri_plugin_log::{Builder, Target, TargetKind, TimezoneStrategy, fern};
 ///
 /// ```ignore
 /// use_log!("Startup");
-/// log_info!("Project Daystrom {version} initialised");
-/// // → ... INFO [Startup] (Backend: lib.rs: 14): Project Daystrom 0.1.0 initialised
+/// log_info!("Project Daystrom {version} initialized");
+/// // → ... INFO [Startup] (Backend: lib.rs: 14): Project Daystrom 0.1.0 initialized
 /// ```
 #[macro_export]
 macro_rules! use_log {
@@ -481,7 +481,7 @@ fn format_timestamp() -> String {
         .unwrap_or_else(|_| "????-??-??T??:??:??.???+??:??".to_string())
 }
 
-/// Colorize a log level string matching bit-log's color scheme:
+/// Colorize a log level string matching bit-log's colour scheme:
 /// TRACE=dark gray, DEBUG=gray, INFO=green, WARN=yellow, ERROR=red
 fn coloured_level(level: Level) -> String {
     let tag = fit(&level.to_string(), 5);

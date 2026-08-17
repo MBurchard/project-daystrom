@@ -1,6 +1,7 @@
 # Log Levels
 
-Both the game mod and the Daystrom app write log files. The default log level is **Info**. Per-target overrides can be configured in `settings.toml` under the `[log_levels]` section.
+Both the game mod and the Daystrom app write log files. The default log level is **Info**. Per-target overrides can be
+configured in `settings.toml` under the `[log_levels]` section.
 
 ## Configuration
 

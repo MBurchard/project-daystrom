@@ -70,6 +70,7 @@ const COMMANDS: Record<string, () => void> = {
   'typecheck:backend': typecheckBackend,
   'typecheck:mod': typecheckMod,
   test: testAll,
+  'test:app': testApp,
   'test:tooling': testTooling,
   'test:frontend': testFrontend,
   'test:frontend:watch': testFrontendWatch,
@@ -437,6 +438,14 @@ function testModCoverage(): void {
 }
 
 /**
+ * Run the frontend and backend application tests without repository tooling or mod tests.
+ */
+function testApp(): void {
+  testFrontend();
+  testBackend();
+}
+
+/**
  * Check one or more IL2CPP dumps against the mod compatibility manifest.
  */
 function checkModDump(): void {
@@ -605,7 +614,7 @@ function buildTauriMacUniversal(): void {
 }
 
 /**
- * Build the universal macOS bundle and its signed Tauri updater artifact.
+ * Build the universal macOS bundle and its signed Tauri updater artefact.
  *
  * Used only by release CI after the updater signing credentials have been configured.
  */
@@ -614,7 +623,7 @@ function buildTauriMacUniversalUpdater(): void {
     log.error('build:tauri:mac-universal:updater is only supported on macOS');
     process.exit(1);
   }
-  log.info('Building Project Daystrom app and updater artifact (universal macOS)...');
+  log.info('Building Project Daystrom app and updater artefact (universal macOS)...');
   tauri('build --target universal-apple-darwin --config modules/backend/tauri.updater.conf.json');
 }
 
@@ -633,7 +642,7 @@ function buildTauriWindows(): void {
 }
 
 /**
- * Build the Windows NSIS bundle and its signed Tauri updater artifact.
+ * Build the Windows NSIS bundle and its signed Tauri updater artefact.
  *
  * Used only by release CI after the updater signing credentials have been configured.
  */
@@ -642,12 +651,12 @@ function buildTauriWindowsUpdater(): void {
     log.error('build:tauri:windows:updater is only supported on Windows');
     process.exit(1);
   }
-  log.info('Building Project Daystrom app and updater artifact (Windows NSIS)...');
+  log.info('Building Project Daystrom app and updater artefact (Windows NSIS)...');
   tauri('build --bundles nsis --config modules/backend/tauri.updater.conf.json');
 }
 
 /**
- * Verify one final updater artifact against the public key embedded in the Tauri configuration.
+ * Verify one final updater artefact against the public key embedded in the Tauri configuration.
  */
 function verifyUpdateSignature(): void {
   const [artifact, signature, ...unexpected] = process.argv.slice(3);
