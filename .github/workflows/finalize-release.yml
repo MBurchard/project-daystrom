@@ -1,0 +1,57 @@
+name: Finalize Published Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Finalize Update Manifest
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out released source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Download mutable release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir assets
+          gh release download "$RELEASE_TAG" \
+            --pattern latest.json \
+            --pattern SHA256SUMS \
+            --dir assets
+
+      - name: Add publication time and refresh checksum
+        env:
+          RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: >-
+          node scripts/update-manifest.ts publish
+          assets
+          "$RELEASE_VERSION"
+          "$RELEASE_PUBLISHED_AT"
+
+      - name: Upload finalized release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" assets/latest.json assets/SHA256SUMS --clobber

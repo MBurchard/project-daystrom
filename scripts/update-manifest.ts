@@ -27,6 +27,7 @@ interface RollbackEnvelope {
 /** Static Tauri update manifest generated for a GitHub release. */
 export interface UpdateManifest {
   version: string;
+  pub_date?: string;
   platforms: {
     'darwin-aarch64': UpdatePlatform;
     'darwin-x86_64': UpdatePlatform;
@@ -149,6 +150,43 @@ function validateInputs(version: string, repository: string, tag: string): void 
   }
 }
 
+/** Major and minor components that identify one feature-release line. */
+interface ReleaseLine {
+  major: number;
+  minor: number;
+}
+
+/**
+ * Extract the feature-release line from a validated semantic version.
+ * @param version - Semantic version accepted by release validation.
+ * @returns Major and minor version components.
+ */
+function releaseLine(version: string): ReleaseLine {
+  const [major, minor] = version.split('.', 3).map(Number);
+  if (major === undefined || minor === undefined || !Number.isSafeInteger(major) || !Number.isSafeInteger(minor)) {
+    throw new TypeError(`Invalid release version ${version}`);
+  }
+  return {major, minor};
+}
+
+/**
+ * Retain the original rollout anchor while publishing patches for the same release line.
+ * @param version - Version being prepared.
+ * @param previousManifest - Latest published update manifest.
+ * @returns Inherited RFC 3339 rollout anchor, or undefined for a new release line.
+ */
+function inheritedRolloutDate(version: string, previousManifest: UpdateManifest): string | undefined {
+  const current = releaseLine(version);
+  const previous = releaseLine(previousManifest.version);
+  if (current.major !== previous.major || current.minor !== previous.minor) {
+    return undefined;
+  }
+  if (!previousManifest.pub_date || Number.isNaN(new Date(previousManifest.pub_date).valueOf())) {
+    throw new TypeError(`Previous update manifest has no valid rollout date for ${previousManifest.version}`);
+  }
+  return previousManifest.pub_date;
+}
+
 /**
  * Write SHA-256 checksums for every release asset except the checksum file itself.
  * @param assetsDirectory - Directory containing final release assets.
@@ -163,6 +201,26 @@ function writeChecksums(assetsDirectory: string): void {
     return `${digest}  ${file}`;
   });
   writeFileSync(join(assetsDirectory, 'SHA256SUMS'), `${lines.join('\n')}\n`);
+}
+
+/**
+ * Refresh one entry in an existing checksum file without requiring every release asset locally.
+ * @param assetsDirectory - Directory containing the checksum file and changed asset.
+ * @param file - Changed release asset whose checksum must be replaced.
+ */
+function refreshChecksum(assetsDirectory: string, file: string): void {
+  const checksumPath = join(assetsDirectory, 'SHA256SUMS');
+  const lines = readFileSync(checksumPath, 'utf8').trimEnd().split('\n');
+  const suffix = `  ${file}`;
+  const matches = lines.filter(line => line.endsWith(suffix));
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one ${file} entry in SHA256SUMS, found ${matches.length}`);
+  }
+  const digest = createHash('sha256').update(readFileSync(join(assetsDirectory, file))).digest('hex');
+  writeFileSync(
+    checksumPath,
+    `${lines.map(line => line.endsWith(suffix) ? `${digest}${suffix}` : line).join('\n')}\n`,
+  );
 }
 
 /**
@@ -220,8 +278,10 @@ export function generateUpdateManifest({
     signature: readSignature(assetsDirectory, macAsset),
     url: releaseAssetUrl(repository, tag, macAsset),
   };
-  const manifest = {
+  const rolloutDate = previousManifest ? inheritedRolloutDate(version, previousManifest) : undefined;
+  const manifest: UpdateManifest = {
     version,
+    ...(rolloutDate ? {pub_date: rolloutDate} : {}),
     platforms: {
       'darwin-aarch64': macPlatform,
       'darwin-x86_64': macPlatform,
@@ -261,6 +321,40 @@ export function finalizeUpdateManifest(assetsDirectory: string): UpdateManifest 
 }
 
 /**
+ * Add the real GitHub publication time without touching signed release artefacts.
+ * @param assetsDirectory - Directory containing only `latest.json` and `SHA256SUMS`.
+ * @param version - Version of the release that emitted the publish event.
+ * @param publishedAt - GitHub release publication time in RFC 3339 form.
+ * @returns Publication-finalized update manifest.
+ */
+export function publishUpdateManifest(
+  assetsDirectory: string,
+  version: string,
+  publishedAt: string,
+): UpdateManifest {
+  const manifestPath = join(assetsDirectory, 'latest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as UpdateManifest;
+  if (manifest.version !== version) {
+    throw new Error(`Published release ${version} contains manifest for ${manifest.version}`);
+  }
+  const parsedDate = new Date(publishedAt);
+  if (Number.isNaN(parsedDate.valueOf())) {
+    throw new TypeError(`Invalid release publication time ${publishedAt}`);
+  }
+  if (manifest.pub_date) {
+    const rolloutDate = new Date(manifest.pub_date);
+    if (Number.isNaN(rolloutDate.valueOf()) || rolloutDate > parsedDate) {
+      throw new TypeError(`Invalid inherited rollout date ${manifest.pub_date}`);
+    }
+  } else {
+    manifest.pub_date = publishedAt;
+  }
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  refreshChecksum(assetsDirectory, 'latest.json');
+  return manifest;
+}
+
+/**
  * Read a previous published manifest when one was supplied to the command line.
  * @param path - Optional path to the predecessor's published update manifest.
  * @returns Parsed predecessor manifest, or undefined for the first updater release.
@@ -280,6 +374,14 @@ function main(): void {
       throw new Error('Usage: node scripts/update-manifest.ts finalize <assets-dir>');
     }
     finalizeUpdateManifest(assetsDirectory);
+    return;
+  }
+  if (commandOrAssets === 'publish') {
+    const [assetsDirectory, version, publishedAt, ...unexpected] = arguments_;
+    if (!assetsDirectory || !version || !publishedAt || unexpected.length > 0) {
+      throw new Error('Usage: node scripts/update-manifest.ts publish <assets-dir> <version> <published-at>');
+    }
+    publishUpdateManifest(assetsDirectory, version, publishedAt);
     return;
   }
 
