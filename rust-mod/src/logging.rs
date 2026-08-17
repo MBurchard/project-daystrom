@@ -397,7 +397,7 @@ pub fn init() {
     let max_override = levels.values().copied().max().unwrap_or(LevelFilter::Off);
     let effective_max = std::cmp::max(LevelFilter::Info, max_override);
 
-    log::set_logger(&LOGGER).expect("logger already initialised");
+    log::set_logger(&LOGGER).expect("logger already initialized");
     log::set_max_level(effective_max);
 }
 

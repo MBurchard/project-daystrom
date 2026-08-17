@@ -21,7 +21,7 @@
     "typecheck": "node scripts/build.ts typecheck",
     "test": "node scripts/build.ts test",
     "test:tooling": "node scripts/build.ts test:tooling",
-    "test:app": "node scripts/build.ts test",
+    "test:app": "node scripts/build.ts test:app",
     "test:app:frontend": "node scripts/build.ts test:frontend",
     "test:app:frontend:watch": "node scripts/build.ts test:frontend:watch",
     "test:app:frontend:coverage": "node scripts/build.ts test:frontend:coverage",

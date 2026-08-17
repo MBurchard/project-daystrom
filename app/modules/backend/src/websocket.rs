@@ -73,7 +73,7 @@ pub fn send(msg: &WsMessage) {
             Ok(json) => {
                 let _ = tx.send(json);
             }
-            Err(e) => log_error!("Failed to serialise WsMessage: {e}"),
+            Err(e) => log_error!("Failed to serialize WsMessage: {e}"),
         }
     }
 }
@@ -333,7 +333,7 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) -> Option<ClientHello> {
                 msg_type: "settings.sync".to_string(),
                 payload,
             }),
-            Err(e) => log_error!("Failed to serialise settings: {e}"),
+            Err(e) => log_error!("Failed to serialize settings: {e}"),
         }
         return None;
     }
@@ -350,7 +350,7 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) -> Option<ClientHello> {
 mod tests {
     use super::*;
 
-    // -- WsMessage serialisation --
+    // -- WsMessage serialization --
 
     #[test]
     fn message_serialise_uses_type_field() {

@@ -2,8 +2,8 @@
 
 ![Crafted with Rust](https://img.shields.io/badge/Crafted_with-Rust-000000?logo=rust&logoColor=white)
 ![Crafted with TypeScript](https://img.shields.io/badge/Crafted_with-TypeScript-3178C6?logo=typescript&logoColor=white)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?logo=gnu&logoColor=white)](https://www.gnu.org/licenses/gpl-3.0)
-[![CI](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml/badge.svg)](https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml)
+[![License: GPL v3][license-badge]][license]
+[![CI][ci-badge]][ci]
 
 🇬🇧 English | [🇩🇪 Deutsch](README.de.md)
 
@@ -34,12 +34,14 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
     attack it without using the mouse
   - Configurable Main Action shortcut with support for keyboard keys and extra mouse buttons
   - Toast banner suppression with per-type opt-out (combat, station, armada, etc.)
-  - Automatic game update detection via the Scopely update API
+  - Automatic STFC update detection via the Scopely update API
 - **Native cross-platform app** (Tauri 2 + Vue 3)
   - Unified launcher: entitlement patching on macOS, DLL proxy injection on Windows
   - Process monitoring with automatic detection of game and launcher activity
   - System tray integration with minimize-to-tray and quit protection
   - Live WebSocket bridge that syncs settings to the running game in real time
+  - Signed Daystrom updates with explicit installation and staged rollout
+  - One-click rollback to the verified predecessor, including its bundled mod and settings
 
 ## Installation
 
@@ -51,6 +53,10 @@ Download the latest release for your platform from the
   "More info" and then "Run anyway" (the app is self-signed, not yet verified by Microsoft).
 
 After installation, launch Project Daystrom and click the play button to start the game with the mod.
+
+Daystrom offers signed application updates in the main window and installs them only after confirmation. A running game
+remains open while Daystrom updates and reconnects. When a verified predecessor is available, the same window offers a
+one-click rollback.
 
 ## Acknowledgements
 
@@ -94,7 +100,7 @@ project-daystrom/
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 24
-- [pnpm](https://pnpm.io/) >= 10
+- [pnpm](https://pnpm.io/) >= 11
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 
 ### macOS
@@ -137,7 +143,7 @@ This compiles the mod for the current platform and copies the result to `app/res
 | `pnpm lint`                                | Run ESLint across the entire project                  |
 | `pnpm lint:fix`                            | Run ESLint with auto-fix                              |
 | `pnpm typecheck`                           | TypeScript + Rust type checks                         |
-| `pnpm test`                                | Run all tests (frontend + backend)                    |
+| `pnpm test`                                | Run tooling, mod, frontend, and backend tests         |
 | `pnpm test:app`                            | Run all app tests (frontend + backend)                |
 | `pnpm test:app:frontend`                   | Run frontend tests only (vitest)                      |
 | `pnpm test:app:backend`                    | Run backend tests only (cargo test + ts-rs bindings)  |
@@ -160,54 +166,11 @@ This compiles the mod for the current platform and copies the result to `app/res
 | `@generated/*` | `modules/app/src/generated/*` |
 | `@resources/*` | `resources/*`                 |
 
-## Windows Code Signing (optional)
+## Release maintenance
 
-The GitHub workflow supports optional code signing for the NSIS installer. It requires a self-signed code signing
-certificate and two repository secrets.
-
-### Create a self-signed certificate
-
-```powershell
-New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Your Name, Code Signing" `
-  -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
-```
-
-### Export as PFX
-
-The thumbprint is shown when creating the certificate. You can also find it via:
-
-```powershell
-Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert
-```
-
-```powershell
-$cert = Get-ChildItem Cert:\CurrentUser\My\<thumbprint>
-$pw = Read-Host -AsSecureString "PFX password"
-Export-PfxCertificate -Cert $cert -FilePath daystrom.pfx -Password $pw
-```
-
-### Verify the PFX
-
-```powershell
-certutil -dump daystrom.pfx
-```
-
-### Configure GitHub Secrets
-
-Encode the PFX as Base64 and copy to the clipboard.\
-Note that PowerShell resolves relative paths from the user's home directory, not from the current working directory.\
-Use an absolute path to avoid surprises.\
-
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("<path-to-pfx>")) | Set-Clipboard
-```
-
-Then set these repository secrets in GitHub:
-
-| Secret                 | Value                          |
-|------------------------|--------------------------------|
-| `WINDOWS_PFX_BASE64`   | Base64-encoded PFX (clipboard) |
-| `WINDOWS_PFX_PASSWORD` | The password from the export   |
+Updater-enabled releases require Windows, Apple, and Tauri signing credentials. See
+[release-signing.md](docs/release-signing.md) for credential setup and [auto-update.md](docs/auto-update.md) for the
+release, update, rollout, and rollback contract.
 
 ## App (Tauri + Vue 3 + Vite)
 
@@ -227,10 +190,8 @@ pub struct GameStatus { /* ... */ }
 ```typescript
 import type {GameStatus} from '@generated/GameStatus';
 ```
-
-
-Plugins live in `modules/plugins/` and are loaded by the main app. The architecture is
-intentionally modular so that individual plugins can be developed and published independently.
+Plugins live in `modules/plugins/` and are loaded by the main app. The architecture is intentionally modular so that
+individual plugins can be developed and maintained independently.
 
 ### Environment Variables
 
@@ -239,6 +200,11 @@ intentionally modular so that individual plugins can be developed and published 
 | `DAYSTROM_UPDATE_ENDPOINT`         | Configured endpoint | Debug only: override the Daystrom update manifest URL |
 | `DAYSTROM_UPDATE_INTERVAL_SECONDS` | `21600`             | Debug only: set the periodic update-check interval    |
 
-## License
+## Licence
 
 This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
+
+[license-badge]: https://img.shields.io/badge/License-GPLv3-blue.svg?logo=gnu&logoColor=white
+[license]: https://www.gnu.org/licenses/gpl-3.0
+[ci-badge]: https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml/badge.svg
+[ci]: https://github.com/MBurchard/project-daystrom/actions/workflows/ci.yml

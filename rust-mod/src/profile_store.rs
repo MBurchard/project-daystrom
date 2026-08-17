@@ -835,7 +835,7 @@ fn find_existing_profile() -> Option<(PathBuf, ProfileData)> {
     None
 }
 
-// ---- Initialisation -------------------------------------------------------
+// ---- Initialization -------------------------------------------------------
 
 /// Get or initialize the store.
 fn with_store<F, R>(f: F) -> Option<R>
@@ -1303,7 +1303,7 @@ mod tests {
         assert_eq!(filename, "106_Nabor.toml");
     }
 
-    // -- Serialisation --
+    // -- Serialization --
 
     #[test]
     fn serialize_roundtrip() {

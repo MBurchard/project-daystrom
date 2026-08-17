@@ -22,8 +22,8 @@ async function initApp(): Promise<void> {
     app.use(createPinia());
     app.mount('#app');
   } catch (reason) {
-    log.error('Failed to initialise app:', reason);
+    log.error('Failed to initialize app:', reason);
   }
 }
 
-initApp().catch(reason => console.error('Unexpected frontend initialisation failure', reason));
+initApp().catch(reason => console.error('Unexpected frontend initialization failure', reason));
