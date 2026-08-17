@@ -4,6 +4,7 @@ import {join, resolve} from 'node:path';
 import process from 'node:process';
 import {configureLogging, useLog} from '@mburchard/bit-log';
 import {ConsoleAppender} from '@mburchard/bit-log/appender/ConsoleAppender';
+import {verifyUpdateArtifact} from './update-signature.ts';
 
 configureLogging({
   appender: {
@@ -666,22 +667,12 @@ function verifyUpdateSignature(): void {
   }
 
   log.info(`Verifying updater signature for ${artifact}...`);
-  execFileSync(
-    'cargo',
-    [
-      'run',
-      '--quiet',
-      '--manifest-path',
-      MANIFEST_PATH,
-      '--example',
-      'verify-update-signature',
-      '--',
-      resolve(process.cwd(), artifact),
-      resolve(process.cwd(), signature),
-      join(TAURI_APP_PATH, 'tauri.conf.json'),
-    ],
-    {cwd: APP_DIR, stdio: 'inherit'},
+  verifyUpdateArtifact(
+    resolve(process.cwd(), artifact),
+    resolve(process.cwd(), signature),
+    join(TAURI_APP_PATH, 'tauri.conf.json'),
   );
+  log.info(`Verified updater signature for ${artifact}`);
 }
 
 /**

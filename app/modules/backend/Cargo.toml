@@ -3,11 +3,6 @@ name = "daystrom"
 version = "0.9.1"
 edition = "2024"
 
-[[example]]
-name = "verify-update-signature"
-path = "examples/verify-update-signature.rs"
-test = true
-
 [lib]
 name = "daystrom_lib"
 crate-type = [
