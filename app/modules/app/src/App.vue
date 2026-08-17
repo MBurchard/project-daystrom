@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SettingsView from '@app/components/SettingsView.vue';
+import {useDaystromRollback} from '@app/composables/useDaystromRollback';
 import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
 import {useGameState} from '@app/composables/useGameState';
 import {useProfileState} from '@app/composables/useProfileState';
@@ -45,16 +46,25 @@ const {
   destroy: destroyDaystromUpdate,
 } = useDaystromUpdate();
 
+const {
+  status: daystromRollback,
+  restore: restoreDaystrom,
+  init: initDaystromRollback,
+  destroy: destroyDaystromRollback,
+} = useDaystromRollback();
+
 onMounted(() => {
   initGameState();
   initProfileState();
   initSettings();
   initDaystromUpdate();
+  initDaystromRollback();
 });
 onUnmounted(() => {
   destroyGameState();
   destroyProfileState();
   destroyDaystromUpdate();
+  destroyDaystromRollback();
 });
 </script>
 
@@ -73,8 +83,11 @@ onUnmounted(() => {
       <div class="daystrom-update-controls">
         <button :disabled="daystromUpdate.phase === 'checking'
                   || daystromUpdate.phase === 'confirming'
+                  || daystromUpdate.phase === 'retaining_rollback'
                   || daystromUpdate.phase === 'downloading'
-                  || daystromUpdate.phase === 'installing'"
+                  || daystromUpdate.phase === 'installing'
+                  || daystromRollback.phase === 'preparing'
+                  || daystromRollback.phase === 'installing'"
             @click="checkDaystromUpdate">
           Check for Daystrom updates
         </button>
@@ -122,13 +135,56 @@ onUnmounted(() => {
           Installation is disabled in this development build unless a debug update endpoint is configured.
         </p>
         <div v-if="daystromUpdate.phase === 'available'" class="update-actions">
-          <button :disabled="!daystromUpdate.can_install" @click="installDaystromUpdate">
+          <button :disabled="!daystromUpdate.can_install
+                    || daystromRollback.phase === 'preparing'
+                    || daystromRollback.phase === 'installing'"
+              @click="installDaystromUpdate">
             Install update
           </button>
           <button @click="dismissDaystromUpdate">
             Later
           </button>
         </div>
+      </section>
+
+      <section v-if="daystromRollback.mod_restore_pending" class="daystrom-rollback-banner">
+        <h2>Finish restoring the previous Daystrom mod</h2>
+        <p v-if="status.game_running">
+          Close STFC when convenient. Daystrom will finish restoring the previous mod automatically, and it will take
+          effect the next time you start the game.
+        </p>
+        <p v-else>
+          Daystrom is finishing the restored mod for the next game start.
+        </p>
+        <p v-if="daystromRollback.error" class="error">
+          {{ daystromRollback.error }}
+        </p>
+      </section>
+
+      <section v-if="daystromRollback.version" class="daystrom-rollback-banner">
+        <h2>Restore Project Daystrom {{ daystromRollback.version }}</h2>
+        <p>
+          This restores Daystrom and its bundled mod to the previous verified release. STFC stays open; a mod already
+          loaded by the running game changes only after the game is closed and started again.
+        </p>
+        <p v-if="daystromRollback.phase === 'preparing'" class="update-progress">
+          Verifying rollback package and settings…
+        </p>
+        <p v-else-if="daystromRollback.phase === 'installing'" class="update-progress">
+          Restoring the previous release and restarting Daystrom…
+        </p>
+        <p v-if="daystromRollback.error" class="error">
+          {{ daystromRollback.error }}
+        </p>
+        <button v-if="daystromRollback.phase === 'available' || daystromRollback.phase === 'failed'"
+            :disabled="!daystromRollback.can_restore
+              || daystromUpdate.phase === 'confirming'
+              || daystromUpdate.phase === 'retaining_rollback'
+              || daystromUpdate.phase === 'downloading'
+              || daystromUpdate.phase === 'installing'"
+            @click="restoreDaystrom">
+          Restore Daystrom {{ daystromRollback.version }}
+        </button>
       </section>
 
       <p v-if="error">
@@ -358,6 +414,18 @@ body {
   border: 1px solid #ff9800;
   border-radius: 0.35rem;
   background: color-mix(in srgb, #ff9800 12%, transparent);
+}
+
+.daystrom-rollback-banner {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #2196f3;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, #2196f3 10%, transparent);
+}
+
+.daystrom-rollback-banner h2 {
+  margin-top: 0;
 }
 
 .daystrom-update-banner h2 {

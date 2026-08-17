@@ -22,7 +22,6 @@ const LOG_TARGET: &str = "SliderLimits";
 
 /// Standard Recruit bundle ID, verified through an in-game debug session on v1851.
 const STANDARD_RECRUIT_BUNDLE_ID: i64 = 145_512_548;
-const STANDARD_RECRUIT_MAX: u32 = 150;
 
 // ---- State ----------------------------------------------------------------
 
@@ -77,7 +76,9 @@ fn extend_bound_slider(widget: *mut Il2CppObject) {
         Some(SliderKind::AllianceDonation) => ("Alliance Donation", settings.alliance_donation_max),
         Some(SliderKind::StandardRecruit) => (
             "Standard Recruit",
-            settings.standard_recruit_max.map(|maximum| maximum.min(STANDARD_RECRUIT_MAX)),
+            settings
+                .standard_recruit_max
+                .map(|maximum| maximum.min(crate::settings::STANDARD_RECRUIT_MAX)),
         ),
         None => return,
     };

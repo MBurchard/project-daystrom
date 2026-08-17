@@ -543,6 +543,44 @@ pub fn flush_saves() {
     }
 }
 
+/// Read the persisted settings bytes after all pending writes have completed.
+///
+/// `None` records that no settings file existed and allows rollback to restore that exact state.
+pub(crate) fn snapshot_for_rollback() -> Result<Option<Vec<u8>>, String> {
+    flush_saves();
+    let path = settings_path().ok_or_else(|| "cannot determine settings path".to_string())?;
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("could not read {}: {error}", path.display())),
+    }
+}
+
+/// Restore an exact settings snapshot captured before an application update.
+pub(crate) fn restore_rollback_snapshot(snapshot: Option<&[u8]>) -> Result<(), String> {
+    let path = settings_path().ok_or_else(|| "cannot determine settings path".to_string())?;
+    match snapshot {
+        Some(bytes) => {
+            let content =
+                std::str::from_utf8(bytes).map_err(|error| format!("settings backup is not UTF-8: {error}"))?;
+            toml::from_str::<AppSettings>(content)
+                .map_err(|error| format!("settings backup is not valid Daystrom settings: {error}"))?;
+            if let Some(directory) = path.parent() {
+                fs::create_dir_all(directory)
+                    .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
+            }
+            fs::write(&path, bytes).map_err(|error| format!("could not restore {}: {error}", path.display()))?;
+        }
+        None => match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("could not remove {}: {error}", path.display())),
+        },
+    }
+    load();
+    Ok(())
+}
+
 /// Mutate the in-memory settings and schedule a debounced save to disk.
 ///
 /// The closure receives a mutable reference to the settings. If it returns `true`, a save is scheduled.
@@ -1341,5 +1379,32 @@ mod tests {
         assert!(serialized.contains("[game.slider_limits]"));
         assert!(serialized.contains("standard_recruit_max = 150"));
         assert!(serialized.contains("alliance_donation_max = 80"));
+    }
+
+    #[test]
+    fn rollback_snapshot_restores_exact_persisted_settings() {
+        let _lock = lock_tests();
+        let path = use_temp_path("rollback_snapshot_restores_exact_persisted_settings");
+        let original = toml::to_string_pretty(&AppSettings::default()).unwrap();
+        fs::write(&path, &original).unwrap();
+        let snapshot = snapshot_for_rollback().unwrap();
+        fs::write(&path, "[ui.hints]\nminimize_to_tray = 4\n").unwrap();
+
+        restore_rollback_snapshot(snapshot.as_deref()).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        reset_path_override();
+    }
+
+    #[test]
+    fn absent_rollback_snapshot_removes_successor_settings() {
+        let _lock = lock_tests();
+        let path = use_temp_path("absent_rollback_snapshot_removes_successor_settings");
+        fs::write(&path, toml::to_string_pretty(&AppSettings::default()).unwrap()).unwrap();
+
+        restore_rollback_snapshot(None).unwrap();
+
+        assert!(!path.exists());
+        reset_path_override();
     }
 }

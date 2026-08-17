@@ -35,13 +35,13 @@ struct PendingInstall {
 }
 
 /// Guard that releases the installation slot unless ownership passes to the pending package.
-struct InstallGuard {
+pub(super) struct InstallGuard {
     release_on_drop: bool,
 }
 
 impl InstallGuard {
     /// Acquire the single installation slot.
-    fn acquire() -> Option<Self> {
+    pub(super) fn acquire() -> Option<Self> {
         INSTALL_IN_PROGRESS
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .ok()
@@ -49,15 +49,20 @@ impl InstallGuard {
     }
 
     /// Keep the slot reserved until the pending package is installed or fails.
-    fn retain_until_install(mut self) {
+    pub(super) fn retain_until_install(mut self) {
         self.release_on_drop = false;
+    }
+
+    /// Release the shared update or rollback installation slot after a deferred failure.
+    pub(super) fn release() {
+        INSTALL_IN_PROGRESS.store(false, Ordering::SeqCst);
     }
 }
 
 impl Drop for InstallGuard {
     fn drop(&mut self) {
         if self.release_on_drop {
-            INSTALL_IN_PROGRESS.store(false, Ordering::SeqCst);
+            Self::release();
         }
     }
 }
@@ -240,7 +245,7 @@ pub(crate) fn install_pending_update(app: &tauri::AppHandle) -> PendingInstallRe
             if let Err(cache_error) = super::rollback_cache::abort_pending_update(app) {
                 log_warn!("Failed to discard pending update cache state: {cache_error}");
             }
-            INSTALL_IN_PROGRESS.store(false, Ordering::SeqCst);
+            InstallGuard::release();
             set_install_failure(app, "Could not install the Daystrom update. Restart Daystrom and try again.");
             PendingInstallResult::Failed
         }

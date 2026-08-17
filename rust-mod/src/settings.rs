@@ -18,7 +18,8 @@ fn lenient_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(deserializer: 
     Ok(T::deserialize(deserializer).ok())
 }
 
-const STANDARD_RECRUIT_MAX: u32 = 150;
+/// Highest Standard Recruit batch size verified to be safe in the game client.
+pub(crate) const STANDARD_RECRUIT_MAX: u32 = 150;
 
 /// Deserialize the Standard Recruit limit leniently and enforce the highest verified safe batch size.
 fn standard_recruit_max<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
