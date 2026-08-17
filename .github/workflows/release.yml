@@ -180,7 +180,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm --dir app exec tauri signer sign assets/rollback-metadata.json
+        run: pnpm --dir app exec tauri signer sign ../assets/rollback-metadata.json
 
       - name: Verify rollback metadata signature
         if: env.PREVIOUS_UPDATE_MANIFEST != ''
