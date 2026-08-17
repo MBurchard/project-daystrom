@@ -96,6 +96,15 @@ onUnmounted(() => {
         <p v-if="daystromUpdate.phase === 'confirming'" class="update-progress">
           Confirming update…
         </p>
+        <p v-else-if="daystromUpdate.phase === 'retaining_rollback'" class="update-progress">
+          Preparing rollback package…
+          <progress v-if="daystromUpdate.download_progress !== null"
+              :value="daystromUpdate.download_progress"
+              max="100" />
+          <span v-if="daystromUpdate.download_progress !== null">
+            {{ daystromUpdate.download_progress }}%
+          </span>
+        </p>
         <p v-else-if="daystromUpdate.phase === 'downloading'" class="update-progress">
           Downloading and verifying update…
           <progress v-if="daystromUpdate.download_progress !== null"

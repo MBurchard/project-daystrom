@@ -18,6 +18,7 @@ use crate::use_log;
 use_log!("DaystromUpdate");
 
 mod install;
+mod rollback_cache;
 
 pub use install::install_daystrom_update;
 pub(crate) use install::{PendingInstallResult, install_pending_update};
@@ -77,6 +78,8 @@ pub enum DaystromUpdatePhase {
     Available,
     /// The selected release is being confirmed against the remote manifest.
     Confirming,
+    /// The installed release is being verified or downloaded for rollback.
+    RetainingRollback,
     /// The verified updater package is being downloaded.
     Downloading,
     /// The verified updater package is ready and the application is shutting down to install it.
@@ -220,6 +223,8 @@ pub fn start(app: tauri::AppHandle) {
     if MONITOR_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
+
+    rollback_cache::reconcile_after_start(&app);
 
     let interval = update_check_interval();
     tauri::async_runtime::spawn(async move {

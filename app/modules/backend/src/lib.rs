@@ -121,13 +121,9 @@ fn complete_shutdown(app: tauri::AppHandle) {
     finish_shutdown(&app);
 }
 
-/// Make the window visible and open DevTools in debug builds.
+/// Make the main window visible after its initial position has been restored.
 fn show_window(window: &tauri::WebviewWindow) {
     let _ = window.show();
-    #[cfg(debug_assertions)]
-    if std::env::var("DAYSTROM_DEVTOOLS").as_deref() != Ok("0") {
-        window.open_devtools();
-    }
 }
 
 /// Show, restore, and focus the main Daystrom window.
@@ -253,8 +249,7 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
 
 /// Bootstrap and run the Tauri application.
 ///
-/// Sets up logging, builds the system tray, starts the background monitor, and opens DevTools in
-/// debug builds.
+/// Sets up logging, builds the system tray, and starts the background services.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

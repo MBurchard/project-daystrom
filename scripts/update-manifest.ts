@@ -4,10 +4,24 @@ import {basename, join} from 'node:path';
 import process from 'node:process';
 import {pathToFileURL} from 'node:url';
 
-/** A signed updater artifact exposed through the Tauri update manifest. */
+/** A signed updater artefact exposed through the Tauri update manifest. */
 interface UpdatePlatform {
   signature: string;
   url: string;
+}
+
+/** Signed relationship between a release and its sole permitted rollback predecessor. */
+export interface RollbackMetadata {
+  schema: 1;
+  successorVersion: string;
+  predecessorVersion: string;
+  platforms: UpdateManifest['platforms'];
+}
+
+/** Rollback metadata and its Tauri-compatible detached signature. */
+interface RollbackEnvelope {
+  metadata: string;
+  signature: string;
 }
 
 /** Static Tauri update manifest generated for a GitHub release. */
@@ -18,6 +32,7 @@ export interface UpdateManifest {
     'darwin-x86_64': UpdatePlatform;
     'windows-x86_64': UpdatePlatform;
   };
+  rollback?: RollbackEnvelope;
 }
 
 /** Inputs required to generate a static Tauri update manifest. */
@@ -26,7 +41,11 @@ export interface GenerateUpdateManifestOptions {
   version: string;
   repository: string;
   tag: string;
+  previousManifest?: UpdateManifest;
 }
+
+/** File containing canonical rollback metadata before its signature is embedded. */
+const ROLLBACK_METADATA_FILE = 'rollback-metadata.json';
 
 /**
  * Convert a local bundle file name to the canonical GitHub release asset name.
@@ -147,12 +166,40 @@ function writeChecksums(assetsDirectory: string): void {
 }
 
 /**
+ * Create canonical metadata for the sole permitted predecessor.
+ * @param version - Version being released.
+ * @param previousManifest - Published manifest of the installed predecessor.
+ * @returns Signed rollback payload content.
+ */
+function createRollbackMetadata(version: string, previousManifest: UpdateManifest): RollbackMetadata {
+  if (previousManifest.version === version) {
+    throw new Error(`Previous update manifest already describes version ${version}`);
+  }
+  if (!/^\d+\.\d+\.\d+(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?$/i.test(previousManifest.version)) {
+    throw new Error(`Previous update manifest has invalid version ${previousManifest.version}`);
+  }
+  for (const target of ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'] as const) {
+    const platform = previousManifest.platforms?.[target];
+    if (!platform || !platform.signature.trim() || !platform.url.trim()) {
+      throw new Error(`Previous update manifest has no complete ${target} platform`);
+    }
+  }
+  return {
+    schema: 1,
+    successorVersion: version,
+    predecessorVersion: previousManifest.version,
+    platforms: previousManifest.platforms,
+  };
+}
+
+/**
  * Generate the static Tauri update manifest and release checksums.
  * @param options - Manifest inputs.
  * @param options.assetsDirectory - Directory containing final release assets.
  * @param options.version - SemVer application version.
  * @param options.repository - GitHub repository in owner/name form.
  * @param options.tag - Release tag.
+ * @param options.previousManifest - Optional manifest of the latest published predecessor.
  * @returns Generated update manifest.
  */
 export function generateUpdateManifest({
@@ -160,6 +207,7 @@ export function generateUpdateManifest({
   version,
   repository,
   tag,
+  previousManifest,
 }: GenerateUpdateManifestOptions): UpdateManifest {
   validateInputs(version, repository, tag);
   normalizeAssetNames(assetsDirectory);
@@ -183,20 +231,72 @@ export function generateUpdateManifest({
       },
     },
   };
+  if (previousManifest) {
+    const metadata = createRollbackMetadata(version, previousManifest);
+    writeFileSync(join(assetsDirectory, ROLLBACK_METADATA_FILE), JSON.stringify(metadata));
+  }
   writeFileSync(join(assetsDirectory, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   writeChecksums(assetsDirectory);
   return manifest;
 }
 
 /**
+ * Embed the detached rollback-metadata signature and refresh final release checksums.
+ * @param assetsDirectory - Directory containing generated release assets.
+ * @returns Final update manifest.
+ */
+export function finalizeUpdateManifest(assetsDirectory: string): UpdateManifest {
+  const manifestPath = join(assetsDirectory, 'latest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as UpdateManifest;
+  const metadataPath = join(assetsDirectory, ROLLBACK_METADATA_FILE);
+  if (existsSync(metadataPath)) {
+    manifest.rollback = {
+      metadata: readFileSync(metadataPath, 'utf8'),
+      signature: readSignature(assetsDirectory, ROLLBACK_METADATA_FILE),
+    };
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  writeChecksums(assetsDirectory);
+  return manifest;
+}
+
+/**
+ * Read a previous published manifest when one was supplied to the command line.
+ * @param path - Optional path to the predecessor's published update manifest.
+ * @returns Parsed predecessor manifest, or undefined for the first updater release.
+ */
+function readPreviousManifest(path: string | undefined): UpdateManifest | undefined {
+  return path ? JSON.parse(readFileSync(path, 'utf8')) as UpdateManifest : undefined;
+}
+
+/**
  * Run manifest generation from command-line arguments.
  */
 function main(): void {
-  const [assetsDirectory, version, repository, tag] = process.argv.slice(2);
-  if (!assetsDirectory || !version || !repository || !tag) {
-    throw new Error('Usage: node scripts/update-manifest.ts <assets-dir> <version> <owner/repo> <tag>');
+  const [commandOrAssets, ...arguments_] = process.argv.slice(2);
+  if (commandOrAssets === 'finalize') {
+    const [assetsDirectory, ...unexpected] = arguments_;
+    if (!assetsDirectory || unexpected.length > 0) {
+      throw new Error('Usage: node scripts/update-manifest.ts finalize <assets-dir>');
+    }
+    finalizeUpdateManifest(assetsDirectory);
+    return;
   }
-  generateUpdateManifest({assetsDirectory, version, repository, tag});
+
+  const assetsDirectory = commandOrAssets;
+  const [version, repository, tag, previousManifestPath, ...unexpected] = arguments_;
+  if (!assetsDirectory || !version || !repository || !tag || unexpected.length > 0) {
+    throw new Error(
+      'Usage: node scripts/update-manifest.ts <assets-dir> <version> <owner/repo> <tag> [previous-manifest]',
+    );
+  }
+  generateUpdateManifest({
+    assetsDirectory,
+    version,
+    repository,
+    tag,
+    previousManifest: readPreviousManifest(previousManifestPath),
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
