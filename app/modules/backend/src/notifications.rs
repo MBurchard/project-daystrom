@@ -8,7 +8,6 @@ use std::sync::Mutex;
 #[cfg(not(target_os = "macos"))]
 use notify_rust::Timeout;
 use notify_rust::{Notification, NotificationResponse};
-use tauri::Manager;
 
 use crate::use_log;
 
@@ -37,13 +36,9 @@ fn should_focus_window(response: &NotificationResponse) -> bool {
 
 /// Show and focus the main Daystrom window without affecting the running game.
 fn focus_main_window(app: &tauri::AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
+    if !crate::show_main_window(app) {
         log_warn!("Main window unavailable after update notification click");
-        return;
-    };
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+    }
 }
 
 /// Configure the application identity required for installed Windows notifications.

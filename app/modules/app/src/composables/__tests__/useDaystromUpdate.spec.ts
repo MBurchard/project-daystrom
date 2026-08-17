@@ -36,8 +36,10 @@ function makeStatus(overrides: Partial<DaystromUpdateStatus> = {}): DaystromUpda
     phase: 'up_to_date',
     version: null,
     notes: null,
+    download_progress: null,
     error: null,
     dismissed: false,
+    can_install: false,
     ...overrides,
   };
 }
@@ -127,6 +129,14 @@ describe('useDaystromUpdate', () => {
 
     expect(mockInvoke).toHaveBeenCalledWith('dismiss_daystrom_update');
     expect(state.status.value.dismissed).toBe(false);
+  });
+
+  it('requests installation through the narrow backend command', () => {
+    const state = useDaystromUpdate();
+
+    state.install();
+
+    expect(mockInvoke).toHaveBeenCalledWith('install_daystrom_update');
   });
 
   it('unregisters the event listener on destroy', async () => {

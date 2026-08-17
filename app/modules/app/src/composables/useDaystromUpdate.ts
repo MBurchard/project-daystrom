@@ -11,8 +11,10 @@ const DEFAULT_STATUS: DaystromUpdateStatus = {
   phase: 'idle',
   version: null,
   notes: null,
+  download_progress: null,
   error: null,
   dismissed: false,
+  can_install: false,
 };
 
 /** Reactive application-update state and the narrow commands exposed by the backend. */
@@ -23,6 +25,8 @@ export interface DaystromUpdateState {
   check: () => void;
   /** Hide the current available-version banner until Daystrom restarts or the user checks manually. */
   dismiss: () => void;
+  /** Download, verify, and install the currently reviewed application update. */
+  install: () => void;
   /** Register the status listener and fetch the current backend snapshot. */
   init: () => void;
   /** Unregister the backend event listener. */
@@ -48,6 +52,12 @@ export function useDaystromUpdate(): DaystromUpdateState {
   function dismiss(): void {
     invoke('dismiss_daystrom_update')
       .catch(reason => log.error('Failed to dismiss Daystrom update:', reason));
+  }
+
+  /** Ask the backend to install only the currently reviewed update version. */
+  function install(): void {
+    invoke('install_daystrom_update')
+      .catch(reason => log.error('Failed to install Daystrom update:', reason));
   }
 
   /** Apply one authoritative update-status snapshot from the backend. */
@@ -93,6 +103,7 @@ export function useDaystromUpdate(): DaystromUpdateState {
     status,
     check,
     dismiss,
+    install,
     init,
     destroy,
   };

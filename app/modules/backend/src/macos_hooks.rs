@@ -74,6 +74,11 @@ pub(crate) fn install_quit_guard() {
 /// Returns `NSTerminateCancel` while a Daystrom-started process is still running or while the frontend
 /// flushes its logging appenders. Once shutdown is ready, the Tauri exit request terminates the app.
 unsafe extern "C-unwind" fn should_terminate(_this: *const AnyObject, _cmd: Sel, _sender: *const AnyObject) -> usize {
+    if crate::shutdown_ready() {
+        log_debug!("Coordinated shutdown completed; terminating");
+        return NSApplicationTerminateReply::TerminateNow.0;
+    }
+
     if crate::game_state::get().should_block_quit {
         log_debug!("Quit blocked (Daystrom-started process still running)");
         if let Some(handle) = APP_HANDLE.get() {
@@ -83,11 +88,6 @@ unsafe extern "C-unwind" fn should_terminate(_this: *const AnyObject, _cmd: Sel,
             }
         }
         return NSApplicationTerminateReply::TerminateCancel.0;
-    }
-
-    if crate::shutdown_ready() {
-        log_debug!("Coordinated shutdown completed; terminating");
-        return NSApplicationTerminateReply::TerminateNow.0;
     }
 
     log_debug!("Quit permitted; requesting coordinated shutdown");
