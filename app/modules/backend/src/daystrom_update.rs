@@ -17,6 +17,11 @@ use crate::use_log;
 
 use_log!("DaystromUpdate");
 
+mod install;
+
+pub use install::install_daystrom_update;
+pub(crate) use install::{PendingInstallResult, install_pending_update};
+
 /// Environment variable that overrides the update manifest only in debug builds.
 #[cfg(debug_assertions)]
 const DEBUG_UPDATE_ENDPOINT: &str = "DAYSTROM_UPDATE_ENDPOINT";
@@ -51,8 +56,10 @@ static STATE: Mutex<DaystromUpdateStatus> = Mutex::new(DaystromUpdateStatus {
     phase: DaystromUpdatePhase::Idle,
     version: None,
     notes: None,
+    download_progress: None,
     error: None,
     dismissed: false,
+    can_install: false,
 });
 
 /// Current phase of Daystrom's application-update discovery.
@@ -68,6 +75,12 @@ pub enum DaystromUpdatePhase {
     UpToDate,
     /// A newer release is described by the configured manifest.
     Available,
+    /// The selected release is being confirmed against the remote manifest.
+    Confirming,
+    /// The verified updater package is being downloaded.
+    Downloading,
+    /// The verified updater package is ready and the application is shutting down to install it.
+    Installing,
     /// The latest visible update check failed.
     Failed,
 }
@@ -82,10 +95,14 @@ pub struct DaystromUpdateStatus {
     pub version: Option<String>,
     /// Optional release notes from the configured update manifest.
     pub notes: Option<String>,
+    /// Download completion percentage when the remote server reports a total size.
+    pub download_progress: Option<u8>,
     /// User-facing failure summary for the latest visible check.
     pub error: Option<String>,
     /// Whether the available-version banner is dismissed for this process.
     pub dismissed: bool,
+    /// Whether this build may install the currently available update.
+    pub can_install: bool,
 }
 
 impl Default for DaystromUpdateStatus {
@@ -94,8 +111,10 @@ impl Default for DaystromUpdateStatus {
             phase: DaystromUpdatePhase::Idle,
             version: None,
             notes: None,
+            download_progress: None,
             error: None,
             dismissed: false,
+            can_install: false,
         }
     }
 }
@@ -266,11 +285,18 @@ pub fn dismiss_daystrom_update(app: tauri::AppHandle) {
 
 /// Execute one update request and publish its result according to its trigger.
 async fn run_check(app: &tauri::AppHandle, trigger: CheckTrigger) {
+    if install::is_in_progress() {
+        log_debug!("Skipping {trigger:?} update check while installation is in progress");
+        return;
+    }
+
     if trigger == CheckTrigger::Manual {
         update_state(app, |status| {
             status.phase = DaystromUpdatePhase::Checking;
+            status.download_progress = None;
             status.error = None;
             status.dismissed = false;
+            status.can_install = false;
         });
     }
 
@@ -281,18 +307,20 @@ async fn run_check(app: &tauri::AppHandle, trigger: CheckTrigger) {
     if trigger != CheckTrigger::Periodic {
         update_state(app, |status| {
             status.phase = DaystromUpdatePhase::Checking;
+            status.download_progress = None;
             status.error = None;
+            status.can_install = false;
         });
     }
 
-    let endpoints = effective_update_endpoints(app).join(", ");
-    let endpoints = if endpoints.is_empty() {
-        "<no endpoint configured>".to_string()
-    } else {
-        endpoints
-    };
+    let endpoints = effective_update_endpoint_description(app);
     log_debug!("Checking for Daystrom updates at {endpoints} ({trigger:?})");
-    match check_remote(app).await {
+    let result = check_remote(app).await;
+    if install::is_in_progress() {
+        log_debug!("Discarding completed {trigger:?} update check because installation has started");
+        return;
+    }
+    match result {
         Ok(Some(update)) => apply_available_update(app, update.into(), trigger),
         Ok(None) => {
             update_state(app, |status| *status = up_to_date_status());
@@ -301,7 +329,7 @@ async fn run_check(app: &tauri::AppHandle, trigger: CheckTrigger) {
         Err(error) => {
             log_warn!("Daystrom update check at {endpoints} failed: {error}");
             update_state(app, |status| {
-                if let Some(next) = failure_status(status, trigger) {
+                if let Some(next) = failure_status(status, trigger, installation_allowed()) {
                     *status = next;
                 }
             });
@@ -357,6 +385,29 @@ fn effective_update_endpoints(app: &tauri::AppHandle) -> Vec<String> {
     configured_update_endpoints(app.config().plugins.0.get("updater"))
 }
 
+/// Describe the effective manifest endpoints for diagnostics and actionable failures.
+fn effective_update_endpoint_description(app: &tauri::AppHandle) -> String {
+    let endpoints = effective_update_endpoints(app).join(", ");
+    if endpoints.is_empty() {
+        "<no endpoint configured>".to_string()
+    } else {
+        endpoints
+    }
+}
+
+/// Return whether this build may install updates from its effective manifest endpoint.
+fn installation_allowed() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        std::env::var_os(DEBUG_UPDATE_ENDPOINT).is_some()
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        true
+    }
+}
+
 /// Extract updater endpoints from Tauri's plugin configuration.
 fn configured_update_endpoints(updater: Option<&serde_json::Value>) -> Vec<String> {
     updater
@@ -377,7 +428,9 @@ async fn check_remote(app: &tauri::AppHandle) -> Result<Option<Update>, String> 
 /// Store an available update and optionally notify about a newly discovered periodic result.
 fn apply_available_update(app: &tauri::AppHandle, update: AvailableUpdate, trigger: CheckTrigger) {
     let should_notify = record_seen_version(&update.version, trigger);
-    update_state(app, |status| *status = available_status(status, &update, trigger));
+    update_state(app, |status| {
+        *status = available_status(status, &update, trigger, installation_allowed());
+    });
 
     log_info!("Daystrom update {} is available", update.version);
     if should_notify {
@@ -403,6 +456,7 @@ fn available_status(
     previous: &DaystromUpdateStatus,
     update: &AvailableUpdate,
     trigger: CheckTrigger,
+    can_install: bool,
 ) -> DaystromUpdateStatus {
     let same_version = previous.version.as_deref() == Some(&update.version);
     let dismissed = trigger != CheckTrigger::Manual && same_version && previous.dismissed;
@@ -410,8 +464,10 @@ fn available_status(
         phase: DaystromUpdatePhase::Available,
         version: Some(update.version.clone()),
         notes: update.notes.clone(),
+        download_progress: None,
         error: None,
         dismissed,
+        can_install,
     }
 }
 
@@ -424,7 +480,11 @@ fn up_to_date_status() -> DaystromUpdateStatus {
 }
 
 /// Construct a visible failure state without discarding a previously confirmed update.
-fn failure_status(previous: &DaystromUpdateStatus, trigger: CheckTrigger) -> Option<DaystromUpdateStatus> {
+fn failure_status(
+    previous: &DaystromUpdateStatus,
+    trigger: CheckTrigger,
+    can_install: bool,
+) -> Option<DaystromUpdateStatus> {
     if trigger == CheckTrigger::Periodic {
         return None;
     }
@@ -433,7 +493,9 @@ fn failure_status(previous: &DaystromUpdateStatus, trigger: CheckTrigger) -> Opt
     if previous.version.is_some() {
         let mut status = previous.clone();
         status.phase = DaystromUpdatePhase::Available;
+        status.download_progress = None;
         status.error = error;
+        status.can_install = can_install;
         Some(status)
     } else {
         Some(DaystromUpdateStatus {
@@ -495,9 +557,10 @@ mod tests {
             ..DaystromUpdateStatus::default()
         };
 
-        let next = available_status(&previous, &available("0.10.0"), CheckTrigger::Periodic);
+        let next = available_status(&previous, &available("0.10.0"), CheckTrigger::Periodic, true);
 
         assert!(next.dismissed);
+        assert!(next.can_install);
     }
 
     #[test]
@@ -509,7 +572,7 @@ mod tests {
             ..DaystromUpdateStatus::default()
         };
 
-        let next = available_status(&previous, &available("0.10.0"), CheckTrigger::Manual);
+        let next = available_status(&previous, &available("0.10.0"), CheckTrigger::Manual, true);
 
         assert!(!next.dismissed);
     }
@@ -523,14 +586,14 @@ mod tests {
             ..DaystromUpdateStatus::default()
         };
 
-        let next = available_status(&previous, &available("0.11.0"), CheckTrigger::Periodic);
+        let next = available_status(&previous, &available("0.11.0"), CheckTrigger::Periodic, true);
 
         assert!(!next.dismissed);
     }
 
     #[test]
     fn startup_failure_without_known_update_is_visible() {
-        let next = failure_status(&DaystromUpdateStatus::default(), CheckTrigger::Startup).unwrap();
+        let next = failure_status(&DaystromUpdateStatus::default(), CheckTrigger::Startup, false).unwrap();
 
         assert_eq!(next.phase, DaystromUpdatePhase::Failed);
         assert!(next.version.is_none());
@@ -547,12 +610,13 @@ mod tests {
             ..DaystromUpdateStatus::default()
         };
 
-        let next = failure_status(&previous, CheckTrigger::Manual).unwrap();
+        let next = failure_status(&previous, CheckTrigger::Manual, true).unwrap();
 
         assert_eq!(next.phase, DaystromUpdatePhase::Available);
         assert_eq!(next.version.as_deref(), Some("0.10.0"));
         assert_eq!(next.notes.as_deref(), Some("Release notes"));
         assert!(!next.dismissed);
+        assert!(next.can_install);
         assert!(next.error.is_some());
     }
 
@@ -564,7 +628,7 @@ mod tests {
             ..DaystromUpdateStatus::default()
         };
 
-        assert!(failure_status(&previous, CheckTrigger::Periodic).is_none());
+        assert!(failure_status(&previous, CheckTrigger::Periodic, true).is_none());
     }
 
     #[test]

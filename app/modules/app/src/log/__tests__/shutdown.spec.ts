@@ -44,4 +44,31 @@ describe('logging shutdown', () => {
       expect(mockInvoke).toHaveBeenCalledWith('complete_shutdown');
     });
   });
+
+  it('allows another coordinated shutdown after the backend keeps the app running', async () => {
+    let resolveFirstShutdown!: () => void;
+    mockInvoke.mockReturnValueOnce(new Promise<void>((resolve) => {
+      resolveFirstShutdown = resolve;
+    }));
+    const {registerLoggingShutdownHandler} = await import('../shutdown');
+
+    await registerLoggingShutdownHandler();
+    const handler = mockListen.mock.calls[0]?.[1] as () => void;
+
+    handler();
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+    handler();
+    expect(mockCloseLogging).toHaveBeenCalledTimes(1);
+
+    resolveFirstShutdown();
+    await Promise.resolve();
+    await Promise.resolve();
+    handler();
+    expect(mockCloseLogging).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+  });
 });

@@ -22,7 +22,9 @@ mod state_update;
 mod websocket;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
-use daystrom_update::{check_for_daystrom_update, dismiss_daystrom_update, get_cached_daystrom_update_status};
+use daystrom_update::{
+    check_for_daystrom_update, dismiss_daystrom_update, get_cached_daystrom_update_status, install_daystrom_update,
+};
 use profile_state::get_cached_profile_state;
 use settings::{get_game_settings, set_game_settings};
 
@@ -37,6 +39,9 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// Set after the frontend has completed its asynchronous shutdown work.
 static SHUTDOWN_READY: AtomicBool = AtomicBool::new(false);
 
+/// Set while the selected shutdown action exits, installs, or recovers from an error.
+static SHUTDOWN_FINISHING: AtomicBool = AtomicBool::new(false);
+
 /// Return whether the frontend has completed its coordinated shutdown work.
 #[cfg(target_os = "macos")]
 pub(crate) fn shutdown_ready() -> bool {
@@ -49,8 +54,7 @@ pub(crate) fn shutdown_ready() -> bool {
 /// A short timeout keeps the native application terminable when the webview is unavailable or the
 /// frontend listener fails to respond.
 pub(crate) fn request_shutdown(app: &tauri::AppHandle) {
-    if SHUTDOWN_READY.load(Relaxed) {
-        app.exit(0);
+    if SHUTDOWN_READY.load(Relaxed) || SHUTDOWN_FINISHING.load(Relaxed) {
         return;
     }
     if SHUTDOWN_REQUESTED.swap(true, Relaxed) {
@@ -64,29 +68,57 @@ pub(crate) fn request_shutdown(app: &tauri::AppHandle) {
     log_debug!("[EVENT] Requesting coordinated frontend shutdown");
     if let Err(error) = app.emit("shutdown-requested", ()) {
         log_warn!("Failed to request frontend shutdown: {error}");
-        SHUTDOWN_READY.store(true, Relaxed);
-        app.exit(0);
+        finish_shutdown(app);
         return;
     }
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        if !SHUTDOWN_READY.swap(true, Relaxed) {
-            log_warn!("Frontend shutdown timed out; forcing application exit");
-            app.exit(0);
+        if SHUTDOWN_REQUESTED.load(Relaxed) && !SHUTDOWN_FINISHING.load(Relaxed) {
+            log_warn!("Frontend shutdown timed out; continuing application shutdown");
+            finish_shutdown(&app);
         }
     });
+}
+
+/// Finish the active shutdown action after frontend logging has flushed or timed out.
+fn finish_shutdown(app: &tauri::AppHandle) {
+    if SHUTDOWN_FINISHING.swap(true, Relaxed) {
+        return;
+    }
+    match daystrom_update::install_pending_update(app) {
+        daystrom_update::PendingInstallResult::Installed => {
+            SHUTDOWN_READY.store(true, Relaxed);
+            log_info!("Restarting Daystrom after successful update installation");
+            app.restart();
+        }
+        daystrom_update::PendingInstallResult::Failed => {
+            SHUTDOWN_REQUESTED.store(false, Relaxed);
+            SHUTDOWN_FINISHING.store(false, Relaxed);
+            show_main_window(app);
+        }
+        daystrom_update::PendingInstallResult::None => {
+            SHUTDOWN_READY.store(true, Relaxed);
+            app.exit(0);
+        }
+    }
+}
+
+/// Return whether an exit request represents a confirmed shutdown or updater restart.
+fn should_allow_exit(code: Option<i32>) -> bool {
+    code == Some(0) || code == Some(tauri::RESTART_EXIT_CODE)
 }
 
 /// Complete a coordinated shutdown after frontend appenders have flushed.
 #[tauri::command]
 fn complete_shutdown(app: tauri::AppHandle) {
-    if SHUTDOWN_READY.swap(true, Relaxed) {
+    if !SHUTDOWN_REQUESTED.load(Relaxed) {
+        log_debug!("[EVENT] Ignoring stale frontend shutdown completion");
         return;
     }
     log_debug!("[EVENT] Frontend shutdown completed");
-    app.exit(0);
+    finish_shutdown(&app);
 }
 
 /// Make the window visible and open DevTools in debug builds.
@@ -96,6 +128,17 @@ fn show_window(window: &tauri::WebviewWindow) {
     if std::env::var("DAYSTROM_DEVTOOLS").as_deref() != Ok("0") {
         window.open_devtools();
     }
+}
+
+/// Show, restore, and focus the main Daystrom window.
+pub(crate) fn show_main_window(app: &tauri::AppHandle) -> bool {
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    true
 }
 
 /// Select the appropriate warning message based on which Daystrom-started processes are running.
@@ -286,11 +329,7 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         log_debug!("[EVENT] Tray menu: Show Window clicked");
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(app);
                     }
                     "quit" => {
                         log_debug!("[EVENT] Tray menu: Quit clicked");
@@ -312,11 +351,7 @@ pub fn run() {
                     } = event
                     {
                         log_debug!("[EVENT] Tray icon left-clicked");
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
@@ -335,6 +370,7 @@ pub fn run() {
             launch_game,
             check_for_daystrom_update,
             dismiss_daystrom_update,
+            install_daystrom_update,
             complete_shutdown,
         ])
         .on_window_event(|window, event| {
@@ -392,7 +428,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app_handle, event| match event {
             tauri::RunEvent::ExitRequested { api, code, .. } => {
-                if code == Some(0) {
+                if should_allow_exit(code) {
                     log_debug!("[EVENT] ExitRequested (code: {code:?}), shutting down");
                     return;
                 }
@@ -412,6 +448,14 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirmed_shutdown_and_updater_restart_may_exit() {
+        assert!(should_allow_exit(Some(0)));
+        assert!(should_allow_exit(Some(tauri::RESTART_EXIT_CODE)));
+        assert!(!should_allow_exit(None));
+        assert!(!should_allow_exit(Some(1)));
+    }
 
     // -- quit_blocked_message --
 

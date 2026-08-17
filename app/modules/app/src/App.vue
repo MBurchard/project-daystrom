@@ -40,6 +40,7 @@ const {
   status: daystromUpdate,
   check: checkDaystromUpdate,
   dismiss: dismissDaystromUpdate,
+  install: installDaystromUpdate,
   init: initDaystromUpdate,
   destroy: destroyDaystromUpdate,
 } = useDaystromUpdate();
@@ -70,7 +71,11 @@ onUnmounted(() => {
 
     <template v-else>
       <div class="daystrom-update-controls">
-        <button :disabled="daystromUpdate.phase === 'checking'" @click="checkDaystromUpdate">
+        <button :disabled="daystromUpdate.phase === 'checking'
+                  || daystromUpdate.phase === 'confirming'
+                  || daystromUpdate.phase === 'downloading'
+                  || daystromUpdate.phase === 'installing'"
+            @click="checkDaystromUpdate">
           Check for Daystrom updates
         </button>
         <span v-if="daystromUpdate.phase === 'checking'">Checking…</span>
@@ -78,15 +83,43 @@ onUnmounted(() => {
         <span v-else-if="daystromUpdate.error" class="error">{{ daystromUpdate.error }}</span>
       </div>
 
-      <section v-if="daystromUpdate.phase === 'available' && !daystromUpdate.dismissed"
+      <section v-if="daystromUpdate.version && !daystromUpdate.dismissed"
           class="daystrom-update-banner">
         <h2>Project Daystrom {{ daystromUpdate.version }} is available</h2>
         <p v-if="daystromUpdate.notes" class="release-notes">
           {{ daystromUpdate.notes }}
         </p>
-        <button @click="dismissDaystromUpdate">
-          Later
-        </button>
+        <p>
+          Daystrom will restart after verification. A running game stays open, and its Daystrom mod reconnects
+          automatically.
+        </p>
+        <p v-if="daystromUpdate.phase === 'confirming'" class="update-progress">
+          Confirming update…
+        </p>
+        <p v-else-if="daystromUpdate.phase === 'downloading'" class="update-progress">
+          Downloading and verifying update…
+          <progress v-if="daystromUpdate.download_progress !== null"
+              :value="daystromUpdate.download_progress"
+              max="100" />
+          <span v-if="daystromUpdate.download_progress !== null">
+            {{ daystromUpdate.download_progress }}%
+          </span>
+        </p>
+        <p v-else-if="daystromUpdate.phase === 'installing'" class="update-progress">
+          Installing update and restarting Daystrom…
+        </p>
+        <p v-else-if="daystromUpdate.phase === 'available' && !daystromUpdate.can_install"
+            class="info-message">
+          Installation is disabled in this development build unless a debug update endpoint is configured.
+        </p>
+        <div v-if="daystromUpdate.phase === 'available'" class="update-actions">
+          <button :disabled="!daystromUpdate.can_install" @click="installDaystromUpdate">
+            Install update
+          </button>
+          <button @click="dismissDaystromUpdate">
+            Later
+          </button>
+        </div>
       </section>
 
       <p v-if="error">
@@ -328,6 +361,21 @@ body {
   overflow-y: auto;
   white-space: pre-wrap;
   user-select: text;
+}
+
+.update-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.update-progress progress {
+  width: 10rem;
 }
 
 h1 {

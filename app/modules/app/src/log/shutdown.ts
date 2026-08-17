@@ -19,7 +19,13 @@ function handleShutdownRequested(): void {
   closeLogging()
     .catch(reason => console.error('Failed to close frontend logging', reason))
     .then(() => invoke(COMPLETE_SHUTDOWN_COMMAND))
-    .catch(reason => console.error('Failed to complete application shutdown', reason));
+    .then(() => {
+      shutdownStarted = false;
+    })
+    .catch((reason) => {
+      shutdownStarted = false;
+      console.error('Failed to complete application shutdown', reason);
+    });
 }
 
 /**
