@@ -16,7 +16,8 @@ This document is the technical contract for releasing, updating, and rolling bac
 
 ## Release flow
 
-1. Run the manually dispatched `Prepare Release` workflow with the intended source revision and version.
+1. Run the manually dispatched `Prepare Release Draft` workflow for the intended source revision and enter the version
+   from `package.json`.
 2. The workflow verifies the version and tag, then builds Windows x64 and universal macOS artefacts.
 3. Platform installers, Tauri updater packages, rollback metadata, detached signatures, checksums, and `latest.json` are
    attached to a draft release.
