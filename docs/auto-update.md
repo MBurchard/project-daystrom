@@ -122,7 +122,7 @@ After a successful update, the downloaded target package becomes the current-pac
 it when it matches the new target's signed predecessor metadata; otherwise Daystrom downloads the required predecessor.
 The old rollback package is deleted only after the replacement is safely stored.
 
-The first update from manually installed `0.9.0` to `0.10.0` may download both versions because no current-package
+The first update from manually installed `0.9.0` to `0.9.1` may download both versions because no current-package
 cache exists yet. Consecutive steady-state updates normally download only the new package.
 
 ## One-click rollback
@@ -174,4 +174,4 @@ checks. Before publishing a draft, verify:
 - safe failure for interrupted, malformed, denied, or tampered updates;
 - retention of only one predecessor after consecutive updates.
 
-The first production auto-update validation requires a controlled update from `0.9.0` to `0.10.0` after publication.
+The first production auto-update validation requires a controlled update from `0.9.0` to `0.9.1` after publication.
