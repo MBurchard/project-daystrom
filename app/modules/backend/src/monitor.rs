@@ -63,6 +63,8 @@ enum MonitorAction {
     ClearLauncherStarted,
     /// Run a full game detection and update the store.
     RefreshGameStatus,
+    /// Finish activation of a bundled mod restored while the game was running.
+    FinishModRestore,
     /// Re-query the Scopely update API and push the result.
     RecheckUpdateApi,
 }
@@ -190,6 +192,7 @@ fn evaluate(
     if prev_game && !game {
         actions.push(MonitorAction::ClearGameStarted);
         actions.push(MonitorAction::RefreshGameStatus);
+        actions.push(MonitorAction::FinishModRestore);
     }
 
     // Launcher just exited: clear the origin flag and refresh full status
@@ -290,6 +293,9 @@ fn run_loop(app: tauri::AppHandle) {
                         s.launcher_started_by_us = launcher_started_by_us;
                     });
                 }
+                MonitorAction::FinishModRestore => {
+                    crate::daystrom_update::resume_pending_mod_restore(&app);
+                }
                 MonitorAction::RecheckUpdateApi => {
                     log_debug!("Periodic update check");
                     commands::update_check_into_store(&app);
@@ -359,7 +365,7 @@ mod tests {
     fn game_exits_clears_flag_and_refreshes() {
         assert_eq!(
             evaluate(true, false, false, false, true, false),
-            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus,]
+            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus, MonitorAction::FinishModRestore,]
         );
     }
 
@@ -383,6 +389,7 @@ mod tests {
             vec![
                 MonitorAction::ClearGameStarted,
                 MonitorAction::RefreshGameStatus,
+                MonitorAction::FinishModRestore,
                 MonitorAction::ClearLauncherStarted,
                 MonitorAction::RefreshGameStatus,
             ]
@@ -465,7 +472,7 @@ mod tests {
         let actions = state.tick(false, false, true);
         assert_eq!(
             actions,
-            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus,]
+            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus, MonitorAction::FinishModRestore,]
         );
 
         // Tick 4: still off, no change
@@ -513,7 +520,7 @@ mod tests {
         let actions = state.tick(false, false, true);
         assert_eq!(
             actions,
-            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus,]
+            vec![MonitorAction::ClearGameStarted, MonitorAction::RefreshGameStatus, MonitorAction::FinishModRestore,]
         );
     }
 

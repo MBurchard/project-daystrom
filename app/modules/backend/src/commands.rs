@@ -236,6 +236,7 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<(), String> {
         s.mod_outdated = false;
         s.mod_removable = cfg!(target_os = "windows");
     });
+    crate::daystrom_update::complete_pending_mod_restore(&app);
     Ok(())
 }
 

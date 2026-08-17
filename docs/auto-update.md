@@ -183,20 +183,34 @@ The action shows the target version and explains that it restores Daystrom and i
 flow then:
 
 1. verifies the cached package, signature, version, platform, and predecessor metadata again;
-2. persists current settings and creates the one-generation settings backup;
-3. asks the user to close the game when restoring the bundled mod requires it;
-4. never terminates the game automatically;
-5. closes logging and starts a narrowly scoped external restore process;
-6. exits Daystrom;
-7. installs the cached predecessor package;
+2. verifies the one-generation settings backup and preserves the successor settings for failure recovery;
+3. records durably that the restored bundled mod still needs to become active;
+4. never terminates the game automatically and keeps the pending mod restore visible while STFC is running;
+5. closes logging and invokes the narrowly scoped Tauri platform installer;
+6. installs the cached predecessor package using native Windows or macOS update semantics;
+7. exits or replaces the running Daystrom application as required by that platform;
 8. restarts the restored Daystrom version;
 9. marks the rejected version so it is not offered again automatically in the same process or without an explicit user
     decision.
 
-The restore process accepts only the already verified local package and signed metadata. It must not accept arbitrary
-URLs, versions, or installation paths. It waits for the Daystrom process to exit before replacing files. Its exact
-implementation may reuse supported Tauri updater primitives or be a small platform helper, but it must preserve Windows
-installer semantics and macOS signing and notarization.
+The implementation re-verifies the persisted authorization with the embedded updater key and matches the cached package
+against its immutable release manifest before coordinated shutdown begins. It then gives the cached bytes to the same
+supported Tauri platform installer used for forward updates. The frontend cannot supply a URL, version, package path, or
+installation path. Windows starts the verified NSIS installer as an external process; macOS uses Tauri's signed app-bundle
+replacement before Daystrom restarts.
+
+Before a forward update starts, Daystrom stores the exact persisted settings state of the installed release. A rollback
+restores that state before installing the predecessor. If the platform installer returns an error, Daystrom restores the
+successor's settings again and keeps the rollback action available. Profiles are never replaced by this mechanism.
+
+The running game keeps the mod already loaded in its process. After STFC closes, the restored Daystrom instance finishes
+the pending mod restore automatically. On Windows it deploys the restored bundled DLL into the game directory; on macOS
+the next Daystrom launch injects the restored bundled library directly. The durable pending marker survives additional
+Daystrom restarts and is cleared only after no running game blocks activation and any required Windows deployment has
+succeeded.
+
+After a successful rollback, automatic startup and periodic checks suppress the rejected successor. A manual update
+check is the explicit user decision that makes the release available again.
 
 Rolling back Daystrom does not rewrite a mod already loaded into a running game process. The restored bundled mod takes
 effect after the game is closed and the previous mod is deployed for the next start.

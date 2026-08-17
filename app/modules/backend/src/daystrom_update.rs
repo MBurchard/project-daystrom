@@ -18,10 +18,12 @@ use crate::use_log;
 use_log!("DaystromUpdate");
 
 mod install;
+mod rollback;
 mod rollback_cache;
 
+pub(crate) use install::PendingInstallResult;
 pub use install::install_daystrom_update;
-pub(crate) use install::{PendingInstallResult, install_pending_update};
+pub use rollback::{get_cached_daystrom_rollback_status, restore_previous_daystrom_version};
 
 /// Environment variable that overrides the update manifest only in debug builds.
 #[cfg(debug_assertions)]
@@ -225,6 +227,8 @@ pub fn start(app: tauri::AppHandle) {
     }
 
     rollback_cache::reconcile_after_start(&app);
+    rollback::initialize(&app);
+    rollback::resume_mod_restore(&app, crate::game::is_game_running());
 
     let interval = update_check_interval();
     tauri::async_runtime::spawn(async move {
@@ -234,6 +238,16 @@ pub fn start(app: tauri::AppHandle) {
             run_check(&app, CheckTrigger::Periodic).await;
         }
     });
+}
+
+/// Finish an outstanding bundled-mod restore after the process monitor observes STFC exiting.
+pub(crate) fn resume_pending_mod_restore(app: &tauri::AppHandle) {
+    rollback::resume_mod_restore(app, false);
+}
+
+/// Mark an outstanding bundled-mod restore complete after explicit mod preparation succeeded.
+pub(crate) fn complete_pending_mod_restore(app: &tauri::AppHandle) {
+    rollback::complete_mod_restore(app);
 }
 
 /// Resolve the periodic interval, honouring a positive debug-only seconds override.
@@ -432,6 +446,14 @@ async fn check_remote(app: &tauri::AppHandle) -> Result<Option<Update>, String> 
 
 /// Store an available update and optionally notify about a newly discovered periodic result.
 fn apply_available_update(app: &tauri::AppHandle, update: AvailableUpdate, trigger: CheckTrigger) {
+    if should_suppress_rejected_update(trigger, rollback_cache::is_rejected_version(app, &update.version)) {
+        log_info!(
+            "Suppressing automatically rediscovered Daystrom {} after rollback",
+            update.version
+        );
+        update_state(app, |status| *status = up_to_date_status());
+        return;
+    }
     let should_notify = record_seen_version(&update.version, trigger);
     update_state(app, |status| {
         *status = available_status(status, &update, trigger, installation_allowed());
@@ -440,6 +462,19 @@ fn apply_available_update(app: &tauri::AppHandle, update: AvailableUpdate, trigg
     log_info!("Daystrom update {} is available", update.version);
     if should_notify {
         crate::notifications::show_daystrom_update(app, &update.version);
+    }
+}
+
+/// Return whether an automatic check must hide the release rejected by rollback.
+fn should_suppress_rejected_update(trigger: CheckTrigger, rejected: bool) -> bool {
+    rejected && trigger != CheckTrigger::Manual
+}
+
+/// Execute the rollback or forward-update package waiting for coordinated shutdown.
+pub(crate) fn install_pending_action(app: &tauri::AppHandle) -> PendingInstallResult {
+    match rollback::install_pending_rollback(app) {
+        PendingInstallResult::None => install::install_pending_update(app),
+        result => result,
     }
 }
 
@@ -551,6 +586,14 @@ mod tests {
         let mut seen = Some("0.10.0".to_string());
         assert!(!record_seen_version_for(&mut seen, "0.11.0", CheckTrigger::Manual));
         assert_eq!(seen.as_deref(), Some("0.11.0"));
+    }
+
+    #[test]
+    fn rejected_update_requires_an_explicit_manual_check() {
+        assert!(should_suppress_rejected_update(CheckTrigger::Startup, true));
+        assert!(should_suppress_rejected_update(CheckTrigger::Periodic, true));
+        assert!(!should_suppress_rejected_update(CheckTrigger::Manual, true));
+        assert!(!should_suppress_rejected_update(CheckTrigger::Periodic, false));
     }
 
     #[test]

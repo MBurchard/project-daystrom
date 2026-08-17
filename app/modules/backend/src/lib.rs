@@ -23,7 +23,8 @@ mod websocket;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
 use daystrom_update::{
-    check_for_daystrom_update, dismiss_daystrom_update, get_cached_daystrom_update_status, install_daystrom_update,
+    check_for_daystrom_update, dismiss_daystrom_update, get_cached_daystrom_rollback_status,
+    get_cached_daystrom_update_status, install_daystrom_update, restore_previous_daystrom_version,
 };
 use profile_state::get_cached_profile_state;
 use settings::{get_game_settings, set_game_settings};
@@ -87,10 +88,10 @@ fn finish_shutdown(app: &tauri::AppHandle) {
     if SHUTDOWN_FINISHING.swap(true, Relaxed) {
         return;
     }
-    match daystrom_update::install_pending_update(app) {
+    match daystrom_update::install_pending_action(app) {
         daystrom_update::PendingInstallResult::Installed => {
             SHUTDOWN_READY.store(true, Relaxed);
-            log_info!("Restarting Daystrom after successful update installation");
+            log_info!("Restarting Daystrom after successful package installation");
             app.restart();
         }
         daystrom_update::PendingInstallResult::Failed => {
@@ -366,6 +367,8 @@ pub fn run() {
             check_for_daystrom_update,
             dismiss_daystrom_update,
             install_daystrom_update,
+            get_cached_daystrom_rollback_status,
+            restore_previous_daystrom_version,
             complete_shutdown,
         ])
         .on_window_event(|window, event| {
