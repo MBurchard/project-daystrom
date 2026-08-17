@@ -8,6 +8,8 @@ use std::sync::Mutex;
 #[cfg(not(target_os = "macos"))]
 use notify_rust::Timeout;
 use notify_rust::{Notification, NotificationResponse};
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 
 use crate::use_log;
 
