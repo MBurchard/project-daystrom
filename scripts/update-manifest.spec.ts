@@ -1,8 +1,9 @@
+import type {UpdateManifest} from './update-manifest.ts';
 import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
-import {generateUpdateManifest} from './update-manifest.ts';
+import {finalizeUpdateManifest, generateUpdateManifest} from './update-manifest.ts';
 
 const temporaryDirectories: string[] = [];
 
@@ -96,5 +97,58 @@ describe('generateUpdateManifest', () => {
       repository: 'MBurchard/project-daystrom',
       tag: '0.9.0',
     })).toThrow(/both normalize to Project\.Daystrom\.app\.tar\.gz/);
+  });
+
+  it('embeds signed metadata for exactly the previous published release', () => {
+    const assetsDirectory = createAssetsDirectory();
+    const previousManifest = {
+      version: '0.9.0',
+      platforms: {
+        'darwin-aarch64': {signature: 'old mac', url: 'https://example.test/old-mac'},
+        'darwin-x86_64': {signature: 'old mac', url: 'https://example.test/old-mac'},
+        'windows-x86_64': {signature: 'old windows', url: 'https://example.test/old-windows'},
+      },
+    };
+
+    generateUpdateManifest({
+      assetsDirectory,
+      version: '0.10.0',
+      repository: 'MBurchard/project-daystrom',
+      tag: '0.10.0',
+      previousManifest,
+    });
+    writeFileSync(join(assetsDirectory, 'rollback-metadata.json.sig'), 'rollback signature\n');
+    const manifest = finalizeUpdateManifest(assetsDirectory);
+
+    expect(manifest.rollback).toEqual({
+      metadata: JSON.stringify({
+        schema: 1,
+        successorVersion: '0.10.0',
+        predecessorVersion: '0.9.0',
+        platforms: previousManifest.platforms,
+      }),
+      signature: 'rollback signature',
+    });
+    expect(readFileSync(join(assetsDirectory, 'rollback-metadata.json'), 'utf8'))
+      .toBe(manifest.rollback?.metadata);
+    expect(JSON.parse(readFileSync(join(assetsDirectory, 'latest.json'), 'utf8')))
+      .toEqual(manifest);
+    expect(readFileSync(join(assetsDirectory, 'SHA256SUMS'), 'utf8'))
+      .toContain('rollback-metadata.json.sig');
+  });
+
+  it('rejects incomplete predecessor metadata before signing', () => {
+    const assetsDirectory = createAssetsDirectory();
+
+    expect(() => generateUpdateManifest({
+      assetsDirectory,
+      version: '0.10.0',
+      repository: 'MBurchard/project-daystrom',
+      tag: '0.10.0',
+      previousManifest: {
+        version: '0.9.0',
+        platforms: {} as UpdateManifest['platforms'],
+      },
+    })).toThrow('Previous update manifest has no complete darwin-aarch64 platform');
   });
 });

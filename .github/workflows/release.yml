@@ -109,10 +109,20 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
+      - name: Enable Corepack
+        run: corepack enable
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Download macOS installer
         uses: actions/download-artifact@v8
@@ -138,16 +148,49 @@ jobs:
           name: Project-Daystrom-Windows-updater
           path: assets/
 
-      - name: Generate update manifest and checksums
+      - name: Download previous published update manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          mkdir -p previous-release
+          if gh release download --pattern latest.json --dir previous-release; then
+            echo "PREVIOUS_UPDATE_MANIFEST=previous-release/latest.json" >> "$GITHUB_ENV"
+          elif [ "$RELEASE_VERSION" != "0.9.0" ]; then
+            echo "The previous published release has no update manifest" >&2
+            exit 1
+          fi
+
+      - name: Generate update manifest
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          arguments=(assets "$RELEASE_VERSION" "$GITHUB_REPOSITORY" "$RELEASE_TAG")
+          if [ -n "$PREVIOUS_UPDATE_MANIFEST" ]; then
+            arguments+=("$PREVIOUS_UPDATE_MANIFEST")
+          fi
+          node scripts/update-manifest.ts "${arguments[@]}"
+
+      - name: Sign rollback metadata
+        if: env.PREVIOUS_UPDATE_MANIFEST != ''
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm --dir app exec tauri signer sign assets/rollback-metadata.json
+
+      - name: Verify rollback metadata signature
+        if: env.PREVIOUS_UPDATE_MANIFEST != ''
         run: >-
-          node scripts/update-manifest.ts
-          assets
-          "$RELEASE_VERSION"
-          "$GITHUB_REPOSITORY"
-          "$RELEASE_TAG"
+          pnpm verify:update-signature
+          assets/rollback-metadata.json
+          assets/rollback-metadata.json.sig
+
+      - name: Finalize update manifest and checksums
+        run: node scripts/update-manifest.ts finalize assets
 
       - name: Upload assets to draft release
         env:

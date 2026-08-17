@@ -236,9 +236,10 @@ modular gehalten, damit einzelne Plugins unabhängig entwickelt und veröffentli
 
 ### Umgebungsvariablen
 
-| Variable            | Standard | Beschreibung                                              |
-|---------------------|----------|-----------------------------------------------------------|
-| `DAYSTROM_DEVTOOLS` | `1`      | Auf `0` setzen, um DevTools in Debug-Builds zu verstecken |
+| Variable                            | Standard                 | Beschreibung                                               |
+|-------------------------------------|--------------------------|------------------------------------------------------------|
+| `DAYSTROM_UPDATE_ENDPOINT`          | Konfigurierter Endpunkt  | Nur Debug: URL des Daystrom-Update-Manifests überschreiben |
+| `DAYSTROM_UPDATE_INTERVAL_SECONDS`  | `21600`                  | Nur Debug: Intervall der regelmäßigen Updateprüfung setzen |
 
 ## Lizenz
 

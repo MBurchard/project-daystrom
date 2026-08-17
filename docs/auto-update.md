@@ -34,9 +34,10 @@ The repository will provide a manually dispatched `Prepare Release` workflow:
 3. It creates or updates a draft GitHub release for that immutable revision.
 4. The existing Windows x64 and universal macOS builds run in parallel.
 5. Both builds produce their normal installers and Tauri updater artefacts.
-6. The workflow signs the updater artefacts, verifies the signatures, and generates `latest.json` only after both
-    platform builds succeed.
-7. Installers, updater packages, detached signatures, checksums, and `latest.json` are attached to the draft.
+6. The workflow signs the updater artefacts and predecessor metadata, verifies the signatures, and generates
+    `latest.json` only after both platform builds succeed.
+7. Installers, updater packages, predecessor metadata, detached signatures, checksums, and `latest.json` are attached to
+    the draft.
 8. The workflow stops without publishing the release.
 
 The maintainer downloads and tests both installers from the draft. Publication remains a deliberate manual action in the
@@ -71,7 +72,7 @@ Daystrom accepts an update or rollback package only when all the following hold:
 - its Tauri signature validates against the embedded public key;
 - its version and platform match the signed metadata;
 - its source is the configured Daystrom update service;
-- a rollback targets exactly the recorded predecessor of the installed version.
+- a rollback targets exactly the recorded predecessor of the update's target version.
 
 Signing-key rotation requires an explicit migration release trusted by the previous key. It must not be an unplanned CI
 secret replacement.
@@ -131,26 +132,43 @@ existing graceful-shutdown path.
 
 ## Retaining one rollback release
 
-Daystrom retains a verified updater package for exactly the version installed immediately before the latest successful
-update. It does not copy the live application directory. Keeping an original signed release package is more predictable
-across NSIS installations and signed macOS app bundles.
+Daystrom retains a verified updater package for exactly the direct published predecessor of the installed release. This
+is intentionally independent of the version installed before the update: a direct update from `0.9.0` to `0.11.0`
+retains `0.10.0` for rollback. It does not copy the live application directory. Keeping an original signed release
+package is more predictable across NSIS installations and signed macOS app bundles.
 
-Before updating from version A to version B, Daystrom must have:
+Before updating from installed version A to target version B, whose signed direct predecessor is P, Daystrom must have:
 
 - a completely downloaded and verified update package for version B;
-- a completely downloaded and verified rollback package for the currently installed version A;
-- signed metadata recording A as B's only allowed rollback target;
+- a completely downloaded and verified rollback package for version P;
+- release metadata signed with the updater key recording P as B's only allowed rollback target;
 - a one-generation backup of settings needed to recover from an incompatible migration.
 
 Only after those prerequisites succeed may installation of B begin. The packages and metadata are stored in the platform
 application-data directory rather than the installation directory.
 
-After B starts successfully, A remains available until the next update. Before an update from B to C, the old A package
-is removed only after the verified B rollback package is safely stored. At steady state there is never more than one
-rollback release.
+After the user confirms B, Daystrom first enters a distinct rollback-retention phase. It verifies or downloads P with
+visible progress and starts downloading B only after that prerequisite succeeds. A failure therefore does not discard an
+already downloaded successor package or leave the interface looking stalled after a completed progress bar.
+
+The verified package downloaded for B is retained as B's current-package cache after the restart. Before a later update
+to C, Daystrom checks whether that cached package is the predecessor signed by C and verifies it against B's immutable
+release manifest and the embedded updater public key. A matching cache entry becomes the rollback candidate without
+downloading B again. When releases were skipped, Daystrom instead downloads C's signed direct predecessor P.
+
+The release workflow derives the predecessor relationship from the latest published `latest.json`, signs the compact
+metadata file with the existing Tauri updater key, and embeds its exact UTF-8 content as a string alongside the signature
+in B's manifest. The client verifies those original bytes before parsing the metadata strictly. It then requires the
+announced successor, predecessor, platform URL, and package signature to match before it may retain or reuse P.
+
+After B starts successfully, P remains available until the next update. Before an update to C, the old rollback package
+is removed only after C's verified predecessor is safely stored. At steady state there is never more than one rollback
+release.
 
 The initial updater-enabled release must publish a retrievable updater package for itself so that it can be retained
-before installing its successor.
+before installing its successor. Consequently, an update from a manually installed `0.9.0` to `0.10.0` may download
+both packages. An update directly to `0.11.0` downloads `0.10.0` for rollback instead. Steady-state updates between
+consecutive releases normally download only the new package.
 
 Version `0.9.0` is the first updater-enabled release and has not previously been distributed. The first end-to-end
 update test will install `0.10.0` over `0.9.0`; the project may move to `1.0.0` after that validation.
