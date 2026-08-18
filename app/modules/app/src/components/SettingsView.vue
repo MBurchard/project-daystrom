@@ -20,6 +20,7 @@ const {
   effectiveShipNamesVisible,
   effectiveStandardRecruitMax,
   effectiveAllianceDonationMax,
+  effectiveTransporterPatternMax,
   onSliderInput,
   onSystemZoomInput,
   onShipNamesVisibleInput,
@@ -148,6 +149,23 @@ const {
             @change="onSliderLimitChange('alliance_donation_max', $event)">
         <span class="setting-hint">Game default: 50</span>
       </div>
+
+      <div class="setting-row">
+        <label for="transporter-pattern-max">Transporter Patterns*</label>
+        <input id="transporter-pattern-max"
+            class="limit-input"
+            type="number"
+            :min="GAME_DEFAULT_SLIDER_MAX"
+            :max="MAX_CONFIGURED_SLIDER_LIMIT"
+            step="1"
+            :value="effectiveTransporterPatternMax"
+            @change="onSliderLimitChange('transporter_pattern_max', $event)">
+        <span class="setting-hint">Game default: 50</span>
+      </div>
+
+      <p class="setting-caution">
+        * No safe maximum is known. Increase this value cautiously and test in small steps.
+      </p>
     </section>
 
     <section class="settings-category">
@@ -318,6 +336,12 @@ const {
   min-width: 8.5rem;
   font-size: 0.8rem;
   opacity: 0.6;
+}
+
+.setting-caution {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  opacity: 0.7;
 }
 
 .scale-value {

@@ -112,6 +112,9 @@ pub struct GameSliderLimitSettings {
     /// Maximum number of alliance-donation units selectable at once.
     #[serde(default, deserialize_with = "lenient_option")]
     pub alliance_donation_max: Option<u32>,
+    /// Maximum number of Transporter Pattern exchanges selectable at once.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub transporter_pattern_max: Option<u32>,
 }
 
 /// Game settings received from Daystrom.
@@ -609,12 +612,14 @@ mod tests {
             "game.slider_limits",
             &serde_json::json!({
                 "standard_recruit_max": 500,
-                "alliance_donation_max": 80
+                "alliance_donation_max": 80,
+                "transporter_pattern_max": 120
             }),
         );
 
         assert_eq!(slider_limits().standard_recruit_max, Some(150));
         assert_eq!(slider_limits().alliance_donation_max, Some(80));
+        assert_eq!(slider_limits().transporter_pattern_max, Some(120));
 
         reset();
     }

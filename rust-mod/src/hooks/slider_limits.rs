@@ -3,7 +3,8 @@
 //! The adjustment runs when `InventoryUseRowWidget` binds its concrete `InventoryForPopup`. It updates the
 //! `_maxItemsToUse` field before the game binds the slider, avoiding platform-dependent inlining of the property's
 //! setter and the internal maximum calculation. Alliance donations are identified by `IsDonationUse`; Standard
-//! Recruit purchases use their stable bundle ID. Configured values only increase the maximum supplied by the game.
+//! Recruit purchases use their stable bundle ID, while Transporter Pattern exchanges use their shared cost-resource
+//! ID. Configured values only increase the maximum supplied by the game.
 
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
@@ -20,8 +21,10 @@ use crate::il2cpp::types::*;
 
 const LOG_TARGET: &str = "SliderLimits";
 
-/// Standard Recruit bundle ID, verified through an in-game debug session on v1851.
+/// Standard Recruit bundle ID, verified through an in-game debug session.
 const STANDARD_RECRUIT_BUNDLE_ID: i64 = 145_512_548;
+/// Transporter Pattern resource ID, verified across multiple officer bundles.
+const TRANSPORTER_PATTERN_RESOURCE_ID: i64 = 1_570_359_377;
 
 // ---- State ----------------------------------------------------------------
 
@@ -30,11 +33,13 @@ static ORIGINAL_ON_DID_BIND_CONTEXT: AtomicPtr<()> = AtomicPtr::new(std::ptr::nu
 
 static OFFSET_WIDGET_CONTEXT: AtomicUsize = AtomicUsize::new(0);
 static OFFSET_MAX_ITEMS_TO_USE: AtomicUsize = AtomicUsize::new(0);
+static OFFSET_INSTANT_COST: AtomicUsize = AtomicUsize::new(0);
 static OFFSET_ACTION_TARGET: AtomicUsize = AtomicUsize::new(0);
 static OFFSET_IS_DONATION_USE: AtomicUsize = AtomicUsize::new(0);
 static OFFSET_IS_CHEST_PURCHASE: AtomicUsize = AtomicUsize::new(0);
 
 static GET_BUNDLE_ID_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
+static GET_RESOURCE_ID_FN: AtomicPtr<MethodInfo> = AtomicPtr::new(std::ptr::null_mut());
 static BUNDLE_CLASS: AtomicPtr<Il2CppClass> = AtomicPtr::new(std::ptr::null_mut());
 
 static HOOK_INFO: HookInfo = HookInfo::new("SliderLimits");
@@ -43,6 +48,7 @@ static HOOK_INFO: HookInfo = HookInfo::new("SliderLimits");
 enum SliderKind {
     AllianceDonation,
     StandardRecruit,
+    TransporterPattern,
 }
 
 // ---- Hook -----------------------------------------------------------------
@@ -80,6 +86,7 @@ fn extend_bound_slider(widget: *mut Il2CppObject) {
                 .standard_recruit_max
                 .map(|maximum| maximum.min(crate::settings::STANDARD_RECRUIT_MAX)),
         ),
+        Some(SliderKind::TransporterPattern) => ("Transporter Pattern", settings.transporter_pattern_max),
         None => return,
     };
 
@@ -94,7 +101,8 @@ fn extend_bound_slider(widget: *mut Il2CppObject) {
 }
 
 fn classify_inventory_item(api: &Il2CppApi, inventory_item: *mut Il2CppObject) -> Option<SliderKind> {
-    if read_bool_field(inventory_item, &OFFSET_IS_DONATION_USE).unwrap_or(false) {
+    let is_donation = read_bool_field(inventory_item, &OFFSET_IS_DONATION_USE).unwrap_or(false);
+    if is_donation {
         return Some(SliderKind::AllianceDonation);
     }
     if !read_bool_field(inventory_item, &OFFSET_IS_CHEST_PURCHASE).unwrap_or(false) {
@@ -110,12 +118,24 @@ fn classify_inventory_item(api: &Il2CppApi, inventory_item: *mut Il2CppObject) -
     }
 
     let bundle_id = invoke::i64(GET_BUNDLE_ID_FN.load(Relaxed), bundle, "Bundle.get_BundleId");
+    if let Some(slider_kind) = classify_chest_slider(bundle_id, None) {
+        return Some(slider_kind);
+    }
 
-    classify_chest_slider(bundle_id)
+    let cost_resource_id = read_resource_id(inventory_item, &OFFSET_INSTANT_COST);
+    classify_chest_slider(None, cost_resource_id)
 }
 
-fn classify_chest_slider(bundle_id: Option<i64>) -> Option<SliderKind> {
-    (bundle_id == Some(STANDARD_RECRUIT_BUNDLE_ID)).then_some(SliderKind::StandardRecruit)
+fn read_resource_id(base: *mut Il2CppObject, offset: &AtomicUsize) -> Option<i64> {
+    let resource = read_object_field(base, offset)?;
+    invoke::i64(GET_RESOURCE_ID_FN.load(Relaxed), resource, "ResourceData.get_ID")
+}
+
+fn classify_chest_slider(bundle_id: Option<i64>, cost_resource_id: Option<i64>) -> Option<SliderKind> {
+    if bundle_id == Some(STANDARD_RECRUIT_BUNDLE_ID) {
+        return Some(SliderKind::StandardRecruit);
+    }
+    (cost_resource_id == Some(TRANSPORTER_PATTERN_RESOURCE_ID)).then_some(SliderKind::TransporterPattern)
 }
 
 fn is_exact_class(actual: *mut Il2CppClass, expected: *mut Il2CppClass) -> bool {
@@ -207,21 +227,35 @@ pub fn install(api: &Il2CppApi) {
 }
 
 fn resolve_inventory_item_fields(api: &Il2CppApi, class: *mut Il2CppClass) -> bool {
-    resolver::resolve_field_offset_into(api, class, "_maxItemsToUse", &OFFSET_MAX_ITEMS_TO_USE)
-        && resolver::resolve_field_offset_into(api, class, "<IsDonationUse>k__BackingField", &OFFSET_IS_DONATION_USE)
-        && resolver::resolve_field_offset_into(
-            api,
-            class,
-            "<IsChestPurchase>k__BackingField",
-            &OFFSET_IS_CHEST_PURCHASE,
-        )
-        && resolver::resolve_field_offset_into(api, class, "<ActionTarget>k__BackingField", &OFFSET_ACTION_TARGET)
+    let required_fields_resolved =
+        resolver::resolve_field_offset_into(api, class, "_maxItemsToUse", &OFFSET_MAX_ITEMS_TO_USE)
+            && resolver::resolve_field_offset_into(
+                api,
+                class,
+                "<IsDonationUse>k__BackingField",
+                &OFFSET_IS_DONATION_USE,
+            )
+            && resolver::resolve_field_offset_into(
+                api,
+                class,
+                "<IsChestPurchase>k__BackingField",
+                &OFFSET_IS_CHEST_PURCHASE,
+            )
+            && resolver::resolve_field_offset_into(api, class, "<ActionTarget>k__BackingField", &OFFSET_ACTION_TARGET);
+
+    let _ = resolver::resolve_field_offset_into(api, class, "_instantCost", &OFFSET_INSTANT_COST);
+
+    required_fields_resolved
 }
 
 fn resolve_identifier_methods(api: &Il2CppApi) {
     if let Some(bundle_class) = resolver::resolve_prime_class(api, "Digit.PrimePlatform.Content", "Bundle") {
         BUNDLE_CLASS.store(bundle_class, Relaxed);
         try_resolve_method_into(api, bundle_class, "get_BundleId", &GET_BUNDLE_ID_FN);
+    }
+
+    if let Some(resource_class) = resolver::resolve_prime_model_class(api, "ResourceData") {
+        try_resolve_method_into(api, resource_class, "get_ID", &GET_RESOURCE_ID_FN);
     }
 }
 
@@ -257,11 +291,20 @@ mod tests {
     #[test]
     fn standard_recruit_requires_matching_bundle() {
         assert_eq!(
-            classify_chest_slider(Some(STANDARD_RECRUIT_BUNDLE_ID)),
+            classify_chest_slider(Some(STANDARD_RECRUIT_BUNDLE_ID), None),
             Some(SliderKind::StandardRecruit)
         );
-        assert_eq!(classify_chest_slider(Some(475_431_388)), None);
-        assert_eq!(classify_chest_slider(None), None);
+        assert_eq!(classify_chest_slider(Some(475_431_388), None), None);
+        assert_eq!(classify_chest_slider(None, None), None);
+    }
+
+    #[test]
+    fn transporter_pattern_requires_matching_cost_resource() {
+        assert_eq!(
+            classify_chest_slider(Some(1_791_829_648), Some(TRANSPORTER_PATTERN_RESOURCE_ID)),
+            Some(SliderKind::TransporterPattern)
+        );
+        assert_eq!(classify_chest_slider(Some(1_791_829_648), Some(42)), None);
     }
 
     #[test]
