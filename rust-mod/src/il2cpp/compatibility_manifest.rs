@@ -1234,6 +1234,15 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         "IActionData",
         Requirement::Required,
     ),
+    field(
+        SLIDER_LIMITS,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Inventories",
+        "InventoryForPopup",
+        &["_instantCost"],
+        "ResourceData",
+        Requirement::Optional,
+    ),
     method(
         SLIDER_LIMITS,
         PRIME_ASSEMBLIES,
@@ -1244,6 +1253,17 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         &[],
         false,
         Requirement::Required,
+    ),
+    method(
+        SLIDER_LIMITS,
+        PRIME_ASSEMBLIES,
+        "Digit.PrimeServer.Models",
+        "ResourceData",
+        &["get_ID"],
+        "long",
+        &[],
+        false,
+        Requirement::Optional,
     ),
     method(
         INTERSTITIAL,

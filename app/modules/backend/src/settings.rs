@@ -348,6 +348,13 @@ pub struct GameSliderLimitSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub alliance_donation_max: Option<u32>,
+    /// Maximum number of Transporter Pattern exchanges selectable at once.
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub transporter_pattern_max: Option<u32>,
 }
 
 /// Game-related settings that are sent to the mod.
@@ -429,6 +436,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
         slider_limits: GameSliderLimitSettings {
             standard_recruit_max: None,
             alliance_donation_max: None,
+            transporter_pattern_max: None,
         },
         shortcuts: BTreeMap::new(),
     },
@@ -1363,6 +1371,7 @@ mod tests {
         let settings = GameSliderLimitSettings::default();
         assert_eq!(settings.standard_recruit_max, None);
         assert_eq!(settings.alliance_donation_max, None);
+        assert_eq!(settings.transporter_pattern_max, None);
     }
 
     #[test]
@@ -1370,15 +1379,18 @@ mod tests {
         let toml_str = "\
             [game.slider_limits]\n\
             standard_recruit_max = 500\n\
-            alliance_donation_max = 80\n";
+            alliance_donation_max = 80\n\
+            transporter_pattern_max = 120\n";
         let parsed: AppSettings = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.game.slider_limits.standard_recruit_max, Some(150));
         assert_eq!(parsed.game.slider_limits.alliance_donation_max, Some(80));
+        assert_eq!(parsed.game.slider_limits.transporter_pattern_max, Some(120));
 
         let serialized = toml::to_string_pretty(&parsed).unwrap();
         assert!(serialized.contains("[game.slider_limits]"));
         assert!(serialized.contains("standard_recruit_max = 150"));
         assert!(serialized.contains("alliance_donation_max = 80"));
+        assert!(serialized.contains("transporter_pattern_max = 120"));
     }
 
     #[test]

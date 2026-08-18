@@ -16,7 +16,7 @@ type CargoViewTargetKey =
   'show_for_stations' |
   'show_for_players';
 
-type SliderLimitKey = 'standard_recruit_max' | 'alliance_donation_max';
+type SliderLimitKey = 'standard_recruit_max' | 'alliance_donation_max' | 'transporter_pattern_max';
 
 /**
  * Normalize a configured slider maximum.
@@ -56,6 +56,9 @@ export function useSettingsView() {
   );
   const effectiveAllianceDonationMax = computed(
     () => settings.value.slider_limits.alliance_donation_max ?? GAME_DEFAULT_SLIDER_MAX,
+  );
+  const effectiveTransporterPatternMax = computed(
+    () => settings.value.slider_limits.transporter_pattern_max ?? GAME_DEFAULT_SLIDER_MAX,
   );
 
   /** Update the UI scale from its range input. */
@@ -212,6 +215,7 @@ export function useSettingsView() {
     effectiveShipNamesVisible,
     effectiveStandardRecruitMax,
     effectiveAllianceDonationMax,
+    effectiveTransporterPatternMax,
     onSliderInput,
     onSystemZoomInput,
     onShipNamesVisibleInput,
