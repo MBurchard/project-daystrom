@@ -8,6 +8,7 @@ use ts_rs::TS;
 
 use super::install::{InstallGuard, PendingInstallResult};
 use super::rollback_cache::PreparedRollback;
+use crate::ui_error::UiErrorCode;
 
 /// Current rollback status exposed to the display-only frontend.
 static STATE: Mutex<DaystromRollbackStatus> = Mutex::new(DaystromRollbackStatus {
@@ -46,8 +47,8 @@ pub struct DaystromRollbackStatus {
     pub phase: DaystromRollbackPhase,
     /// Sole predecessor version that may be restored.
     pub version: Option<String>,
-    /// User-facing failure summary for the latest attempt.
-    pub error: Option<String>,
+    /// Stable failure code for the latest attempt.
+    pub error: Option<UiErrorCode>,
     /// Whether the current state accepts an explicit restore request.
     pub can_restore: bool,
     /// Whether STFC must close before the restored bundled mod can become active.
@@ -85,15 +86,12 @@ pub(super) fn resume_mod_restore(app: &tauri::AppHandle, game_running: bool) {
 
     if let Err(error) = result {
         log_warn!("Could not finish the bundled mod restore: {error}");
-        publish_available(
-            app,
-            Some("Could not activate the restored mod. Close STFC and restart Daystrom to retry."),
-        );
+        publish_available(app, Some(UiErrorCode::RestoredModActivationFailed));
         return;
     }
     if let Err(error) = super::rollback_cache::complete_mod_restore(app) {
         log_warn!("Could not record the completed bundled mod restore: {error}");
-        publish_available(app, Some("The restored mod is ready, but Daystrom could not save that state."));
+        publish_available(app, Some(UiErrorCode::RestoredModStateSaveFailed));
         return;
     }
 
@@ -158,18 +156,18 @@ pub async fn restore_previous_daystrom_version(app: tauri::AppHandle) {
                 "Rollback cache changed from {expected_version} to {} while preparing",
                 prepared.update.version
             );
-            publish_available(&app, Some("The available rollback changed. Review it and try again."));
+            publish_available(&app, Some(UiErrorCode::RollbackChanged));
             return;
         }
         Err(error) => {
             log_warn!("Could not prepare Daystrom rollback: {error}");
-            publish_available(&app, Some("Could not verify the previous Daystrom release. Try again later."));
+            publish_available(&app, Some(UiErrorCode::RollbackVerifyFailed));
             return;
         }
     };
     if let Err(error) = super::rollback_cache::stage_rollback(&app, &prepared) {
         log_warn!("Could not stage Daystrom rollback: {error}");
-        publish_available(&app, Some("Could not safely prepare the Daystrom rollback. Try again later."));
+        publish_available(&app, Some(UiErrorCode::RollbackPrepareFailed));
         return;
     }
 
@@ -232,15 +230,12 @@ fn rollback_failed(
         log_warn!("Failed to discard pending rollback cache state: {error}");
     }
     InstallGuard::release();
-    publish_available(
-        app,
-        Some("Could not restore the previous Daystrom release. Restart Daystrom and try again."),
-    );
+    publish_available(app, Some(UiErrorCode::RollbackRestoreFailed));
     PendingInstallResult::Failed
 }
 
 /// Publish current rollback availability with an optional actionable error.
-fn publish_available(app: &tauri::AppHandle, error: Option<&str>) {
+fn publish_available(app: &tauri::AppHandle, error: Option<UiErrorCode>) {
     let version = super::rollback_cache::available_rollback_version(app);
     let mod_restore_pending = super::rollback_cache::is_mod_restore_pending(app);
     update_state(app, |status| *status = availability_status(version, error, mod_restore_pending));
@@ -249,7 +244,7 @@ fn publish_available(app: &tauri::AppHandle, error: Option<&str>) {
 /// Construct a complete rollback status from durable cache availability.
 fn availability_status(
     version: Option<String>,
-    error: Option<&str>,
+    error: Option<UiErrorCode>,
     mod_restore_pending: bool,
 ) -> DaystromRollbackStatus {
     let phase = match (&version, error) {
@@ -261,7 +256,7 @@ fn availability_status(
         phase,
         can_restore: version.is_some(),
         version,
-        error: error.map(str::to_string),
+        error,
         mod_restore_pending,
     }
 }
@@ -280,11 +275,11 @@ mod tests {
 
     #[test]
     fn available_status_keeps_retry_action_after_failure() {
-        let status = availability_status(Some("0.9.0".to_string()), Some("Restore failed"), false);
+        let status = availability_status(Some("0.9.0".to_string()), Some(UiErrorCode::RollbackRestoreFailed), false);
 
         assert_eq!(status.phase, DaystromRollbackPhase::Failed);
         assert_eq!(status.version.as_deref(), Some("0.9.0"));
-        assert_eq!(status.error.as_deref(), Some("Restore failed"));
+        assert_eq!(status.error, Some(UiErrorCode::RollbackRestoreFailed));
         assert!(status.can_restore);
         assert!(!status.mod_restore_pending);
     }

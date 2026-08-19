@@ -17,7 +17,7 @@
   "daystromAvailable": "Daystrom {{version}} available",
   "checkingDaystrom": "Checking Daystrom updates…",
   "daystromCheckFailed": "Daystrom update check failed",
-  "modRestorePending": "Mod restore pending",
+  "modRestorePending": "Previous mod version pending",
   "checkDaystrom": "Check Daystrom",
   "launcherStarted": "The Scopely Launcher has been started. Update the game there, then close the launcher. Do not start the game from the Scopely Launcher; use Daystrom instead.",
   "closeLauncher": "Close the Scopely Launcher to continue. Do not start the game from there; use Daystrom instead."

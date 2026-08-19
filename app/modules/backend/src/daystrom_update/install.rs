@@ -7,6 +7,7 @@ use std::time::Duration;
 use tauri_plugin_updater::Update;
 
 use super::{AvailableUpdate, CheckTrigger, DaystromUpdatePhase, DaystromUpdateStatus};
+use crate::ui_error::UiErrorCode;
 
 /// Maximum duration allowed for downloading an updater package.
 pub(super) const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -127,7 +128,7 @@ pub async fn install_daystrom_update(app: tauri::AppHandle) {
     super::update_state(&app, mark_confirming);
 
     let Some(_check_guard) = super::acquire_check(CheckTrigger::Manual).await else {
-        set_install_failure(&app, "Could not prepare the Daystrom update. Try again later.");
+        set_install_failure(&app, UiErrorCode::UpdatePrepareFailed);
         return;
     };
     let endpoints = super::effective_update_endpoint_description(&app);
@@ -142,7 +143,7 @@ pub async fn install_daystrom_update(app: tauri::AppHandle) {
         }
         Err(error) => {
             log_warn!("Daystrom update confirmation at {endpoints} failed: {error}");
-            set_install_failure(&app, "Could not confirm the Daystrom update. Try again later.");
+            set_install_failure(&app, UiErrorCode::UpdateConfirmFailed);
             return;
         }
     };
@@ -151,16 +152,13 @@ pub async fn install_daystrom_update(app: tauri::AppHandle) {
         let actual_version = update.version.clone();
         log_info!("Daystrom update changed from {expected_version} to {actual_version} before download");
         super::apply_available_update(&app, AvailableUpdate::from(update), CheckTrigger::Manual);
-        set_install_failure(
-            &app,
-            "A different Daystrom version is now available. Review it before installing.",
-        );
+        set_install_failure(&app, UiErrorCode::UpdateChanged);
         return;
     }
 
     if let Err(error) = validate_download_url(&update.download_url, &update.version) {
         log_warn!("{error}");
-        set_install_failure(&app, "The Daystrom update refers to an untrusted download location.");
+        set_install_failure(&app, UiErrorCode::UpdateUntrusted);
         return;
     }
     update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
@@ -171,10 +169,7 @@ pub async fn install_daystrom_update(app: tauri::AppHandle) {
             Ok(package) => package,
             Err(error) => {
                 log_warn!("Could not retain the required Daystrom rollback release: {error}");
-                set_install_failure(
-                    &app,
-                    "Could not retain the previous Daystrom release for rollback. Try again later.",
-                );
+                set_install_failure(&app, UiErrorCode::RollbackRetentionFailed);
                 return;
             }
         };
@@ -193,7 +188,7 @@ pub async fn install_daystrom_update(app: tauri::AppHandle) {
         Ok(bytes) => bytes,
         Err(error) => {
             log_warn!("Daystrom update download or signature verification failed at {download_url}: {error}");
-            set_install_failure(&app, "Could not download and verify the Daystrom update. Try again later.");
+            set_install_failure(&app, UiErrorCode::UpdateDownloadFailed);
             return;
         }
     };
@@ -201,7 +196,7 @@ pub async fn install_daystrom_update(app: tauri::AppHandle) {
     log_info!("Daystrom update {expected_version} downloaded and verified successfully");
     if let Err(error) = super::rollback_cache::stage_update(&app, rollback_package, &update, &bytes) {
         log_warn!("Could not cache the verified Daystrom update: {error}");
-        set_install_failure(&app, "Could not safely retain the update package. Try again later.");
+        set_install_failure(&app, UiErrorCode::UpdateCacheFailed);
         return;
     }
     super::update_state(&app, |status| {
@@ -246,7 +241,7 @@ pub(crate) fn install_pending_update(app: &tauri::AppHandle) -> PendingInstallRe
                 log_warn!("Failed to discard pending update cache state: {cache_error}");
             }
             InstallGuard::release();
-            set_install_failure(app, "Could not install the Daystrom update. Restart Daystrom and try again.");
+            set_install_failure(app, UiErrorCode::UpdateInstallFailed);
             PendingInstallResult::Failed
         }
     }
@@ -265,21 +260,21 @@ fn requested_version() -> Result<String, String> {
 }
 
 /// Restore the available-update UI with an actionable installation failure.
-fn set_install_failure(app: &tauri::AppHandle, message: &str) {
+fn set_install_failure(app: &tauri::AppHandle, error: UiErrorCode) {
     super::update_state(app, |status| {
-        restore_available_after_failure(status, message, super::installation_allowed());
+        restore_available_after_failure(status, error, super::installation_allowed());
     });
 }
 
 /// Pure failure transition shared by runtime state and unit tests.
-fn restore_available_after_failure(status: &mut DaystromUpdateStatus, message: &str, can_install: bool) {
+fn restore_available_after_failure(status: &mut DaystromUpdateStatus, error: UiErrorCode, can_install: bool) {
     status.phase = if status.version.is_some() {
         DaystromUpdatePhase::Available
     } else {
         DaystromUpdatePhase::Failed
     };
     status.download_progress = None;
-    status.error = Some(message.to_string());
+    status.error = Some(error);
     status.dismissed = false;
     status.can_install = status.version.is_some() && can_install;
 }
@@ -416,13 +411,13 @@ mod tests {
             can_install: false,
         };
 
-        restore_available_after_failure(&mut status, "Install failed", true);
+        restore_available_after_failure(&mut status, UiErrorCode::UpdateInstallFailed, true);
 
         assert_eq!(status.phase, DaystromUpdatePhase::Available);
         assert_eq!(status.version.as_deref(), Some("0.10.0"));
         assert_eq!(status.notes.as_deref(), Some("Release notes"));
         assert_eq!(status.download_progress, None);
-        assert_eq!(status.error.as_deref(), Some("Install failed"));
+        assert_eq!(status.error, Some(UiErrorCode::UpdateInstallFailed));
         assert!(status.can_install);
     }
 
@@ -432,7 +427,7 @@ mod tests {
             phase: DaystromUpdatePhase::Available,
             version: Some("0.10.0".to_string()),
             download_progress: Some(42),
-            error: Some("Previous failure".to_string()),
+            error: Some(UiErrorCode::UpdateCheckFailed),
             dismissed: true,
             can_install: true,
             ..DaystromUpdateStatus::default()
@@ -454,7 +449,7 @@ mod tests {
             phase: DaystromUpdatePhase::Downloading,
             version: Some("0.10.0".to_string()),
             download_progress: Some(100),
-            error: Some("Previous failure".to_string()),
+            error: Some(UiErrorCode::UpdateCheckFailed),
             dismissed: true,
             can_install: true,
             ..DaystromUpdateStatus::default()

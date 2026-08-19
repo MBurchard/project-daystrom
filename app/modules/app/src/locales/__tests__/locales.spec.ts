@@ -1,36 +1,45 @@
 import {describe, expect, it} from 'vitest';
+import bannerCategories from '../../components/toast-banner-categories.json';
 import deAccounts from '../de/accounts.json';
+import deErrors from '../de/errors.json';
 import deGlobal from '../de/global.json';
 import deRollback from '../de/rollback.json';
 import deSettings from '../de/settings.json';
 import deShell from '../de/shell.json';
 import deStatus from '../de/status.json';
+import deToast from '../de/toast.json';
 import deUpdate from '../de/update.json';
 import enAccounts from '../en/accounts.json';
+import enErrors from '../en/errors.json';
 import enGlobal from '../en/global.json';
 import enRollback from '../en/rollback.json';
 import enSettings from '../en/settings.json';
 import enShell from '../en/shell.json';
 import enStatus from '../en/status.json';
+import enToast from '../en/toast.json';
 import enUpdate from '../en/update.json';
 
 const locales = {
   de: {
     accounts: deAccounts,
+    errors: deErrors,
     global: deGlobal,
     rollback: deRollback,
     settings: deSettings,
     shell: deShell,
     status: deStatus,
+    toast: deToast,
     update: deUpdate,
   },
   en: {
     accounts: enAccounts,
+    errors: enErrors,
     global: enGlobal,
     rollback: enRollback,
     settings: enSettings,
     shell: enShell,
     status: enStatus,
+    toast: enToast,
     update: enUpdate,
   },
 };
@@ -69,5 +78,10 @@ describe('locales', () => {
         }
       }
     }
+  });
+
+  it('translates every configured toast-banner type', () => {
+    const configuredTypes = Object.values(bannerCategories).flat().sort();
+    expect(Object.keys(enToast).sort()).toEqual(configuredTypes);
   });
 });

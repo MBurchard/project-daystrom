@@ -1,5 +1,7 @@
 import type {GameStatus} from '@generated/GameStatus';
+import type {UiErrorCode} from '@generated/UiErrorCode';
 import type {Ref} from 'vue';
+import {normalizeUiError} from '@app/composables/useUiError';
 import {getLogger} from '@app/log';
 import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
@@ -43,7 +45,7 @@ export interface GameState {
   /** Fatal error during the initial status load. */
   error: Readonly<Ref<string | null>>;
   /** Error from the last user-triggered action. */
-  actionError: Readonly<Ref<string | null>>;
+  actionError: Readonly<Ref<UiErrorCode | null>>;
   /** Whether a user action is currently in flight. */
   actionPending: Readonly<Ref<boolean>>;
   /** Prepare the mod (patch entitlements on macOS, deploy DLL on Windows). */
@@ -76,7 +78,7 @@ export function useGameState(): GameState {
   const status = ref<GameStatus>({...DEFAULT_GAME_STATUS});
   const loading = ref(true);
   const error = ref<string | null>(null);
-  const actionError = ref<string | null>(null);
+  const actionError = ref<UiErrorCode | null>(null);
   const actionPending = ref(false);
 
   let unlistenGameStatus: (() => void) | null = null;
@@ -85,7 +87,7 @@ export function useGameState(): GameState {
 
   /** Store a rejected backend action as a user-facing error. */
   function setActionError(reason: unknown): void {
-    actionError.value = String(reason);
+    actionError.value = normalizeUiError(reason);
   }
 
   /**

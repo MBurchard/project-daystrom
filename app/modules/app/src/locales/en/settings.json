@@ -1,4 +1,6 @@
 {
+  "heading": "Settings",
+  "backToAccounts": "Back to accounts",
   "application": "Application",
   "language": "Language",
   "languageEnglish": "English",
@@ -36,8 +38,8 @@
   "bannerEvents": "Events & Challenges",
   "bannerEconomy": "Economy",
   "bannerOther": "Other",
-  "recovery": "Recovery",
-  "recoveryDescription": "Restore the previous verified Daystrom release only if the current release causes problems.",
-  "recoveryFor": "Recovery options for {{version}}",
-  "noRecovery": "No recovery version available"
+  "previousVersion": "Return to the previous version",
+  "previousVersionDescription": "Use this only if the current Daystrom version causes problems. Daystrom and its bundled mod will return to the previous verified version.",
+  "returnToVersion": "Return to version {{version}}",
+  "noPreviousVersion": "No previous version available"
 }

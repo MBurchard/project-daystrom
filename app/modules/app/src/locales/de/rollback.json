@@ -1,10 +1,10 @@
 {
-  "closeGame": "Schließe STFC bei Gelegenheit. Daystrom schließt die Wiederherstellung des vorherigen Mods automatisch ab. Er wird beim nächsten Spielstart wirksam.",
-  "finishingMod": "Daystrom bereitet den wiederhergestellten Mod für den nächsten Spielstart vor.",
-  "description": "Nutze die Wiederherstellung nur, wenn die aktuelle Daystrom-Version Probleme verursacht. Daystrom und der enthaltene Mod werden auf die vorherige geprüfte Version {{version}} zurückgesetzt.",
+  "closeGame": "Schließe STFC bei Gelegenheit. Daystrom schließt den Wechsel zur vorherigen Mod-Version automatisch ab. Sie wird beim nächsten Spielstart wirksam.",
+  "finishingMod": "Daystrom bereitet die vorherige Mod-Version für den nächsten Spielstart vor.",
+  "description": "Daystrom und der enthaltene Mod kehren zur vorherigen geprüften Version {{version}} zurück.",
   "runningGame": "STFC bleibt geöffnet. Ein bereits vom laufenden Spiel geladener Mod ändert sich erst, nachdem das Spiel geschlossen und neu gestartet wurde.",
-  "verifying": "Rollback-Paket und Einstellungen werden überprüft…",
-  "installing": "Vorherige Version wird wiederhergestellt und Daystrom neu gestartet…",
-  "restore": "Daystrom {{version}} wiederherstellen",
+  "verifying": "Paket und Einstellungen der vorherigen Version werden überprüft…",
+  "installing": "Daystrom kehrt zur vorherigen Version zurück und wird neu gestartet…",
+  "restore": "Zu Daystrom {{version}} zurückkehren",
   "none": "Keine geprüfte vorherige Daystrom-Version verfügbar."
 }

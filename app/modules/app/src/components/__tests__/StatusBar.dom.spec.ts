@@ -166,20 +166,20 @@ describe('statusBar', () => {
     expect(wrapper.text()).not.toContain('Daystrom 0.10.1 available');
     await wrapper.setProps({update: updateStatus({phase: 'checking'})});
     expect(wrapper.text()).toContain('Checking Daystrom updates');
-    await wrapper.setProps({update: updateStatus({phase: 'failed', error: 'network failed'})});
+    await wrapper.setProps({update: updateStatus({phase: 'failed', error: 'update_check_failed'})});
     expect(wrapper.text()).toContain('Daystrom update check failed');
   });
 
   it('opens a pending mod restore and shows action errors', async () => {
     const wrapper = mount(StatusBar, {
       props: props({
-        actionError: 'Launch failed',
+        actionError: 'game_launch_failed',
         rollback: rollbackStatus({mod_restore_pending: true}),
       }),
     });
 
-    expect(wrapper.text()).toContain('Launch failed');
-    const rollbackButton = wrapper.findAll('button').find(button => button.text().includes('Mod restore'))!;
+    expect(wrapper.text()).toContain('STFC could not be started');
+    const rollbackButton = wrapper.findAll('button').find(button => button.text().includes('Previous mod'))!;
     await rollbackButton.trigger('click');
     expect(wrapper.emitted('openRollback')).toHaveLength(1);
   });

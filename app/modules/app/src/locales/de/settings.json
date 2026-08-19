@@ -1,4 +1,6 @@
 {
+  "heading": "Einstellungen",
+  "backToAccounts": "Zurück zu den Accounts",
   "application": "Anwendung",
   "language": "Sprache",
   "languageEnglish": "English",
@@ -36,8 +38,8 @@
   "bannerEvents": "Events & Herausforderungen",
   "bannerEconomy": "Wirtschaft",
   "bannerOther": "Sonstiges",
-  "recovery": "Wiederherstellung",
-  "recoveryDescription": "Stelle die vorherige geprüfte Daystrom-Version nur wieder her, wenn die aktuelle Version Probleme verursacht.",
-  "recoveryFor": "Wiederherstellungsoptionen für {{version}}",
-  "noRecovery": "Keine Wiederherstellungsversion verfügbar"
+  "previousVersion": "Zur vorherigen Version zurückkehren",
+  "previousVersionDescription": "Nutze diese Funktion nur, wenn die aktuelle Daystrom-Version Probleme verursacht. Daystrom und der enthaltene Mod kehren dabei zur vorherigen geprüften Version zurück.",
+  "returnToVersion": "Zu Version {{version}} zurückkehren",
+  "noPreviousVersion": "Keine vorherige Version verfügbar"
 }

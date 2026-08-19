@@ -16,9 +16,13 @@ import {useI18n} from '@app/i18n';
 import shellDefaults from '@app/locales/en/shell.json';
 import {computed, onMounted, onUnmounted, ref} from 'vue';
 
-/** Dialogues that can replace the main interaction layer. */
-type ActiveDialog = 'settings' | 'update' | 'rollback' | 'new-account' | null;
+/** Main application views shown below the persistent status bar. */
+type ActiveView = 'accounts' | 'settings';
 
+/** Dialogues that can temporarily cover the main interaction layer. */
+type ActiveDialog = 'update' | 'rollback' | 'new-account' | null;
+
+const activeView = ref<ActiveView>('accounts');
 const activeDialog = ref<ActiveDialog>(null);
 const {t} = useI18n('shell', shellDefaults);
 
@@ -79,6 +83,16 @@ function closeDialog(): void {
   activeDialog.value = null;
 }
 
+/** Replace the accounts view with application settings. */
+function showSettings(): void {
+  activeView.value = 'settings';
+}
+
+/** Return from application settings to the accounts view. */
+function showAccounts(): void {
+  activeView.value = 'accounts';
+}
+
 /** Launch one account and apply the existing launch cooldown to known profiles. */
 function handleLaunch(profile: string): void {
   if (profile !== 'initial' && profile !== 'new_account') {
@@ -117,7 +131,7 @@ onUnmounted(() => {
 
 <template>
   <main>
-    <AppHeader :version="version" @open-settings="openDialog('settings')" />
+    <AppHeader :version="version" @open-settings="showSettings" />
 
     <StatusBar :status="status"
         :loading="loading"
@@ -133,7 +147,12 @@ onUnmounted(() => {
         @remove-mod="removeMod"
         @open-game-updater="openUpdater" />
 
-    <AccountTabs v-if="!error"
+    <SettingsView v-if="activeView === 'settings'"
+        :rollback-version="daystromRollback.version"
+        @close="showAccounts"
+        @open-rollback="openDialog('rollback')" />
+
+    <AccountTabs v-else-if="!error"
         :installed="status.installed"
         :mod-deployed="status.mod_deployed"
         :can-launch-initial="status.can_launch"
@@ -147,11 +166,6 @@ onUnmounted(() => {
 
     <AppDialog v-if="activeDialog === 'new-account'" :title="t('addAccount')" @close="closeDialog">
       <NewAccountDialog @confirm="confirmNewAccount" @cancel="closeDialog" />
-    </AppDialog>
-
-    <AppDialog v-if="activeDialog === 'settings'" :title="t('settings')" @close="closeDialog">
-      <SettingsView :rollback-version="daystromRollback.version"
-          @open-rollback="openDialog('rollback')" />
     </AppDialog>
 
     <AppDialog v-if="activeDialog === 'update'"
@@ -175,8 +189,25 @@ onUnmounted(() => {
 </template>
 
 <style>
+html,
+body,
+#app {
+  height: 100%;
+}
+
 body {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.5rem;
+  overflow: hidden;
   font-family: system-ui, -apple-system, sans-serif;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 *,

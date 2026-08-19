@@ -3,5 +3,5 @@
   "addAccount": "Add account",
   "update": "Daystrom update",
   "updateAvailable": "{{appName}} {{version}} is available",
-  "recovery": "Daystrom recovery"
+  "recovery": "Return to the previous version"
 }

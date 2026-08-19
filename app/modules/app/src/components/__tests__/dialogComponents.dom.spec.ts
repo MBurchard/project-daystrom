@@ -172,14 +172,14 @@ describe('updateDialog', () => {
   it('renders update details, disabled installation, errors, and actions', async () => {
     const wrapper = mount(UpdateDialog, {
       props: {
-        status: updateStatus({notes: 'Release notes', can_install: false, error: 'Download failed'}),
+        status: updateStatus({notes: 'Release notes', can_install: false, error: 'update_download_failed'}),
         rollbackBusy: false,
       },
     });
 
     expect(wrapper.text()).toContain('Release notes');
     expect(wrapper.text()).toContain('Installation is disabled');
-    expect(wrapper.text()).toContain('Download failed');
+    expect(wrapper.text()).toContain('Could not download and verify');
     expect(wrapper.get('button').attributes('disabled')).toBeDefined();
 
     await wrapper.setProps({status: updateStatus(), rollbackBusy: true});
@@ -194,7 +194,7 @@ describe('updateDialog', () => {
 
   it.each([
     ['confirming', null, 'Confirming update'],
-    ['retaining_rollback', null, 'Preparing rollback package'],
+    ['retaining_rollback', null, 'Preparing the previous version'],
     ['retaining_rollback', 25, '25%'],
     ['downloading', null, 'Downloading and verifying update'],
     ['downloading', 75, '75%'],
@@ -224,20 +224,20 @@ describe('rollbackDialog', () => {
 
     expect(wrapper.text()).toContain('Close STFC when convenient');
     await wrapper.setProps({gameRunning: false});
-    expect(wrapper.text()).toContain('finishing the restored mod');
+    expect(wrapper.text()).toContain('preparing the previous mod version');
   });
 
   it('renders recovery actions and backend errors', async () => {
     const wrapper = mount(RollbackDialog, {
       props: {
-        status: rollbackStatus({error: 'Restore failed'}),
+        status: rollbackStatus({error: 'rollback_restore_failed'}),
         gameRunning: false,
         updateBusy: true,
       },
     });
 
     expect(wrapper.text()).toContain('0.9.1');
-    expect(wrapper.text()).toContain('Restore failed');
+    expect(wrapper.text()).toContain('Could not return');
     expect(wrapper.get('button').attributes('disabled')).toBeDefined();
     await wrapper.setProps({updateBusy: false});
     await wrapper.get('button').trigger('click');
@@ -246,9 +246,9 @@ describe('rollbackDialog', () => {
     await wrapper.setProps({status: rollbackStatus({phase: 'failed'})});
     expect(wrapper.find('button').exists()).toBe(true);
     await wrapper.setProps({status: rollbackStatus({phase: 'preparing'})});
-    expect(wrapper.text()).toContain('Verifying rollback package');
+    expect(wrapper.text()).toContain('Verifying the previous version');
     await wrapper.setProps({status: rollbackStatus({phase: 'installing'})});
-    expect(wrapper.text()).toContain('Restoring the previous release');
+    expect(wrapper.text()).toContain('Returning to the previous version');
   });
 
   it('reports when no verified recovery release exists', () => {

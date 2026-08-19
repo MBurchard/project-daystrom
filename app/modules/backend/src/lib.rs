@@ -10,6 +10,7 @@ mod commands;
 mod daystrom_update;
 mod game;
 mod game_state;
+mod localization;
 mod logging;
 #[cfg(target_os = "macos")]
 mod macos_hooks;
@@ -19,6 +20,7 @@ mod process_origin;
 mod profile_state;
 mod settings;
 mod state_update;
+mod ui_error;
 mod websocket;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
@@ -42,6 +44,23 @@ static SHUTDOWN_READY: AtomicBool = AtomicBool::new(false);
 
 /// Set while the selected shutdown action exits, installs, or recovers from an error.
 static SHUTDOWN_FINISHING: AtomicBool = AtomicBool::new(false);
+
+/// Native tray controls whose labels follow the active application language.
+struct TrayMenuItems {
+    /// Menu item that restores the main window.
+    show: MenuItem<tauri::Wry>,
+    /// Menu item that requests application shutdown.
+    quit: MenuItem<tauri::Wry>,
+}
+
+/// Refresh native tray labels after language detection or an explicit language change.
+pub(crate) fn refresh_tray_labels(app: &tauri::AppHandle) {
+    let Some(items) = app.try_state::<TrayMenuItems>() else {
+        return;
+    };
+    let _ = items.show.set_text(localization::show_window());
+    let _ = items.quit.set_text(localization::quit());
+}
 
 /// Return whether the frontend has completed its coordinated shutdown work.
 #[cfg(target_os = "macos")]
@@ -138,27 +157,6 @@ pub(crate) fn show_main_window(app: &tauri::AppHandle) -> bool {
     true
 }
 
-/// Select the appropriate warning message based on which Daystrom-started processes are running.
-///
-/// Returns `None` when neither game nor launcher is running (quit should not be blocked).
-fn quit_blocked_message(launcher_running: bool, game_running: bool) -> Option<&'static str> {
-    match (launcher_running, game_running) {
-        (true, true) => Some(
-            "The launcher and the game are still running.\n\
-             Daystrom has been minimized to the tray instead.",
-        ),
-        (true, false) => Some(
-            "The launcher is still running.\n\
-             Daystrom has been minimized to the tray instead.",
-        ),
-        (false, true) => Some(
-            "The game is still running.\n\
-             Daystrom has been minimized to the tray instead.",
-        ),
-        (false, false) => None,
-    }
-}
-
 /// Show a warning dialogue and ensure the window stays in the tray afterwards.
 ///
 /// Called from all quit paths (Close button, Tray menu, Cmd+Q, Dock) when
@@ -175,13 +173,14 @@ pub(crate) fn warn_quit_blocked(window: &tauri::WebviewWindow) {
         return;
     }
     let status = game_state::get();
-    let Some(message) = quit_blocked_message(status.launcher_started_by_us, status.game_started_by_us) else {
+    let Some(message) = localization::quit_blocked_message(status.launcher_started_by_us, status.game_started_by_us)
+    else {
         return;
     };
     window
         .dialog()
         .message(message)
-        .title("Still Running")
+        .title(localization::still_running_title())
         .kind(MessageDialogKind::Info)
         .show(|_| {});
     let _ = window.hide();
@@ -224,11 +223,8 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
             let w = window.clone();
             window
                 .dialog()
-                .message(
-                    "Project Daystrom will continue running in the background.\n\
-                          Click the tray icon to reopen the window.",
-                )
-                .title("Minimized to Tray")
+                .message(localization::minimized_dialogue_body())
+                .title(localization::minimized_title())
                 .kind(MessageDialogKind::Info)
                 .show(move |_| {
                     log_debug!("[EVENT] Hiding window to tray (after dialog)");
@@ -306,9 +302,13 @@ pub fn run() {
 
             // ---- System Tray --------------------------------------------------------
 
-            let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let show_item = MenuItem::with_id(app, "show", localization::show_window(), true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", localization::quit(), true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            app.manage(TrayMenuItems {
+                show: show_item.clone(),
+                quit: quit_item.clone(),
+            });
 
             // Sync quit item with game-status changes from the store.
             let quit_ref = quit_item.clone();
@@ -455,34 +455,6 @@ mod tests {
         assert!(should_allow_exit(Some(tauri::RESTART_EXIT_CODE)));
         assert!(!should_allow_exit(None));
         assert!(!should_allow_exit(Some(1)));
-    }
-
-    // -- quit_blocked_message --
-
-    #[test]
-    fn quit_blocked_both_running() {
-        let msg = quit_blocked_message(true, true);
-        assert!(msg.is_some());
-        assert!(msg.unwrap().contains("launcher and the game"));
-    }
-
-    #[test]
-    fn quit_blocked_launcher_only() {
-        let msg = quit_blocked_message(true, false);
-        assert!(msg.is_some());
-        assert!(msg.unwrap().contains("launcher is still running"));
-    }
-
-    #[test]
-    fn quit_blocked_game_only() {
-        let msg = quit_blocked_message(false, true);
-        assert!(msg.is_some());
-        assert!(msg.unwrap().contains("game is still running"));
-    }
-
-    #[test]
-    fn quit_not_blocked_neither_running() {
-        assert!(quit_blocked_message(false, false).is_none());
     }
 
     // -- hint_level --

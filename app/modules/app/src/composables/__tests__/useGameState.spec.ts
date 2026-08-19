@@ -181,7 +181,7 @@ describe('useGameState', () => {
 
       it('sets actionError on failure', async () => {
         captureListeners();
-        mockInvoke.mockRejectedValue(new Error('permission denied'));
+        mockInvoke.mockRejectedValue('entitlement_patching_failed');
 
         const state = useGameState();
         state.init();
@@ -190,7 +190,7 @@ describe('useGameState', () => {
           expect(state.actionPending.value).toBe(false);
         });
 
-        expect(state.actionError.value).toContain('permission denied');
+        expect(state.actionError.value).toBe('entitlement_patching_failed');
       });
 
       it('manages actionPending lifecycle', () => {
@@ -211,10 +211,10 @@ describe('useGameState', () => {
         state.init();
 
         // The first call fails
-        mockInvoke.mockRejectedValueOnce(new Error('first error'));
+        mockInvoke.mockRejectedValueOnce('mod_deployment_failed');
         state.installMod();
         await vi.waitFor(() => {
-          expect(state.actionError.value).toContain('first error');
+          expect(state.actionError.value).toBe('mod_deployment_failed');
         });
 
         // The second call succeeds, error is cleared on start
@@ -247,7 +247,7 @@ describe('useGameState', () => {
 
       it('sets actionError on failure', async () => {
         captureListeners();
-        mockInvoke.mockRejectedValue(new Error('file in use'));
+        mockInvoke.mockRejectedValue('mod_removal_failed');
 
         const state = useGameState();
         state.init();
@@ -256,7 +256,7 @@ describe('useGameState', () => {
           expect(state.actionPending.value).toBe(false);
         });
 
-        expect(state.actionError.value).toContain('file in use');
+        expect(state.actionError.value).toBe('mod_removal_failed');
       });
 
       it('manages actionPending lifecycle', () => {
@@ -276,10 +276,10 @@ describe('useGameState', () => {
         const state = useGameState();
         state.init();
 
-        mockInvoke.mockRejectedValueOnce(new Error('first error'));
+        mockInvoke.mockRejectedValueOnce('mod_removal_failed');
         state.removeMod();
         await vi.waitFor(() => {
-          expect(state.actionError.value).toContain('first error');
+          expect(state.actionError.value).toBe('mod_removal_failed');
         });
 
         mockInvoke.mockResolvedValue(undefined);
@@ -309,7 +309,7 @@ describe('useGameState', () => {
 
       it('sets actionError on failure', async () => {
         captureListeners();
-        mockInvoke.mockRejectedValue(new Error('launcher not found'));
+        mockInvoke.mockRejectedValue('launcher_unavailable');
 
         const state = useGameState();
         state.init();
@@ -318,7 +318,7 @@ describe('useGameState', () => {
           expect(state.actionPending.value).toBe(false);
         });
 
-        expect(state.actionError.value).toContain('launcher not found');
+        expect(state.actionError.value).toBe('launcher_unavailable');
       });
     });
 
@@ -348,7 +348,11 @@ describe('useGameState', () => {
           expect(state.actionPending.value).toBe(false);
         });
 
-        expect(state.actionError.value).toContain('launch failed');
+        expect(state.actionError.value).toBe('unexpected');
+        expect(mockGetLogger().error).toHaveBeenCalledWith(
+          'Backend returned an unknown user-facing error:',
+          expect.any(Error),
+        );
       });
     });
   });

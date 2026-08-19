@@ -38,8 +38,8 @@ vi.mock('@app/i18n', () => ({
     setLanguage: mocks.setLanguage,
     t: (key: string, values?: Record<string, string>) => {
       const translations: Record<string, string> = {
-        noRecovery: 'No recovery version available',
-        recoveryFor: 'Recovery options for {{version}}',
+        noPreviousVersion: 'No previous version available',
+        returnToVersion: 'Return to version {{version}}',
         triggerMainAction: 'Trigger Main Action',
       };
       return (translations[key] ?? key).replace('{{version}}', values?.version ?? '');
@@ -103,6 +103,9 @@ describe('settingsView', () => {
 
   it('persists language selections and reports unexpected change failures', async () => {
     const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    await wrapper.get('.settings-back').trigger('click');
+    expect(wrapper.emitted('close')).toHaveLength(1);
+
     await wrapper.get('#app-language').setValue('de');
     expect(mocks.setLanguage).toHaveBeenCalledWith('de');
 
@@ -111,6 +114,38 @@ describe('settingsView', () => {
     await wrapper.get('#app-language').setValue('en');
     await Promise.resolve();
     expect(mocks.languageError).toHaveBeenCalledWith('Failed to change application language:', reason);
+  });
+
+  it('moves focus into settings, handles Escape, and restores the previous focus', async () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const wrapper = mount(SettingsView, {
+      attachTo: document.body,
+      props: {rollbackVersion: null},
+    });
+
+    expect(document.activeElement).toBe(wrapper.get('.settings').element);
+
+    capturingKey.value = 'trigger_main_action';
+    await wrapper.get('.settings').trigger('keydown', {code: 'Escape', key: 'Escape'});
+    expect(wrapper.emitted('close')).toBeUndefined();
+
+    capturingKey.value = null;
+    await wrapper.get('.settings').trigger('keydown', {code: 'Escape', key: 'Escape'});
+    expect(wrapper.emitted('close')).toHaveLength(1);
+
+    wrapper.unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it('mounts without a previously focused HTML element', () => {
+    const activeElement = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(null);
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+
+    wrapper.unmount();
+    activeElement.mockRestore();
   });
 
   it('dispatches all settings input events through the composable', async () => {
@@ -193,15 +228,15 @@ describe('settingsView', () => {
     expect(wrapper.get('.banner-type input').attributes('disabled')).toBeDefined();
   });
 
-  it('offers recovery only when a verified predecessor exists', async () => {
+  it('offers a return only when a verified predecessor exists', async () => {
     const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
-    const recovery = wrapper.findAll('button').at(-1)!;
-    expect(recovery.text()).toContain('No recovery version');
-    expect(recovery.attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.version-return-unavailable').text()).toContain('No previous version');
+    expect(wrapper.find('.version-return-action').exists()).toBe(false);
 
     await wrapper.setProps({rollbackVersion: '0.9.1'});
-    expect(recovery.text()).toContain('0.9.1');
-    await recovery.trigger('click');
+    const versionReturn = wrapper.get('.version-return-action');
+    expect(versionReturn.text()).toContain('0.9.1');
+    await versionReturn.trigger('click');
     expect(wrapper.emitted('openRollback')).toHaveLength(1);
   });
 });
