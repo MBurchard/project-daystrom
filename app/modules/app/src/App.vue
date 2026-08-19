@@ -85,6 +85,9 @@ const updateBusy = computed(() =>
 const rollbackBusy = computed(() =>
   ['preparing', 'installing'].includes(daystromRollback.value.phase));
 
+const updateCheckBusy = computed(() =>
+  daystromUpdate.value.phase === 'checking' || updateBusy.value || rollbackBusy.value);
+
 /** Open one application-level dialogue. */
 function openDialog(dialog: Exclude<ActiveDialog, null>): void {
   activeDialog.value = dialog;
@@ -194,11 +197,12 @@ onUnmounted(() => {
           :error="error"
           :action-error="actionError"
           :action-pending="actionPending"
+          :update-check-busy="updateCheckBusy"
           :update="daystromUpdate"
           :rollback="daystromRollback"
-          @check-update="checkDaystromUpdate"
           @open-update="openDialog('update')"
           @open-rollback="openDialog('rollback')"
+          @check-update="checkDaystromUpdate"
           @install-mod="installMod"
           @remove-mod="removeMod"
           @open-game-updater="openUpdater" />

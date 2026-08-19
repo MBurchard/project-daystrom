@@ -85,9 +85,13 @@ h1 small {
 
 .settings-button,
 .close-button {
-  width: 3.25rem;
+  width: 2rem;
+  height: 2rem;
+  align-self: center;
+  margin: 0 0.625rem;
   padding: 0;
-  border: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
   background: none;
   color: inherit;
   cursor: pointer;
@@ -98,17 +102,7 @@ h1 small {
   opacity: 0.5;
 }
 
-.settings-button:hover {
-  opacity: 1;
-}
-
 .close-button {
-  width: 2rem;
-  height: 2rem;
-  align-self: center;
-  margin: 0 0.625rem;
-  border: 1px solid transparent;
-  border-radius: 50%;
   font-size: 1rem;
 }
 
@@ -118,6 +112,7 @@ h1 small {
   outline-offset: -3px;
 }
 
+.settings-button:hover,
 .close-button:hover:not(.hover-suppressed) {
   border-color: #5cddff;
   background: linear-gradient(180deg, #159fe8 0%, #0769c8 100%);
@@ -125,6 +120,7 @@ h1 small {
     0 0 0.55rem rgb(0 203 255 / 80%),
     inset 0 0 0.35rem rgb(184 246 255 / 65%);
   color: #fff;
+  opacity: 1;
   text-shadow: 0 1px 1px rgb(0 29 75 / 70%);
 }
 </style>

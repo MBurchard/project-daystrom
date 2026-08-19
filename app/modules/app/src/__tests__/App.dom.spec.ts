@@ -186,15 +186,15 @@ describe('app', () => {
     const wrapper = shallowMount(App);
     const statusBar = wrapper.findComponent(StatusBar);
 
-    statusBar.vm.$emit('checkUpdate');
     statusBar.vm.$emit('installMod');
     statusBar.vm.$emit('removeMod');
     statusBar.vm.$emit('openGameUpdater');
+    statusBar.vm.$emit('checkUpdate');
 
-    expect(actions.checkDaystromUpdate).toHaveBeenCalledOnce();
     expect(actions.installMod).toHaveBeenCalledOnce();
     expect(actions.removeMod).toHaveBeenCalledOnce();
     expect(actions.openUpdater).toHaveBeenCalledOnce();
+    expect(actions.checkDaystromUpdate).toHaveBeenCalledOnce();
   });
 
   it('delegates custom title-bar close requests and handles IPC rejection', async () => {
@@ -232,7 +232,6 @@ describe('app', () => {
     expect(wrapper.findComponent(AccountTabs).exists()).toBe(false);
     expect(wrapper.findComponent(SettingsView).exists()).toBe(true);
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
-
     wrapper.findComponent(AppHeader).vm.$emit('openSettings');
     await nextTick();
     expect(wrapper.findComponent(SettingsView).exists()).toBe(false);
