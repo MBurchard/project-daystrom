@@ -173,12 +173,15 @@ function maintenanceBusy(): boolean {
   color: #777;
 }
 
-.interactive {
+.status-bar button {
   cursor: pointer;
 }
 
-.interactive:disabled {
+.status-bar button:disabled {
   cursor: default;
+}
+
+.interactive:disabled {
   opacity: 0.5;
 }
 
