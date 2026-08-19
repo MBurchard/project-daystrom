@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {DaystromRollbackStatus} from '@generated/DaystromRollbackStatus';
+import {useUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
 import rollbackDefaults from '@app/locales/en/rollback.json';
 
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>();
 
 const {t} = useI18n('rollback', rollbackDefaults);
+const {errorText} = useUiError();
 </script>
 
 <template>
@@ -54,7 +56,7 @@ const {t} = useI18n('rollback', rollbackDefaults);
       {{ t('none') }}
     </p>
     <p v-if="props.status.error" class="error">
-      {{ props.status.error }}
+      {{ errorText(props.status.error) }}
     </p>
   </div>
 </template>

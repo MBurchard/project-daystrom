@@ -1,7 +1,7 @@
 {
   "restart": "Daystrom wird nach der Überprüfung neu gestartet. Ein laufendes Spiel bleibt geöffnet und der Daystrom-Mod verbindet sich automatisch erneut.",
   "confirming": "Update wird bestätigt…",
-  "retaining": "Rollback-Paket wird vorbereitet…",
+  "retaining": "Vorherige Version wird vorbereitet…",
   "downloading": "Update wird heruntergeladen und überprüft…",
   "installing": "Update wird installiert und Daystrom neu gestartet…",
   "devDisabled": "Die Installation ist in diesem Entwicklungs-Build deaktiviert, solange kein Debug-Update-Endpunkt konfiguriert ist.",

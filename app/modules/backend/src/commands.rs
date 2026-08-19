@@ -6,6 +6,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use ts_rs::TS;
 
 use crate::game;
+use crate::ui_error::UiErrorCode;
 use crate::use_log;
 
 use_log!("Commands");
@@ -213,22 +214,28 @@ pub fn get_game_status(app: tauri::AppHandle) -> GameStatus {
 ///
 /// Updates the game state store on success, which automatically notifies the frontend.
 #[tauri::command]
-pub fn prepare_mod(app: tauri::AppHandle) -> Result<(), String> {
-    let info = game::detect().ok_or("STFC not found")?;
+pub fn prepare_mod(app: tauri::AppHandle) -> Result<(), UiErrorCode> {
+    let info = game::detect().ok_or(UiErrorCode::StfcNotFound)?;
 
     if game::is_running(&info.executable) {
-        return Err("Cannot prepare mod while the game is running".to_string());
+        return Err(UiErrorCode::GameRunning);
     }
 
     #[cfg(target_os = "macos")]
     {
-        game::entitlements::patch(&info.executable)?;
+        game::entitlements::patch(&info.executable).map_err(|error| {
+            log_warn!("Could not prepare STFC entitlements: {error}");
+            UiErrorCode::EntitlementPatchingFailed
+        })?;
     }
 
     #[cfg(target_os = "windows")]
     {
-        let mod_library = game::find_mod_library(&app).ok_or("Mod library not found — run build:mod first")?;
-        game::deploy_mod(&info.install_dir, &mod_library)?;
+        let mod_library = game::find_mod_library(&app).ok_or(UiErrorCode::ModUnavailable)?;
+        game::deploy_mod(&info.install_dir, &mod_library).map_err(|error| {
+            log_warn!("Could not deploy the Daystrom mod: {error}");
+            UiErrorCode::ModDeploymentFailed
+        })?;
     }
 
     crate::game_state::update(&app, |s| {
@@ -247,7 +254,7 @@ pub fn prepare_mod(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn remove_mod(
     #[cfg_attr(not(target_os = "windows"), allow(unused))] window: tauri::WebviewWindow,
-) -> Result<(), String> {
+) -> Result<(), UiErrorCode> {
     // macOS: mod is injected via DYLD at launch, nothing to remove from the disk
     #[cfg(not(target_os = "windows"))]
     #[allow(clippy::needless_return)]
@@ -258,21 +265,21 @@ pub fn remove_mod(
 
     #[cfg(target_os = "windows")]
     {
-        let info = game::detect().ok_or("STFC not found")?;
+        let info = game::detect().ok_or(UiErrorCode::StfcNotFound)?;
 
         if game::is_running(&info.executable) {
-            return Err("Cannot remove mod while the game is running".to_string());
+            return Err(UiErrorCode::GameRunning);
         }
 
         let confirmed = window
             .dialog()
-            .message(
-                "Remove the Daystrom Mod?\n\n\
-                      After removal, the game can only be launched through the Scopely Launcher.",
-            )
-            .title("Remove Mod")
+            .message(crate::localization::remove_mod_body())
+            .title(crate::localization::remove_mod_title())
             .kind(MessageDialogKind::Warning)
-            .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                crate::localization::remove().into(),
+                crate::localization::cancel().into(),
+            ))
             .blocking_show();
 
         if !confirmed {
@@ -281,7 +288,10 @@ pub fn remove_mod(
         }
 
         log_info!("User confirmed mod removal");
-        game::remove_mod(&info.install_dir)?;
+        game::remove_mod(&info.install_dir).map_err(|error| {
+            log_warn!("Could not remove the Daystrom mod: {error}");
+            UiErrorCode::ModRemovalFailed
+        })?;
 
         let app = window.app_handle().clone();
         crate::game_state::update(&app, |s| {
@@ -345,8 +355,11 @@ pub fn get_cached_game_status() -> Option<GameStatus> {
 
 /// Open the Scopely launcher so the user can install an update.
 #[tauri::command]
-pub fn launch_updater(app: tauri::AppHandle) -> Result<(), String> {
-    game::launcher::open_updater()?;
+pub fn launch_updater(app: tauri::AppHandle) -> Result<(), UiErrorCode> {
+    game::launcher::open_updater().map_err(|error| {
+        log_warn!("Could not open the Scopely launcher: {error}");
+        UiErrorCode::LauncherUnavailable
+    })?;
     crate::process_origin::mark_launcher_started();
     crate::game_state::update(&app, |s| {
         s.launcher_started_by_us = true;
@@ -362,10 +375,10 @@ pub fn launch_updater(app: tauri::AppHandle) -> Result<(), String> {
 /// - `Some("106_Nabor")`: launch with a known profile
 /// - `Some("new_account")`: start a fresh account
 #[tauri::command]
-pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(), String> {
-    let info = game::detect().ok_or("STFC not found")?;
+pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(), UiErrorCode> {
+    let info = game::detect().ok_or(UiErrorCode::StfcNotFound)?;
 
-    let mod_library = game::find_mod_library(&app).ok_or("Mod library not found — run build:mod first")?;
+    let mod_library = game::find_mod_library(&app).ok_or(UiErrorCode::ModUnavailable)?;
 
     // macOS: entitlements must be patched before launching
     #[cfg(target_os = "macos")]
@@ -377,11 +390,15 @@ pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(),
                 .iter()
                 .map(|k| k.strip_prefix("com.apple.security.").unwrap_or(k))
                 .collect();
-            return Err(format!("Missing entitlements: {} — patch them first", names.join(", ")));
+            log_warn!("Missing entitlements before game launch: {}", names.join(", "));
+            return Err(UiErrorCode::EntitlementsMissing);
         }
     }
 
-    let child = game::launcher::launch(&info, &mod_library, profile.as_deref())?;
+    let child = game::launcher::launch(&info, &mod_library, profile.as_deref()).map_err(|error| {
+        log_warn!("Could not launch STFC: {error}");
+        UiErrorCode::GameLaunchFailed
+    })?;
     let profile_stem = profile.unwrap_or_default();
     crate::process_origin::register_launch(child, profile_stem);
     crate::process_origin::mark_game_started();

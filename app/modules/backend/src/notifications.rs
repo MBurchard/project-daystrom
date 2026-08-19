@@ -112,8 +112,8 @@ pub fn show_minimize_hint(window: &tauri::WebviewWindow) {
             if notification_permission_granted() {
                 let mut notification = Notification::new();
                 notification
-                    .summary("Minimized to Tray")
-                    .body("Project Daystrom is still running. Click the tray icon to reopen.");
+                    .summary(crate::localization::minimized_title())
+                    .body(crate::localization::minimized_notification_body());
                 configure_timeout(&mut notification);
                 #[cfg(target_os = "windows")]
                 configure_windows_identity(&mut notification, worker_window.app_handle());
@@ -146,9 +146,9 @@ pub fn show_game_update(app: &tauri::AppHandle, version: u32) {
             }
 
             let mut notification = Notification::new();
-            notification.summary("STFC update available").body(&format!(
-                "Version {version} is available. Close the game and open Daystrom to start the update."
-            ));
+            notification
+                .summary(crate::localization::game_update_title())
+                .body(&crate::localization::game_update_body(version));
             configure_timeout(&mut notification);
             #[cfg(target_os = "windows")]
             configure_windows_identity(&mut notification, &app);
@@ -191,8 +191,8 @@ pub fn show_daystrom_update(app: &tauri::AppHandle, version: &str) {
 
             let mut notification = Notification::new();
             notification
-                .summary("Project Daystrom update available")
-                .body(&format!("Version {version} is ready. Open Daystrom to review the update."));
+                .summary(crate::localization::daystrom_update_title())
+                .body(&crate::localization::daystrom_update_body(&version));
             configure_timeout(&mut notification);
             #[cfg(target_os = "windows")]
             configure_windows_identity(&mut notification, &app);

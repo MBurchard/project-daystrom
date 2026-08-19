@@ -9,7 +9,9 @@ import {
 } from '@app/composables/useSettingsView';
 import {useI18n} from '@app/i18n';
 import settingsDefaults from '@app/locales/en/settings.json';
+import toastDefaults from '@app/locales/en/toast.json';
 import {getLogger} from '@app/log';
+import {onBeforeUnmount, onMounted, ref} from 'vue';
 
 import bannerCategories from './toast-banner-categories.json';
 
@@ -18,10 +20,14 @@ const props = defineProps<{
   rollbackVersion: string | null;
 }>();
 const emit = defineEmits<{
+  close: [];
   openRollback: [];
 }>();
 const log = getLogger('Settings');
 const {language, setLanguage, t} = useI18n('settings', settingsDefaults);
+const {t: tToast} = useI18n('toast', toastDefaults);
+const view = ref<HTMLElement | null>(null);
+let previouslyFocused: HTMLElement | null = null;
 const bannerCategoryLabels: Record<string, keyof typeof settingsDefaults> = {
   Armada: 'bannerArmada',
   Combat: 'bannerCombat',
@@ -59,15 +65,46 @@ const {
   onBannerTypeToggle,
 } = useSettingsView();
 
+/** Return to the accounts view unless Escape is cancelling an active shortcut capture. */
+function handleEscape(event: KeyboardEvent): void {
+  if (capturingKey.value !== null) {
+    return;
+  }
+  event.preventDefault();
+  emit('close');
+}
+
 /** Persist a language selected through the application settings. */
 function onLanguageChange(event: Event): void {
   const nextLanguage = (event.target as HTMLSelectElement).value as AppLanguage;
   setLanguage(nextLanguage).catch(reason => log.error('Failed to change application language:', reason));
 }
+
+onMounted(() => {
+  previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  view.value?.focus();
+});
+
+onBeforeUnmount(() => {
+  previouslyFocused?.focus();
+});
 </script>
 
 <template>
-  <div class="settings">
+  <section ref="view"
+      class="settings"
+      aria-labelledby="settings-heading"
+      tabindex="-1"
+      @keydown.esc="handleEscape">
+    <header class="settings-header">
+      <h2 id="settings-heading">
+        {{ t('heading') }}
+      </h2>
+      <button class="settings-back" @click="emit('close')">
+        {{ t('backToAccounts') }}
+      </button>
+    </header>
+
     <section class="settings-category">
       <h3>{{ t('application') }}</h3>
 
@@ -294,29 +331,51 @@ function onLanguageChange(event: Event): void {
                   :checked="!disabledBannerSet.has(name)"
                   :disabled="allBannersDisabled"
                   @change="onBannerTypeToggle(name, ($event.target as HTMLInputElement).checked)">
-              {{ name }}
+              {{ tToast(name as keyof typeof toastDefaults) }}
             </label>
           </div>
         </details>
       </div>
     </section>
 
-    <section class="settings-category">
-      <h3>{{ t('recovery') }}</h3>
-      <p class="recovery-description">
-        {{ t('recoveryDescription') }}
+    <section class="settings-category version-return-zone">
+      <h3>{{ t('previousVersion') }}</h3>
+      <p class="version-return-description">
+        {{ t('previousVersionDescription') }}
       </p>
-      <button :disabled="!props.rollbackVersion" @click="emit('openRollback')">
-        {{ props.rollbackVersion ? t('recoveryFor', { version: props.rollbackVersion })
-          : t('noRecovery') }}
+      <button v-if="props.rollbackVersion"
+          class="version-return-action"
+          @click="emit('openRollback')">
+        {{ t('returnToVersion', { version: props.rollbackVersion }) }}
       </button>
+      <span v-else class="version-return-unavailable">{{ t('noPreviousVersion') }}</span>
     </section>
-  </div>
+  </section>
 </template>
 
 <style scoped>
 .settings {
-  padding: 0 0.25rem;
+  flex: 1;
+  min-height: 0;
+  margin-top: 1.5rem;
+  padding: 0 0.5rem 1rem 0.25rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.settings-header h2 {
+  margin: 0;
+}
+
+.settings-back {
+  cursor: pointer;
 }
 
 .settings-category h3 {
@@ -364,9 +423,46 @@ function onLanguageChange(event: Event): void {
   opacity: 0.7;
 }
 
-.recovery-description {
-  max-width: 34rem;
+.version-return-zone {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid #d29922;
+  border-radius: 0.5rem;
+  background: rgb(210 153 34 / 8%);
+}
+
+.version-return-zone h3 {
+  margin-top: 0;
+  color: #b77900;
+  opacity: 1;
+}
+
+.version-return-description {
   user-select: text;
+}
+
+.version-return-action {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid #b77900;
+  border-radius: 999px;
+  background: rgb(210 153 34 / 14%);
+  color: #8a5a00;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.version-return-action:hover {
+  background: rgb(210 153 34 / 24%);
+}
+
+.version-return-action:focus-visible {
+  outline: 2px solid #d29922;
+  outline-offset: 2px;
+}
+
+.version-return-unavailable {
+  color: #777;
+  font-size: 0.85rem;
 }
 
 .scale-value {

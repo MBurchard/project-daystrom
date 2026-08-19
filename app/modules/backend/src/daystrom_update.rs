@@ -15,6 +15,7 @@ use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 use time::OffsetDateTime;
 use ts_rs::TS;
 
+use crate::ui_error::UiErrorCode;
 use crate::use_log;
 
 use_log!("DaystromUpdate");
@@ -110,8 +111,8 @@ pub struct DaystromUpdateStatus {
     pub notes: Option<String>,
     /// Download completion percentage when the remote server reports a total size.
     pub download_progress: Option<u8>,
-    /// User-facing failure summary for the latest visible check.
-    pub error: Option<String>,
+    /// Stable failure code for the latest visible check.
+    pub error: Option<UiErrorCode>,
     /// Whether the available-version banner is dismissed for this process.
     pub dismissed: bool,
     /// Whether this build may install the currently available update.
@@ -605,7 +606,7 @@ fn failure_status(
         return None;
     }
 
-    let error = Some("Could not check for Daystrom updates. Try again later.".to_string());
+    let error = Some(UiErrorCode::UpdateCheckFailed);
     if previous.version.is_some() {
         let mut status = previous.clone();
         status.phase = DaystromUpdatePhase::Available;

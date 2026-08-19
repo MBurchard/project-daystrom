@@ -203,22 +203,30 @@ describe('app', () => {
     expect(actions.launchGame).toHaveBeenNthCalledWith(2, 'initial');
   });
 
-  it('opens and closes settings and recovery dialogs', async () => {
+  it('switches between accounts and settings while recovery remains a dialog', async () => {
     const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
 
+    expect(wrapper.findComponent(AccountTabs).exists()).toBe(true);
     wrapper.findComponent(AppHeader).vm.$emit('openSettings');
     await nextTick();
-    expect(wrapper.findComponent(AppDialog).props('title')).toBe('Settings');
+    expect(wrapper.findComponent(AccountTabs).exists()).toBe(false);
+    expect(wrapper.findComponent(SettingsView).exists()).toBe(true);
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
 
     wrapper.findComponent(SettingsView).vm.$emit('openRollback');
     await nextTick();
-    expect(wrapper.findComponent(AppDialog).props('title')).toBe('Daystrom recovery');
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('Return to the previous version');
 
     wrapper.findComponent(RollbackDialog).vm.$emit('restore');
     expect(actions.restoreDaystrom).toHaveBeenCalledOnce();
     wrapper.findComponent(AppDialog).vm.$emit('close');
     await nextTick();
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(SettingsView).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(SettingsView).exists()).toBe(false);
+    expect(wrapper.findComponent(AccountTabs).exists()).toBe(true);
   });
 
   it('opens update details, installs, and dismisses the offer', async () => {

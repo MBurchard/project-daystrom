@@ -2,6 +2,8 @@
 import type {DaystromRollbackStatus} from '@generated/DaystromRollbackStatus';
 import type {DaystromUpdateStatus} from '@generated/DaystromUpdateStatus';
 import type {GameStatus} from '@generated/GameStatus';
+import type {UiErrorCode} from '@generated/UiErrorCode';
+import {useUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
 import statusDefaults from '@app/locales/en/status.json';
 
@@ -13,7 +15,7 @@ const props = defineProps<{
   /** Fatal error from initial game-status loading. */
   error: string | null;
   /** Error from the most recent game action. */
-  actionError: string | null;
+  actionError: UiErrorCode | null;
   /** Whether a game or mod action is running. */
   actionPending: boolean;
   /** Backend-owned Daystrom update status. */
@@ -32,6 +34,7 @@ const emit = defineEmits<{
 }>();
 
 const {t} = useI18n('status', statusDefaults);
+const {errorText} = useUiError();
 
 /** Whether update or rollback work currently blocks another update check. */
 function maintenanceBusy(): boolean {
@@ -92,7 +95,7 @@ function maintenanceBusy(): boolean {
     <span v-else-if="props.update.phase === 'checking'" class="status-item neutral">
       {{ t('checkingDaystrom') }}
     </span>
-    <span v-else-if="props.update.error" class="status-item fail" :title="props.update.error">
+    <span v-else-if="props.update.error" class="status-item fail" :title="errorText(props.update.error)">
       {{ t('daystromCheckFailed') }}
     </span>
 
@@ -108,7 +111,7 @@ function maintenanceBusy(): boolean {
   </section>
 
   <p v-if="props.actionError" class="message error">
-    {{ props.actionError }}
+    {{ errorText(props.actionError) }}
   </p>
   <p v-if="props.status.launcher_started_by_us" class="message info">
     {{ t('launcherStarted') }}

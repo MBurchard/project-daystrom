@@ -466,6 +466,9 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
     },
 });
 
+/// Language currently used by native dialogues, notifications, and tray controls.
+static ACTIVE_APP_LANGUAGE: Mutex<AppLanguage> = Mutex::new(AppLanguage::En);
+
 /// Override for the settings file path, used exclusively by tests.
 #[cfg(test)]
 static PATH_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -510,6 +513,7 @@ fn load_from(path: &Path) -> AppSettings {
 /// Safe to call multiple times, later calls overwrite the in-memory state.
 pub fn load() {
     let settings = settings_path().map(|p| load_from(&p)).unwrap_or_default();
+    *ACTIVE_APP_LANGUAGE.lock().unwrap() = settings.ui.language.unwrap_or_default();
     *SETTINGS.lock().unwrap() = settings;
 }
 
@@ -712,15 +716,16 @@ fn resolve_app_language(language: Option<AppLanguage>, system_locale: Option<&st
 }
 
 /// Return the persisted application language or derive it from the supplied system locale.
-#[tauri::command]
-pub fn get_app_language(system_locale: Option<String>) -> AppLanguage {
+fn resolve_and_activate_app_language(system_locale: Option<&str>) -> AppLanguage {
     let language = SETTINGS.lock().unwrap().ui.language;
-    resolve_app_language(language, system_locale.as_deref())
+    let language = resolve_app_language(language, system_locale);
+    *ACTIVE_APP_LANGUAGE.lock().unwrap() = language;
+    language
 }
 
-/// Persist an explicit application language selection.
-#[tauri::command]
-pub fn set_app_language(language: AppLanguage) {
+/// Persist and activate an explicit application language selection.
+fn set_app_language_value(language: AppLanguage) {
+    *ACTIVE_APP_LANGUAGE.lock().unwrap() = language;
     update(|settings| {
         if settings.ui.language == Some(language) {
             return false;
@@ -728,6 +733,26 @@ pub fn set_app_language(language: AppLanguage) {
         settings.ui.language = Some(language);
         true
     });
+}
+
+/// Return the persisted application language or derive it from the supplied system locale.
+#[tauri::command]
+pub fn get_app_language(app: tauri::AppHandle, system_locale: Option<String>) -> AppLanguage {
+    let language = resolve_and_activate_app_language(system_locale.as_deref());
+    crate::refresh_tray_labels(&app);
+    language
+}
+
+/// Persist an explicit application language selection.
+#[tauri::command]
+pub fn set_app_language(app: tauri::AppHandle, language: AppLanguage) {
+    set_app_language_value(language);
+    crate::refresh_tray_labels(&app);
+}
+
+/// Return the language currently used by native application surfaces.
+pub(crate) fn active_app_language() -> AppLanguage {
+    *ACTIVE_APP_LANGUAGE.lock().unwrap()
 }
 
 /// Return the current game settings.
@@ -883,13 +908,13 @@ mod tests {
         let path = use_temp_path("application_language");
         *SETTINGS.lock().unwrap() = AppSettings::default();
 
-        set_app_language(AppLanguage::De);
+        set_app_language_value(AppLanguage::De);
         flush_saves();
 
-        assert_eq!(get_app_language(Some("en-US".to_string())), AppLanguage::De);
+        assert_eq!(resolve_and_activate_app_language(Some("en-US")), AppLanguage::De);
         assert!(fs::read_to_string(path).unwrap().contains("language = \"de\""));
 
-        set_app_language(AppLanguage::De);
+        set_app_language_value(AppLanguage::De);
         *SETTINGS.lock().unwrap() = AppSettings::default();
         reset_path_override();
     }

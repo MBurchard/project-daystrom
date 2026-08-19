@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {DaystromUpdateStatus} from '@generated/DaystromUpdateStatus';
+import {useUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
 import globalDefaults from '@app/locales/en/global.json';
 import updateDefaults from '@app/locales/en/update.json';
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>();
 
 const {t} = useI18n('update', {...updateDefaults, later: globalDefaults.later});
+const {errorText} = useUiError();
 </script>
 
 <template>
@@ -51,7 +53,7 @@ const {t} = useI18n('update', {...updateDefaults, later: globalDefaults.later});
       {{ t('devDisabled') }}
     </p>
     <p v-if="props.status.error" class="error">
-      {{ props.status.error }}
+      {{ errorText(props.status.error) }}
     </p>
     <div v-if="props.status.phase === 'available'" class="actions">
       <button :disabled="!props.status.can_install || props.rollbackBusy" @click="emit('install')">
