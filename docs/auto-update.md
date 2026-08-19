@@ -29,9 +29,6 @@ Release preparation may replace assets on the same draft only while its source r
 After publication, installers, updater packages, rollback metadata, and all detached signatures are immutable.
 Finalization modifies only `latest.json` and `SHA256SUMS`; it never re-signs release content.
 
-`0.9.0` is the first updater-enabled release. Its workflow contains a bootstrap exception because no earlier release has
-a `latest.json`. Remove that exception when preparing `0.10.0`.
-
 ## Trust model
 
 Platform trust and updater trust are separate:
