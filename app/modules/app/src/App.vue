@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import type {ProfileInfo} from '@generated/ProfileInfo';
+import type {UiErrorCode} from '@generated/UiErrorCode';
+import {deleteLocalProfile} from '@app/commands/profiles';
 import AccountTabs from '@app/components/AccountTabs.vue';
 import AppDialog from '@app/components/AppDialog.vue';
 import AppHeader from '@app/components/AppHeader.vue';
+import DeleteAccountDialog from '@app/components/DeleteAccountDialog.vue';
 import NewAccountDialog from '@app/components/NewAccountDialog.vue';
 import RollbackDialog from '@app/components/RollbackDialog.vue';
 import SettingsView from '@app/components/SettingsView.vue';
@@ -12,6 +16,7 @@ import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
 import {useGameState} from '@app/composables/useGameState';
 import {useProfileState} from '@app/composables/useProfileState';
 import {useSettings} from '@app/composables/useSettings';
+import {normalizeUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
 import shellDefaults from '@app/locales/en/shell.json';
 import {computed, onMounted, onUnmounted, ref} from 'vue';
@@ -20,10 +25,13 @@ import {computed, onMounted, onUnmounted, ref} from 'vue';
 type ActiveView = 'accounts' | 'settings';
 
 /** Dialogues that can temporarily cover the main interaction layer. */
-type ActiveDialog = 'update' | 'rollback' | 'new-account' | null;
+type ActiveDialog = 'update' | 'rollback' | 'new-account' | 'delete-account' | null;
 
 const activeView = ref<ActiveView>('accounts');
 const activeDialog = ref<ActiveDialog>(null);
+const accountToDelete = ref<ProfileInfo | null>(null);
+const accountDeletionPending = ref(false);
+const accountDeletionError = ref<UiErrorCode | null>(null);
 const {t} = useI18n('shell', shellDefaults);
 
 const {
@@ -73,12 +81,12 @@ const updateBusy = computed(() =>
 const rollbackBusy = computed(() =>
   ['preparing', 'installing'].includes(daystromRollback.value.phase));
 
-/** Open one application-level dialog. */
+/** Open one application-level dialogue. */
 function openDialog(dialog: Exclude<ActiveDialog, null>): void {
   activeDialog.value = dialog;
 }
 
-/** Close the active application-level dialog. */
+/** Close the active application-level dialogue. */
 function closeDialog(): void {
   activeDialog.value = null;
 }
@@ -107,10 +115,48 @@ function handleUpdateLater(): void {
   closeDialog();
 }
 
-/** Confirm a new account launch and close its confirmation dialog. */
+/** Confirm a new account launch and close its confirmation dialogue. */
 function confirmNewAccount(): void {
   closeDialog();
   handleLaunch('new_account');
+}
+
+/** Open the destructive confirmation flow for one known local account profile. */
+function openDeleteAccount(profile: ProfileInfo): void {
+  accountToDelete.value = profile;
+  accountDeletionError.value = null;
+  openDialog('delete-account');
+}
+
+/** Close the local account deletion flow unless its backend operation is still running. */
+function closeDeleteAccount(): void {
+  if (accountDeletionPending.value) {
+    return;
+  }
+  accountToDelete.value = null;
+  accountDeletionError.value = null;
+  closeDialog();
+}
+
+/** Delete the confirmed local account data and leave Scopely's remote account untouched. */
+function confirmDeleteAccount(): void {
+  const profile = accountToDelete.value;
+  if (!profile || accountDeletionPending.value) {
+    return;
+  }
+
+  accountDeletionPending.value = true;
+  accountDeletionError.value = null;
+  deleteLocalProfile(profile.stem)
+    .then(() => {
+      accountDeletionPending.value = false;
+      accountToDelete.value = null;
+      closeDialog();
+    })
+    .catch((reason) => {
+      accountDeletionPending.value = false;
+      accountDeletionError.value = normalizeUiError(reason);
+    });
 }
 
 onMounted(() => {
@@ -162,10 +208,21 @@ onUnmounted(() => {
         :profiles="profiles.profiles"
         :is-profile-running="isProfileRunning"
         @launch="handleLaunch"
-        @add-account="openDialog('new-account')" />
+        @add-account="openDialog('new-account')"
+        @delete-account="openDeleteAccount" />
 
     <AppDialog v-if="activeDialog === 'new-account'" :title="t('addAccount')" @close="closeDialog">
       <NewAccountDialog @confirm="confirmNewAccount" @cancel="closeDialog" />
+    </AppDialog>
+
+    <AppDialog v-if="activeDialog === 'delete-account' && accountToDelete"
+        :title="t('removeAccount')"
+        @close="closeDeleteAccount">
+      <DeleteAccountDialog :profile="accountToDelete"
+          :pending="accountDeletionPending"
+          :error="accountDeletionError"
+          @confirm="confirmDeleteAccount"
+          @cancel="closeDeleteAccount" />
     </AppDialog>
 
     <AppDialog v-if="activeDialog === 'update'"

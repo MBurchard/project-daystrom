@@ -26,6 +26,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   launch: [profile: string];
   addAccount: [];
+  deleteAccount: [profile: ProfileInfo];
 }>();
 
 const {t} = useI18n('accounts', accountsDefaults);
@@ -111,10 +112,26 @@ function launchProfile(stem: string): void {
         class="account-panel"
         role="region"
         :aria-labelledby="`account-tab-${selectedProfile.stem}`">
-      <div>
+      <div class="account-summary">
         <h3>{{ selectedProfile.name }}</h3>
         <p>{{ t('server', { server: selectedProfile.server }) }}</p>
       </div>
+      <section class="account-danger" :aria-labelledby="`account-danger-${selectedProfile.stem}`">
+        <h4 :id="`account-danger-${selectedProfile.stem}`">
+          {{ t('removeHeading') }}
+        </h4>
+        <p>{{ t('removeDescription') }}</p>
+        <button class="account-delete"
+            :disabled="props.actionPending
+              || props.isProfileRunning(selectedProfile.stem)
+              || launchBlocked"
+            @click="emit('deleteAccount', selectedProfile)">
+          {{ t('removeLocal') }}
+        </button>
+        <small v-if="props.isProfileRunning(selectedProfile.stem) || launchBlocked">
+          {{ t('closeGameToRemove') }}
+        </small>
+      </section>
     </div>
 
     <div v-else class="account-panel empty-account">
@@ -246,16 +263,62 @@ function launchProfile(stem: string): void {
 
 .account-panel {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 1rem;
   min-height: 5rem;
   padding: 1rem;
   border: 1px solid rgb(127 127 127 / 40%);
 }
 
+.account-summary {
+  min-height: 3rem;
+}
+
 .account-panel h3,
 .account-panel p {
   margin: 0;
+}
+
+.account-danger {
+  padding: 1rem;
+  border: 1px solid #d1242f;
+  border-radius: 0.4rem;
+  background: rgb(209 36 47 / 6%);
+}
+
+.account-danger h4 {
+  margin: 0;
+  color: #b4232c;
+  text-transform: uppercase;
+}
+
+.account-danger p {
+  margin: 0.45rem 0 0.8rem;
+  opacity: 1;
+}
+
+.account-danger small {
+  display: block;
+  margin-top: 0.5rem;
+}
+
+.account-delete {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #b4232c;
+  border-radius: 0.3rem;
+  background: Canvas;
+  color: #b4232c;
+  font-weight: 600;
+}
+
+.account-delete:disabled {
+  opacity: 0.45;
+}
+
+.account-delete:hover:not(:disabled) {
+  background: #cf222e;
+  color: #fff;
 }
 
 .account-panel p {

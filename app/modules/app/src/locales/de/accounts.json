@@ -11,5 +11,16 @@
   "first": "Starte STFC über Daystrom, um den ersten Account hinzuzufügen.",
   "startNew": "Neuen Account starten",
   "newQuestion": "STFC ohne vorhandenes Daystrom-Profil starten, um einen neuen Account hinzuzufügen?",
-  "newInstructions": "Melde dich mit dem gewünschten Scopely-Account an. Daystrom erkennt das Spielerprofil und fügt es automatisch hinzu."
+  "newInstructions": "Melde dich mit dem gewünschten Scopely-Account an. Daystrom erkennt das Spielerprofil und fügt es automatisch hinzu.",
+  "removeHeading": "Lokale Accountdaten löschen",
+  "removeDescription": "Lösche das lokale Profil und die Anmeldedaten dieses Accounts von diesem Gerät.",
+  "removeLocal": "Lokale Accountdaten löschen",
+  "closeGameToRemove": "Schließe STFC, bevor Du lokale Accountdaten löschst.",
+  "deleteLocalOnly": "Daystrom löscht nur das lokale Profil und die Anmeldedaten für {{name}} von diesem Gerät.",
+  "deleteScopely": "Der Account bei Scopely wird nicht gelöscht. Wende dich dafür an den Scopely Support.",
+  "deleteWarningHeading": "Du könntest den Zugriff dauerhaft verlieren",
+  "deleteUnlinkedWarning": "Wenn dieser Account nicht mit einer Scopely ID verknüpft ist, kannst Du nach dem Löschen der lokalen Daten dauerhaft den Zugriff darauf verlieren.",
+  "deleteConfirmation": "Gib zur Bestätigung {{name}} ein.",
+  "deleteConfirmationLabel": "Accountname",
+  "deletePermanent": "Lokale Daten dauerhaft löschen"
 }

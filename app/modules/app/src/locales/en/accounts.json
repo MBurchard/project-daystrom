@@ -11,5 +11,16 @@
   "first": "Start STFC through Daystrom to add the first account.",
   "startNew": "Start new account",
   "newQuestion": "Start STFC without an existing Daystrom profile to add a new account?",
-  "newInstructions": "Sign in to the intended Scopely account. Daystrom will detect and add its player profile automatically."
+  "newInstructions": "Sign in to the intended Scopely account. Daystrom will detect and add its player profile automatically.",
+  "removeHeading": "Remove local account data",
+  "removeDescription": "Delete this account's local profile and login data from this device.",
+  "removeLocal": "Delete local account data",
+  "closeGameToRemove": "Close STFC before deleting local account data.",
+  "deleteLocalOnly": "Daystrom only deletes the local profile and login data for {{name}} on this device.",
+  "deleteScopely": "This does not delete the account from Scopely. Contact Scopely Support to delete the account itself.",
+  "deleteWarningHeading": "You may permanently lose access",
+  "deleteUnlinkedWarning": "If this account is not linked to a Scopely ID, you may permanently lose access to it after deleting the local data.",
+  "deleteConfirmation": "Enter {{name}} to confirm.",
+  "deleteConfirmationLabel": "Account name",
+  "deletePermanent": "Permanently delete local data"
 }

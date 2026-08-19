@@ -29,6 +29,10 @@ pub enum UiErrorCode {
     LauncherUnavailable,
     /// STFC could not be launched.
     GameLaunchFailed,
+    /// The selected local player profile no longer exists.
+    ProfileNotFound,
+    /// The selected local player profile could not be deleted.
+    ProfileDeletionFailed,
     /// The Daystrom update check failed.
     UpdateCheckFailed,
     /// The Daystrom update could not be prepared.

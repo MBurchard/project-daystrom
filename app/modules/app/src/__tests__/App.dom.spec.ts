@@ -2,13 +2,14 @@ import type {DaystromRollbackStatus} from '@generated/DaystromRollbackStatus';
 import type {DaystromUpdateStatus} from '@generated/DaystromUpdateStatus';
 import type {GameStatus} from '@generated/GameStatus';
 import type {ProfileState} from '@generated/ProfileState';
-import {shallowMount} from '@vue/test-utils';
+import {flushPromises, shallowMount} from '@vue/test-utils';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {nextTick, ref} from 'vue';
 import App from '../App.vue';
 import AccountTabs from '../components/AccountTabs.vue';
 import AppDialog from '../components/AppDialog.vue';
 import AppHeader from '../components/AppHeader.vue';
+import DeleteAccountDialog from '../components/DeleteAccountDialog.vue';
 import NewAccountDialog from '../components/NewAccountDialog.vue';
 import RollbackDialog from '../components/RollbackDialog.vue';
 import SettingsView from '../components/SettingsView.vue';
@@ -20,12 +21,14 @@ const mockUseProfileState = vi.hoisted(() => vi.fn());
 const mockUseSettings = vi.hoisted(() => vi.fn());
 const mockUseDaystromUpdate = vi.hoisted(() => vi.fn());
 const mockUseDaystromRollback = vi.hoisted(() => vi.fn());
+const mockDeleteLocalProfile = vi.hoisted(() => vi.fn());
 
 vi.mock('@app/composables/useGameState', () => ({useGameState: mockUseGameState}));
 vi.mock('@app/composables/useProfileState', () => ({useProfileState: mockUseProfileState}));
 vi.mock('@app/composables/useSettings', () => ({useSettings: mockUseSettings}));
 vi.mock('@app/composables/useDaystromUpdate', () => ({useDaystromUpdate: mockUseDaystromUpdate}));
 vi.mock('@app/composables/useDaystromRollback', () => ({useDaystromRollback: mockUseDaystromRollback}));
+vi.mock('@app/commands/profiles', () => ({deleteLocalProfile: mockDeleteLocalProfile}));
 
 /** Build a complete neutral game status. */
 function gameStatus(): GameStatus {
@@ -120,6 +123,7 @@ describe('app', () => {
     error.value = null;
     update.value = updateStatus();
     rollback.value = rollbackStatus();
+    mockDeleteLocalProfile.mockResolvedValue(undefined);
     mockUseGameState.mockReturnValue({
       version: ref('0.10.0'),
       status,
@@ -260,6 +264,60 @@ describe('app', () => {
 
     expect(actions.markLaunched).not.toHaveBeenCalled();
     expect(actions.launchGame).toHaveBeenCalledWith('new_account');
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+  });
+
+  it('confirms local account deletion and closes after backend success', async () => {
+    const profile = {name: 'Test Account', server: 1, stem: '1_TestAccount', primary: false};
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    wrapper.findComponent(AccountTabs).vm.$emit('deleteAccount', profile);
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('Remove account from Daystrom');
+    expect(wrapper.findComponent(DeleteAccountDialog).props('profile')).toEqual(profile);
+    wrapper.findComponent(DeleteAccountDialog).vm.$emit('confirm');
+    await flushPromises();
+
+    expect(mockDeleteLocalProfile).toHaveBeenCalledWith('1_TestAccount');
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+  });
+
+  it('keeps the deletion dialogue open with a normalized backend error', async () => {
+    const profile = {name: 'Test Account', server: 1, stem: '1_TestAccount', primary: false};
+    mockDeleteLocalProfile.mockRejectedValue('profile_deletion_failed');
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    wrapper.findComponent(AccountTabs).vm.$emit('deleteAccount', profile);
+    await nextTick();
+    wrapper.findComponent(DeleteAccountDialog).vm.$emit('confirm');
+    await flushPromises();
+
+    expect(wrapper.findComponent(DeleteAccountDialog).props('error')).toBe('profile_deletion_failed');
+    wrapper.findComponent(DeleteAccountDialog).vm.$emit('cancel');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+  });
+
+  it('prevents duplicate deletion and closing while deletion is pending', async () => {
+    const profile = {name: 'Test Account', server: 1, stem: '1_TestAccount', primary: false};
+    let resolveDeletion!: () => void;
+    mockDeleteLocalProfile.mockReturnValue(new Promise<void>((resolve) => {
+      resolveDeletion = resolve;
+    }));
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    wrapper.findComponent(AccountTabs).vm.$emit('deleteAccount', profile);
+    await nextTick();
+    wrapper.findComponent(DeleteAccountDialog).vm.$emit('confirm');
+    await nextTick();
+    wrapper.findComponent(DeleteAccountDialog).vm.$emit('confirm');
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+
+    expect(mockDeleteLocalProfile).toHaveBeenCalledOnce();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(true);
+    resolveDeletion();
+    await flushPromises();
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
   });
 

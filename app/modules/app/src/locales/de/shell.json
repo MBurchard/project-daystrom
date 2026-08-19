@@ -1,6 +1,7 @@
 {
   "settings": "Einstellungen",
   "addAccount": "Account hinzufügen",
+  "removeAccount": "Account aus Daystrom entfernen",
   "update": "Daystrom-Update",
   "updateAvailable": "{{appName}} {{version}} ist verfügbar",
   "recovery": "Zur vorherigen Version zurückkehren"

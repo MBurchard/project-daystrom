@@ -4,6 +4,7 @@ import {mount} from '@vue/test-utils';
 import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
 import AppDialog from '../AppDialog.vue';
 import AppHeader from '../AppHeader.vue';
+import DeleteAccountDialog from '../DeleteAccountDialog.vue';
 import NewAccountDialog from '../NewAccountDialog.vue';
 import RollbackDialog from '../RollbackDialog.vue';
 import UpdateDialog from '../UpdateDialog.vue';
@@ -85,7 +86,7 @@ describe('appDialog', () => {
 
   it('renders its slot and supports all explicit close gestures', async () => {
     const wrapper = mount(AppDialog, {
-      props: {title: 'Test dialog'},
+      props: {title: 'Test dialogue'},
       slots: {default: '<button class="inside">Inside</button>'},
       attachTo: document.body,
       global: {stubs: {Teleport: true}},
@@ -106,7 +107,7 @@ describe('appDialog', () => {
 
   it('leaves Escape to nested keyboard handling when consumed', async () => {
     const wrapper = mount(AppDialog, {
-      props: {title: 'Test dialog'},
+      props: {title: 'Test dialogue'},
       attachTo: document.body,
       global: {stubs: {Teleport: true}},
     });
@@ -124,7 +125,7 @@ describe('appDialog', () => {
     document.body.append(trigger);
     trigger.focus();
     const wrapper = mount(AppDialog, {
-      props: {title: 'Test dialog'},
+      props: {title: 'Test dialogue'},
       attachTo: document.body,
       global: {stubs: {Teleport: true}},
     });
@@ -139,10 +140,22 @@ describe('appDialog', () => {
     trigger.remove();
   });
 
+  it('prefers an explicitly requested initial focus target', () => {
+    const wrapper = mount(AppDialog, {
+      props: {title: 'Test dialogue'},
+      slots: {default: '<button autofocus class="preferred">Preferred</button>'},
+      attachTo: document.body,
+      global: {stubs: {Teleport: true}},
+    });
+
+    expect(document.activeElement).toBe(wrapper.get('.preferred').element);
+    wrapper.unmount();
+  });
+
   it('removes cleanly when no previous focus or open modal remains', () => {
     const activeElement = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(null);
     const wrapper = mount(AppDialog, {
-      props: {title: 'Test dialog'},
+      props: {title: 'Test dialogue'},
       attachTo: document.body,
       global: {stubs: {Teleport: true}},
     });
@@ -164,6 +177,44 @@ describe('newAccountDialog', () => {
     await buttons[1]!.trigger('click');
 
     expect(wrapper.emitted('confirm')).toHaveLength(1);
+    expect(wrapper.emitted('cancel')).toHaveLength(1);
+  });
+});
+
+describe('deleteAccountDialog', () => {
+  const profile = {name: 'Test Account', server: 1, stem: '1_TestAccount', primary: false};
+
+  it('requires the exact account name before deleting local data', async () => {
+    const wrapper = mount(DeleteAccountDialog, {
+      props: {profile, pending: false, error: null},
+    });
+    const input = wrapper.get('input');
+    const deleteButton = wrapper.get('.delete-button');
+
+    expect(wrapper.text()).toContain('does not delete the account from Scopely');
+    expect(wrapper.text()).toContain('permanently lose access');
+    expect(deleteButton.attributes('disabled')).toBeDefined();
+    await input.setValue('Wrong Account');
+    expect(deleteButton.attributes('disabled')).toBeDefined();
+    await input.setValue('Test Account');
+    expect(deleteButton.attributes('disabled')).toBeUndefined();
+    await deleteButton.trigger('click');
+
+    expect(wrapper.emitted('confirm')).toHaveLength(1);
+  });
+
+  it('blocks cancellation while pending and renders backend errors', async () => {
+    const wrapper = mount(DeleteAccountDialog, {
+      props: {profile, pending: true, error: 'profile_deletion_failed'},
+    });
+    const cancel = wrapper.get('button[autofocus]');
+
+    expect(wrapper.text()).toContain('could not be deleted');
+    expect(cancel.attributes('disabled')).toBeDefined();
+    await cancel.trigger('click');
+    expect(wrapper.emitted('cancel')).toBeUndefined();
+    await wrapper.setProps({pending: false});
+    await cancel.trigger('click');
     expect(wrapper.emitted('cancel')).toHaveLength(1);
   });
 });
