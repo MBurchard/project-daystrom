@@ -141,7 +141,7 @@ export function useSettingsView() {
 
   function stopShortcutCapture() {
     capturingKey.value = null;
-    window.removeEventListener('keydown', onCaptureKey);
+    window.removeEventListener('keydown', onCaptureKey, true);
     window.removeEventListener('mousedown', onCaptureMouse);
   }
 
@@ -159,13 +159,13 @@ export function useSettingsView() {
   function startCapture(key: string) {
     stopShortcutCapture();
     capturingKey.value = key;
-    window.addEventListener('keydown', onCaptureKey);
+    window.addEventListener('keydown', onCaptureKey, true);
     window.addEventListener('mousedown', onCaptureMouse);
   }
 
   function onCaptureKey(event: KeyboardEvent) {
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
 
     if (event.code === 'Escape') {
       stopShortcutCapture();

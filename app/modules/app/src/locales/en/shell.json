@@ -1,5 +1,6 @@
 {
   "settings": "Settings",
+  "closeWindow": "Close Daystrom",
   "addAccount": "Add account",
   "removeAccount": "Remove account from Daystrom",
   "update": "Daystrom update",

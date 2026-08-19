@@ -21,6 +21,7 @@ mod profile_state;
 mod settings;
 mod state_update;
 mod ui_error;
+mod ui_zoom;
 mod websocket;
 
 use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
@@ -30,8 +31,20 @@ use daystrom_update::{
 };
 use profile_state::{delete_local_profile, get_cached_profile_state};
 use settings::{get_app_language, get_game_settings, set_app_language, set_game_settings};
+use ui_zoom::change_ui_zoom;
 
 use_log!("Startup");
+
+/// Behaviour selected when the user closes the main Daystrom window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MainWindowCloseAction {
+    /// Explain why a Daystrom-owned process keeps the app in the tray.
+    WarnAndHide,
+    /// Hide silently or with the normal tray hint while an externally started game runs.
+    HideToTray,
+    /// Shut down Daystrom when no running process needs the window to remain available.
+    Shutdown,
+}
 
 /// Set when set_position() is called; cleared by the first Moved event which then shows the window.
 static SHOW_AFTER_REPOSITION: AtomicBool = AtomicBool::new(false);
@@ -244,6 +257,36 @@ pub(crate) fn minimize_to_tray(window: &tauri::WebviewWindow) {
     settings::increment_minimize_hint();
 }
 
+/// Select the main-window close behaviour from backend-owned process state.
+fn main_window_close_action(status: &commands::GameStatus) -> MainWindowCloseAction {
+    if status.should_block_quit {
+        MainWindowCloseAction::WarnAndHide
+    } else if status.game_running {
+        MainWindowCloseAction::HideToTray
+    } else {
+        MainWindowCloseAction::Shutdown
+    }
+}
+
+/// Apply the backend-owned close policy to the main Daystrom window.
+fn close_main_window(window: &tauri::WebviewWindow) {
+    match main_window_close_action(&game_state::get()) {
+        MainWindowCloseAction::WarnAndHide => warn_quit_blocked(window),
+        MainWindowCloseAction::HideToTray => minimize_to_tray(window),
+        MainWindowCloseAction::Shutdown => request_shutdown(window.app_handle()),
+    }
+}
+
+/// Handle the custom title-bar close control without exposing close policy to the frontend.
+#[tauri::command]
+fn request_main_window_close(app: tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        log_warn!("Main window unavailable for close request");
+        return;
+    };
+    close_main_window(&window);
+}
+
 /// Bootstrap and run the Tauri application.
 ///
 /// Sets up logging, builds the system tray, and starts the background services.
@@ -266,6 +309,7 @@ pub fn run() {
             // On Windows, set_position() is synchronous and the event loop is not yet running during setup(), so we
             // show directly.
             if let Some(window) = app.get_webview_window("main") {
+                ui_zoom::initialize(&window);
                 let mut needs_reposition = false;
                 if let Some(ws) = settings::get_window_settings() {
                     if let (Some(x), Some(y)) = (ws.x, ws.y) {
@@ -274,9 +318,6 @@ pub fn run() {
                     }
                     if let (Some(w), Some(h)) = (ws.width, ws.height) {
                         let _ = window.set_size(tauri::LogicalSize::new(w as f64, h as f64));
-                    }
-                    if ws.maximized.unwrap_or(false) {
-                        let _ = window.maximize();
                     }
                 }
 
@@ -291,9 +332,6 @@ pub fn run() {
             {
                 macos_hooks::set_app_handle(app.handle().clone());
                 macos_hooks::install_quit_guard();
-                if let Some(window) = app.get_webview_window("main") {
-                    macos_hooks::install_minimize_guard(&window);
-                }
             }
 
             monitor::start(app.handle().clone());
@@ -361,8 +399,10 @@ pub fn run() {
             get_game_settings,
             set_app_language,
             set_game_settings,
+            change_ui_zoom,
             get_cached_profile_state,
             delete_local_profile,
+            request_main_window_close,
             launch_updater,
             prepare_mod,
             remove_mod,
@@ -378,14 +418,9 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     log_debug!("[EVENT] CloseRequested on window '{}'", window.label());
-                    if game_state::get().should_block_quit {
-                        api.prevent_close();
-                        if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
-                            warn_quit_blocked(&wv);
-                        }
-                    } else {
-                        api.prevent_close();
-                        request_shutdown(window.app_handle());
+                    api.prevent_close();
+                    if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
+                        close_main_window(&wv);
                     }
                 }
                 tauri::WindowEvent::Moved(..) | tauri::WindowEvent::Resized(..) => {
@@ -397,25 +432,14 @@ pub fn run() {
                     {
                         show_window(&wv);
                     }
-                    // Windows fallback: detect minimizing via Resized (macOS uses native hook).
-                    #[cfg(not(target_os = "macos"))]
-                    if window.is_minimized().unwrap_or(false) {
-                        if let Some(wv) = window.app_handle().get_webview_window(window.label()) {
-                            minimize_to_tray(&wv);
-                        }
-                        return;
-                    }
                     // Persist window geometry as logical pixels (debounced via settings::save).
-                    if !window.is_minimized().unwrap_or(false)
-                        && let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size())
-                    {
+                    if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {
                         let scale = window.scale_factor().unwrap_or(1.0);
                         settings::save_window_state(
                             (pos.x as f64 / scale).round() as i32,
                             (pos.y as f64 / scale).round() as i32,
                             (size.width as f64 / scale).round() as u32,
                             (size.height as f64 / scale).round() as u32,
-                            window.is_maximized().unwrap_or(false),
                         );
                     }
                 }
@@ -456,6 +480,32 @@ mod tests {
         assert!(should_allow_exit(Some(tauri::RESTART_EXIT_CODE)));
         assert!(!should_allow_exit(None));
         assert!(!should_allow_exit(Some(1)));
+    }
+
+    #[test]
+    fn main_window_close_warns_for_daystrom_owned_processes() {
+        let status = commands::GameStatus {
+            should_block_quit: true,
+            ..commands::GameStatus::default()
+        };
+        assert_eq!(main_window_close_action(&status), MainWindowCloseAction::WarnAndHide);
+    }
+
+    #[test]
+    fn main_window_close_hides_for_an_external_running_game() {
+        let status = commands::GameStatus {
+            game_running: true,
+            ..commands::GameStatus::default()
+        };
+        assert_eq!(main_window_close_action(&status), MainWindowCloseAction::HideToTray);
+    }
+
+    #[test]
+    fn main_window_close_shuts_down_without_a_running_game() {
+        assert_eq!(
+            main_window_close_action(&commands::GameStatus::default()),
+            MainWindowCloseAction::Shutdown
+        );
     }
 
     // -- hint_level --

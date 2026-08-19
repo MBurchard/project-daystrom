@@ -2,6 +2,7 @@
 import type {ProfileInfo} from '@generated/ProfileInfo';
 import type {UiErrorCode} from '@generated/UiErrorCode';
 import {deleteLocalProfile} from '@app/commands/profiles';
+import {closeMainWindow} from '@app/commands/window';
 import AccountTabs from '@app/components/AccountTabs.vue';
 import AppDialog from '@app/components/AppDialog.vue';
 import AppHeader from '@app/components/AppHeader.vue';
@@ -11,6 +12,7 @@ import RollbackDialog from '@app/components/RollbackDialog.vue';
 import SettingsView from '@app/components/SettingsView.vue';
 import StatusBar from '@app/components/StatusBar.vue';
 import UpdateDialog from '@app/components/UpdateDialog.vue';
+import ZoomOverlay from '@app/components/ZoomOverlay.vue';
 import {useDaystromRollback} from '@app/composables/useDaystromRollback';
 import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
 import {useGameState} from '@app/composables/useGameState';
@@ -19,6 +21,7 @@ import {useSettings} from '@app/composables/useSettings';
 import {normalizeUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
 import shellDefaults from '@app/locales/en/shell.json';
+import {getLogger} from '@app/log';
 import {computed, onMounted, onUnmounted, ref} from 'vue';
 
 /** Main application views shown below the persistent status bar. */
@@ -33,6 +36,7 @@ const accountToDelete = ref<ProfileInfo | null>(null);
 const accountDeletionPending = ref(false);
 const accountDeletionError = ref<UiErrorCode | null>(null);
 const {t} = useI18n('shell', shellDefaults);
+const log = getLogger('Window');
 
 const {
   version,
@@ -91,9 +95,9 @@ function closeDialog(): void {
   activeDialog.value = null;
 }
 
-/** Replace the accounts view with application settings. */
-function showSettings(): void {
-  activeView.value = 'settings';
+/** Toggle between the accounts and application settings views. */
+function toggleSettings(): void {
+  activeView.value = activeView.value === 'settings' ? 'accounts' : 'settings';
 }
 
 /** Return from application settings to the accounts view. */
@@ -159,6 +163,11 @@ function confirmDeleteAccount(): void {
     });
 }
 
+/** Delegate the custom title-bar close action to backend-owned process policy. */
+function handleCloseWindow(): void {
+  closeMainWindow().catch(reason => log.error('Failed to close the main window:', reason));
+}
+
 onMounted(() => {
   initGameState();
   initProfileState();
@@ -177,39 +186,41 @@ onUnmounted(() => {
 
 <template>
   <main>
-    <AppHeader :version="version" @open-settings="showSettings" />
+    <AppHeader :version="version" @open-settings="toggleSettings" @close-window="handleCloseWindow" />
 
-    <StatusBar :status="status"
-        :loading="loading"
-        :error="error"
-        :action-error="actionError"
-        :action-pending="actionPending"
-        :update="daystromUpdate"
-        :rollback="daystromRollback"
-        @check-update="checkDaystromUpdate"
-        @open-update="openDialog('update')"
-        @open-rollback="openDialog('rollback')"
-        @install-mod="installMod"
-        @remove-mod="removeMod"
-        @open-game-updater="openUpdater" />
+    <div class="app-content">
+      <StatusBar :status="status"
+          :loading="loading"
+          :error="error"
+          :action-error="actionError"
+          :action-pending="actionPending"
+          :update="daystromUpdate"
+          :rollback="daystromRollback"
+          @check-update="checkDaystromUpdate"
+          @open-update="openDialog('update')"
+          @open-rollback="openDialog('rollback')"
+          @install-mod="installMod"
+          @remove-mod="removeMod"
+          @open-game-updater="openUpdater" />
 
-    <SettingsView v-if="activeView === 'settings'"
-        :rollback-version="daystromRollback.version"
-        @close="showAccounts"
-        @open-rollback="openDialog('rollback')" />
+      <SettingsView v-if="activeView === 'settings'"
+          :rollback-version="daystromRollback.version"
+          @close="showAccounts"
+          @open-rollback="openDialog('rollback')" />
 
-    <AccountTabs v-else-if="!error"
-        :installed="status.installed"
-        :mod-deployed="status.mod_deployed"
-        :can-launch-initial="status.can_launch"
-        :action-pending="actionPending"
-        :external-game-running="profiles.external_game_running"
-        :game-origin-pending="profiles.game_origin_pending"
-        :profiles="profiles.profiles"
-        :is-profile-running="isProfileRunning"
-        @launch="handleLaunch"
-        @add-account="openDialog('new-account')"
-        @delete-account="openDeleteAccount" />
+      <AccountTabs v-else-if="!error"
+          :installed="status.installed"
+          :mod-deployed="status.mod_deployed"
+          :can-launch-initial="status.can_launch"
+          :action-pending="actionPending"
+          :external-game-running="profiles.external_game_running"
+          :game-origin-pending="profiles.game_origin_pending"
+          :profiles="profiles.profiles"
+          :is-profile-running="isProfileRunning"
+          @launch="handleLaunch"
+          @add-account="openDialog('new-account')"
+          @delete-account="openDeleteAccount" />
+    </div>
 
     <AppDialog v-if="activeDialog === 'new-account'" :title="t('addAccount')" @close="closeDialog">
       <NewAccountDialog @confirm="confirmNewAccount" @cancel="closeDialog" />
@@ -242,6 +253,8 @@ onUnmounted(() => {
           :update-busy="updateBusy"
           @restore="restoreDaystrom" />
     </AppDialog>
+
+    <ZoomOverlay />
   </main>
 </template>
 
@@ -250,31 +263,56 @@ html,
 body,
 #app {
   height: 100%;
+  background: transparent;
 }
 
 body {
   box-sizing: border-box;
   margin: 0;
-  padding: 0.5rem;
+  padding: 0;
   overflow: hidden;
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+.app-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.5rem;
+}
+
 main {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgb(127 127 127 / 35%);
+  border-radius: 0.75rem;
+  background: Canvas;
 }
 
 *,
 *::before,
 *::after {
+  /* stylelint-disable-next-line property-no-vendor-prefix -- Required by macOS WKWebView. */
+  -webkit-user-select: none;
   user-select: none;
 }
 
 button,
 input {
   font: inherit;
+}
+
+input,
+textarea,
+pre,
+code {
+  /* stylelint-disable-next-line property-no-vendor-prefix -- Required by macOS WKWebView. */
+  -webkit-user-select: text;
+  user-select: text;
 }
 </style>

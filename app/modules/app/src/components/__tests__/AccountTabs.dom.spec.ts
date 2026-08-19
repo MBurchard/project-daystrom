@@ -63,6 +63,9 @@ describe('accountTabs', () => {
     expect(wrapper.findAll('.running-indicator')).toHaveLength(1);
     expect(wrapper.findAll('.account-start')[0]!.attributes('disabled')).toBeUndefined();
     expect(wrapper.findAll('.account-start')[1]!.attributes('disabled')).toBeDefined();
+    expect(wrapper.findAll('.account-start')[0]!.text()).toBe('Start');
+    expect(wrapper.findAll('.account-start')[1]!.text()).toBe('Running');
+    expect(wrapper.findAll('.account-start')[1]!.classes()).toContain('running');
   });
 
   it.each([

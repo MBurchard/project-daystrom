@@ -189,6 +189,25 @@ describe('useSettingsView', () => {
     wrapper.unmount();
   });
 
+  it('consumes captured shortcuts before application zoom handles them', () => {
+    const zoomListener = vi.fn();
+    window.addEventListener('keydown', zoomListener);
+    const {state, wrapper} = mountSettingsView();
+
+    state.startCapture('trigger_main_action');
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      code: 'Equal',
+      ctrlKey: true,
+      key: '+',
+    }));
+
+    expect(mocks.setShortcut).toHaveBeenCalledWith('trigger_main_action', 'Equal');
+    expect(zoomListener).not.toHaveBeenCalled();
+    wrapper.unmount();
+    window.removeEventListener('keydown', zoomListener);
+  });
+
   it('ignores ordinary mouse buttons and captures auxiliary buttons', () => {
     const {state, wrapper} = mountSettingsView();
 
@@ -213,7 +232,7 @@ describe('useSettingsView', () => {
 
     expect(settings.value.banners.disable_all).toBe(true);
     expect(mocks.setBannerTypeEnabled).toHaveBeenCalledWith('Victory', false);
-    expect(removeEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
     expect(removeEventListener).toHaveBeenCalledWith('mousedown', expect.any(Function));
   });
 });
