@@ -149,11 +149,15 @@ function launchProfile(stem: string): void {
 
 <style scoped>
 .accounts {
-  margin-top: 1.5rem;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 0.75rem;
 }
 
 .accounts h2 {
-  margin-bottom: 0.75rem;
+  margin: 0 0 0.75rem;
 }
 
 .account-tabs {
@@ -270,11 +274,13 @@ function launchProfile(stem: string): void {
 
 .account-panel {
   display: flex;
+  flex: 1;
   flex-direction: column;
   align-items: stretch;
   gap: 1rem;
   min-height: 5rem;
   padding: 1rem;
+  overflow-y: auto;
   border: 1px solid rgb(127 127 127 / 40%);
 }
 
@@ -288,6 +294,7 @@ function launchProfile(stem: string): void {
 }
 
 .account-danger {
+  margin-top: auto;
   padding: 1rem;
   border: 1px solid #d1242f;
   border-radius: 0.4rem;

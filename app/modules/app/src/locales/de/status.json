@@ -15,10 +15,12 @@
   "gameNotRunning": "Spiel läuft nicht",
   "launcherRunning": "Scopely Launcher läuft",
   "daystromAvailable": "Daystrom {{version}} verfügbar",
+  "daystromCurrent": "Daystrom aktuell",
+  "daystromDeferred": "Daystrom-Update zurückgestellt",
+  "checkDaystromUpdates": "Auf Daystrom-Updates prüfen",
   "checkingDaystrom": "Daystrom-Updates werden geprüft…",
   "daystromCheckFailed": "Daystrom-Updateprüfung fehlgeschlagen",
   "modRestorePending": "Wechsel zur vorherigen Mod-Version ausstehend",
-  "checkDaystrom": "Daystrom prüfen",
   "launcherStarted": "Der Scopely Launcher wurde gestartet. Aktualisiere dort das Spiel und schließe danach den Launcher. Starte das Spiel nicht über den Scopely Launcher, sondern über Daystrom.",
   "closeLauncher": "Schließe den Scopely Launcher, um fortzufahren. Starte das Spiel nicht dort, sondern über Daystrom."
 }

@@ -66,6 +66,7 @@ function props(overrides: Record<string, unknown> = {}) {
     error: null,
     actionError: null,
     actionPending: false,
+    updateCheckBusy: false,
     update: updateStatus(),
     rollback: rollbackStatus(),
     ...overrides,
@@ -112,15 +113,23 @@ describe('statusBar', () => {
   it('renders and dispatches all mod actions', async () => {
     const wrapper = mount(StatusBar, {props: props()});
     expect(wrapper.text()).toContain('Mod ready');
-    await wrapper.findAll('button').find(button => button.text() === 'Reinstall mod')!.trigger('click');
+    const reinstallButton = wrapper.get('.mod-reinstall');
+    expect(reinstallButton.attributes('aria-label')).toBe('Reinstall mod');
+    expect(reinstallButton.attributes('data-tooltip')).toBe('Reinstall mod');
+    await reinstallButton.trigger('click');
     await wrapper.findAll('button').find(button => button.text() === 'Remove mod')!.trigger('click');
     expect(wrapper.emitted('installMod')).toHaveLength(1);
     expect(wrapper.emitted('removeMod')).toHaveLength(1);
 
+    await wrapper.setProps({status: gameStatus({mod_available: false})});
+    expect(wrapper.text()).toContain('Mod ready');
+    expect(wrapper.find('.mod-reinstall').exists()).toBe(false);
     await wrapper.setProps({
       status: gameStatus({mod_deployed: false, mod_outdated: false, mod_removable: false}),
     });
     expect(wrapper.text()).toContain('Install mod');
+    await wrapper.findAll('button').find(button => button.text() === 'Install mod')!.trigger('click');
+    expect(wrapper.emitted('installMod')).toHaveLength(2);
     await wrapper.setProps({
       status: gameStatus({mod_deployed: false, mod_outdated: true, mod_removable: false}),
     });
@@ -155,19 +164,29 @@ describe('statusBar', () => {
   });
 
   it('opens available Daystrom updates and hides dismissed ones', async () => {
-    const wrapper = mount(StatusBar, {
-      props: props({update: updateStatus({phase: 'available', version: '0.10.1'})}),
-    });
+    const wrapper = mount(StatusBar, {props: props()});
+    expect(wrapper.text()).toContain('Daystrom up to date');
+    const checkButton = wrapper.get('[aria-label="Check for Daystrom updates"]');
+    await checkButton.trigger('click');
+    expect(wrapper.emitted('checkUpdate')).toHaveLength(1);
+
+    await wrapper.setProps({update: updateStatus({phase: 'available', version: '0.10.1'})});
     const updateButton = wrapper.findAll('button').find(button => button.text().includes('Daystrom 0.10.1'))!;
     await updateButton.trigger('click');
     expect(wrapper.emitted('openUpdate')).toHaveLength(1);
 
     await wrapper.setProps({update: updateStatus({phase: 'available', version: '0.10.1', dismissed: true})});
     expect(wrapper.text()).not.toContain('Daystrom 0.10.1 available');
+    expect(wrapper.text()).toContain('Daystrom update deferred');
+    await wrapper.setProps({updateCheckBusy: true});
+    expect(wrapper.get('[aria-label="Check for Daystrom updates"]').attributes('disabled')).toBeDefined();
+    await wrapper.setProps({updateCheckBusy: false});
     await wrapper.setProps({update: updateStatus({phase: 'checking'})});
     expect(wrapper.text()).toContain('Checking Daystrom updates');
     await wrapper.setProps({update: updateStatus({phase: 'failed', error: 'update_check_failed'})});
     expect(wrapper.text()).toContain('Daystrom update check failed');
+    await wrapper.get('[aria-label="Check for Daystrom updates"]').trigger('click');
+    expect(wrapper.emitted('checkUpdate')).toHaveLength(2);
   });
 
   it('opens a pending mod restore and shows action errors', async () => {
@@ -182,25 +201,5 @@ describe('statusBar', () => {
     const rollbackButton = wrapper.findAll('button').find(button => button.text().includes('Previous mod'))!;
     await rollbackButton.trigger('click');
     expect(wrapper.emitted('openRollback')).toHaveLength(1);
-  });
-
-  it.each([
-    {update: updateStatus({phase: 'checking'})},
-    {update: updateStatus({phase: 'confirming'})},
-    {update: updateStatus({phase: 'retaining_rollback'})},
-    {update: updateStatus({phase: 'downloading'})},
-    {update: updateStatus({phase: 'installing'})},
-    {rollback: rollbackStatus({phase: 'preparing'})},
-    {rollback: rollbackStatus({phase: 'installing'})},
-  ])('blocks checks during maintenance', (busy) => {
-    const wrapper = mount(StatusBar, {props: props(busy)});
-    expect(wrapper.findAll('button').find(button => button.text() === 'Check Daystrom')!
-      .attributes('disabled')).toBeDefined();
-  });
-
-  it('requests a manual Daystrom update check while idle', async () => {
-    const wrapper = mount(StatusBar, {props: props()});
-    await wrapper.findAll('button').find(button => button.text() === 'Check Daystrom')!.trigger('click');
-    expect(wrapper.emitted('checkUpdate')).toHaveLength(1);
   });
 });

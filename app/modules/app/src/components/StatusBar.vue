@@ -18,6 +18,8 @@ const props = defineProps<{
   actionError: UiErrorCode | null;
   /** Whether a game or mod action is running. */
   actionPending: boolean;
+  /** Whether Daystrom update maintenance currently blocks a manual check. */
+  updateCheckBusy: boolean;
   /** Backend-owned Daystrom update status. */
   update: DaystromUpdateStatus;
   /** Backend-owned Daystrom rollback status. */
@@ -25,9 +27,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  checkUpdate: [];
   openUpdate: [];
   openRollback: [];
+  checkUpdate: [];
   installMod: [];
   removeMod: [];
   openGameUpdater: [];
@@ -35,12 +37,6 @@ const emit = defineEmits<{
 
 const {t} = useI18n('status', statusDefaults);
 const {errorText} = useUiError();
-
-/** Whether update or rollback work currently blocks another update check. */
-function maintenanceBusy(): boolean {
-  return ['checking', 'confirming', 'retaining_rollback', 'downloading', 'installing'].includes(props.update.phase) ||
-    ['preparing', 'installing'].includes(props.rollback.phase);
-}
 </script>
 
 <template>
@@ -52,6 +48,41 @@ function maintenanceBusy(): boolean {
     </span>
     <span v-else class="status-item fail">{{ t('notInstalled') }}</span>
 
+    <button v-if="props.update.version && !props.update.dismissed"
+        class="status-item warn interactive"
+        @click="emit('openUpdate')">
+      {{ t('daystromAvailable', { version: props.update.version }) }}
+    </button>
+    <span v-else-if="props.update.phase === 'checking'" class="status-item neutral">
+      {{ t('checkingDaystrom') }}
+    </span>
+    <div v-else-if="props.update.error" class="status-item fail segmented-status">
+      <span class="segmented-status-label" :title="errorText(props.update.error)">
+        {{ t('daystromCheckFailed') }}
+      </span>
+      <button class="status-refresh"
+          :data-tooltip="t('checkDaystromUpdates')"
+          :aria-label="t('checkDaystromUpdates')"
+          :disabled="props.updateCheckBusy"
+          @click="emit('checkUpdate')">
+        ↻
+      </button>
+    </div>
+    <div v-else-if="props.update.phase === 'up_to_date' || props.update.dismissed"
+        class="status-item segmented-status"
+        :class="props.update.dismissed ? 'neutral' : 'ok'">
+      <span class="segmented-status-label">
+        {{ props.update.dismissed ? t('daystromDeferred') : t('daystromCurrent') }}
+      </span>
+      <button class="status-refresh"
+          :data-tooltip="t('checkDaystromUpdates')"
+          :aria-label="t('checkDaystromUpdates')"
+          :disabled="props.updateCheckBusy"
+          @click="emit('checkUpdate')">
+        ↻
+      </button>
+    </div>
+
     <button v-if="props.status.installed && props.status.update_available"
         class="status-item warn interactive"
         :disabled="!props.status.can_launch_updater || props.actionPending"
@@ -62,18 +93,25 @@ function maintenanceBusy(): boolean {
       {{ t('gameUpdateFailed') }}
     </span>
 
-    <span v-if="props.status.installed && props.status.mod_deployed" class="status-item ok">
-      {{ t('modReady') }}
-    </span>
+    <div v-if="props.status.installed && props.status.mod_deployed" class="status-item ok segmented-status">
+      <span class="segmented-status-label">{{ t('modReady') }}</span>
+      <button v-if="props.status.mod_available"
+          class="status-refresh mod-reinstall"
+          :data-tooltip="t('reinstallMod')"
+          :aria-label="t('reinstallMod')"
+          :disabled="!props.status.can_install_mod || props.actionPending"
+          @click="emit('installMod')">
+        ↻
+      </button>
+    </div>
     <span v-else-if="props.status.installed && !props.status.mod_available" class="status-item fail">
       {{ t('modUnavailable') }}
     </span>
-    <button v-if="props.status.installed && props.status.mod_available"
-        :class="props.status.mod_deployed ? 'status-action' : 'status-item warn interactive'"
+    <button v-if="props.status.installed && props.status.mod_available && !props.status.mod_deployed"
+        class="status-item warn interactive"
         :disabled="!props.status.can_install_mod || props.actionPending"
         @click="emit('installMod')">
-      {{ props.status.mod_deployed ? t('reinstallMod')
-        : props.status.mod_outdated ? t('updateMod') : t('installMod') }}
+      {{ props.status.mod_outdated ? t('updateMod') : t('installMod') }}
     </button>
     <button v-if="props.status.mod_removable"
         class="status-action"
@@ -87,26 +125,10 @@ function maintenanceBusy(): boolean {
 
     <span v-if="props.status.launcher_running" class="status-item warn">{{ t('launcherRunning') }}</span>
 
-    <button v-if="props.update.version && !props.update.dismissed"
-        class="status-item warn interactive"
-        @click="emit('openUpdate')">
-      {{ t('daystromAvailable', { version: props.update.version }) }}
-    </button>
-    <span v-else-if="props.update.phase === 'checking'" class="status-item neutral">
-      {{ t('checkingDaystrom') }}
-    </span>
-    <span v-else-if="props.update.error" class="status-item fail" :title="errorText(props.update.error)">
-      {{ t('daystromCheckFailed') }}
-    </span>
-
     <button v-if="props.rollback.mod_restore_pending"
         class="status-item warn interactive"
         @click="emit('openRollback')">
       {{ t('modRestorePending') }}
-    </button>
-
-    <button class="check-button" :disabled="maintenanceBusy()" @click="emit('checkUpdate')">
-      {{ t('checkDaystrom') }}
     </button>
   </section>
 
@@ -153,6 +175,71 @@ function maintenanceBusy(): boolean {
   content: "✓";
 }
 
+.segmented-status {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+}
+
+.segmented-status::before {
+  align-self: center;
+  margin-left: 0.5rem;
+}
+
+.segmented-status-label {
+  align-self: center;
+  padding: 0.25rem 0.45rem 0.25rem 0;
+}
+
+.segmented-status.neutral .segmented-status-label {
+  padding-left: 0.5rem;
+}
+
+.status-refresh {
+  position: relative;
+  min-width: 1.9rem;
+  padding: 0 0.45rem;
+  border: 0;
+  border-left: 1px solid currentcolor;
+  border-radius: 0 999px 999px 0;
+  background: color-mix(in srgb, currentcolor 8%, transparent);
+  color: inherit;
+  font: inherit;
+}
+
+.status-refresh::after {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.3rem;
+  background: #222;
+  color: #fff;
+  content: attr(data-tooltip);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.2rem);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: nowrap;
+}
+
+.status-refresh:disabled {
+  opacity: 0.45;
+}
+
+.status-refresh:hover:not(:disabled) {
+  background: color-mix(in srgb, currentcolor 22%, transparent);
+}
+
+.status-refresh:focus-visible::after,
+.status-refresh:hover:not(:disabled)::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .status-item.warn {
   color: #ff9800;
 }
@@ -183,10 +270,6 @@ function maintenanceBusy(): boolean {
 
 .interactive:disabled {
   opacity: 0.5;
-}
-
-.check-button {
-  margin-left: auto;
 }
 
 .status-action {
