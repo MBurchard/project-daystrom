@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type {DaystromUpdateStatus} from '@generated/DaystromUpdateStatus';
+import {useI18n} from '@app/i18n';
+import globalDefaults from '@app/locales/en/global.json';
+import updateDefaults from '@app/locales/en/update.json';
 
 const props = defineProps<{
   /** Backend-owned update state rendered without frontend policy decisions. */
@@ -12,6 +15,8 @@ const emit = defineEmits<{
   install: [];
   later: [];
 }>();
+
+const {t} = useI18n('update', {...updateDefaults, later: globalDefaults.later});
 </script>
 
 <template>
@@ -20,41 +25,40 @@ const emit = defineEmits<{
       {{ props.status.notes }}
     </p>
     <p>
-      Daystrom will restart after verification. A running game stays open, and its Daystrom mod reconnects
-      automatically.
+      {{ t('restart') }}
     </p>
     <p v-if="props.status.phase === 'confirming'" class="progress-row">
-      Confirming update…
+      {{ t('confirming') }}
     </p>
     <p v-else-if="props.status.phase === 'retaining_rollback'" class="progress-row">
-      Preparing rollback package…
+      {{ t('retaining') }}
       <progress v-if="props.status.download_progress !== null"
           :value="props.status.download_progress"
           max="100" />
       <span v-if="props.status.download_progress !== null">{{ props.status.download_progress }}%</span>
     </p>
     <p v-else-if="props.status.phase === 'downloading'" class="progress-row">
-      Downloading and verifying update…
+      {{ t('downloading') }}
       <progress v-if="props.status.download_progress !== null"
           :value="props.status.download_progress"
           max="100" />
       <span v-if="props.status.download_progress !== null">{{ props.status.download_progress }}%</span>
     </p>
     <p v-else-if="props.status.phase === 'installing'" class="progress-row">
-      Installing update and restarting Daystrom…
+      {{ t('installing') }}
     </p>
     <p v-else-if="props.status.phase === 'available' && !props.status.can_install" class="info">
-      Installation is disabled in this development build unless a debug update endpoint is configured.
+      {{ t('devDisabled') }}
     </p>
     <p v-if="props.status.error" class="error">
       {{ props.status.error }}
     </p>
     <div v-if="props.status.phase === 'available'" class="actions">
       <button :disabled="!props.status.can_install || props.rollbackBusy" @click="emit('install')">
-        Install update
+        {{ t('install') }}
       </button>
       <button @click="emit('later')">
-        Later
+        {{ t('later') }}
       </button>
     </div>
   </div>

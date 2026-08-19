@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import {useI18n} from '@app/i18n';
+import shellDefaults from '@app/locales/en/shell.json';
+
 const props = defineProps<{
   /** Installed Daystrom version. */
   version: string;
 }>();
-
 const emit = defineEmits<{
   openSettings: [];
 }>();
+const {t} = useI18n('shell', shellDefaults);
 </script>
 
 <template>
@@ -14,7 +17,10 @@ const emit = defineEmits<{
     <h1>
       Project Daystrom <small v-if="props.version">{{ props.version }}</small>
     </h1>
-    <button class="settings-button" title="Settings" aria-label="Settings" @click="emit('openSettings')">
+    <button class="settings-button"
+        :title="t('settings')"
+        :aria-label="t('settings')"
+        @click="emit('openSettings')">
       ⚙
     </button>
   </header>

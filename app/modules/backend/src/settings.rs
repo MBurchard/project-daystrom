@@ -185,12 +185,31 @@ pub struct WindowSettings {
 /// UI-related settings for the Daystrom app itself.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UiSettings {
+    /// Explicitly selected application language; absent until the user chooses one.
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub language: Option<AppLanguage>,
     /// Progressive hint counters.
     #[serde(default)]
     pub hints: HintSettings,
     /// Saved window geometry (absent on first launch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowSettings>,
+}
+
+/// Languages supported by the Daystrom application interface.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum AppLanguage {
+    /// English application interface.
+    #[default]
+    En,
+    /// German application interface.
+    De,
 }
 
 /// UI settings that are sent to the game mod via WebSocket.
@@ -418,6 +437,7 @@ pub struct AppSettings {
 /// Global in-memory copy, loaded once at startup.
 static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
     ui: UiSettings {
+        language: None,
         hints: HintSettings { minimize_to_tray: 0 },
         window: None,
     },
@@ -677,6 +697,39 @@ pub fn save_window_state(x: i32, y: i32, width: u32, height: u32, maximized: boo
 
 // ---- Game settings API ----------------------------------------------------------
 
+/// Resolve the application language from a persisted choice or a raw system locale.
+fn resolve_app_language(language: Option<AppLanguage>, system_locale: Option<&str>) -> AppLanguage {
+    language.unwrap_or_else(|| {
+        let primary = system_locale
+            .and_then(|locale| locale.split(['-', '_']).next())
+            .unwrap_or_default();
+        if primary.eq_ignore_ascii_case("de") {
+            AppLanguage::De
+        } else {
+            AppLanguage::En
+        }
+    })
+}
+
+/// Return the persisted application language or derive it from the supplied system locale.
+#[tauri::command]
+pub fn get_app_language(system_locale: Option<String>) -> AppLanguage {
+    let language = SETTINGS.lock().unwrap().ui.language;
+    resolve_app_language(language, system_locale.as_deref())
+}
+
+/// Persist an explicit application language selection.
+#[tauri::command]
+pub fn set_app_language(language: AppLanguage) {
+    update(|settings| {
+        if settings.ui.language == Some(language) {
+            return false;
+        }
+        settings.ui.language = Some(language);
+        true
+    });
+}
+
 /// Return the current game settings.
 #[tauri::command]
 pub fn get_game_settings() -> GameSettings {
@@ -811,12 +864,41 @@ mod tests {
     fn default_has_zero_hint_count() {
         let settings = AppSettings::default();
         assert_eq!(settings.ui.hints.minimize_to_tray, 0);
+        assert_eq!(settings.ui.language, None);
+    }
+
+    #[test]
+    fn application_language_uses_persisted_selection_or_german_locale_family() {
+        assert_eq!(resolve_app_language(Some(AppLanguage::En), Some("de-DE")), AppLanguage::En);
+        assert_eq!(resolve_app_language(None, Some("de-DE")), AppLanguage::De);
+        assert_eq!(resolve_app_language(None, Some("DE_at")), AppLanguage::De);
+        assert_eq!(resolve_app_language(None, Some("de-CH")), AppLanguage::De);
+        assert_eq!(resolve_app_language(None, Some("en-DE")), AppLanguage::En);
+        assert_eq!(resolve_app_language(None, None), AppLanguage::En);
+    }
+
+    #[test]
+    fn explicit_application_language_is_persisted() {
+        let _lock = lock_tests();
+        let path = use_temp_path("application_language");
+        *SETTINGS.lock().unwrap() = AppSettings::default();
+
+        set_app_language(AppLanguage::De);
+        flush_saves();
+
+        assert_eq!(get_app_language(Some("en-US".to_string())), AppLanguage::De);
+        assert!(fs::read_to_string(path).unwrap().contains("language = \"de\""));
+
+        set_app_language(AppLanguage::De);
+        *SETTINGS.lock().unwrap() = AppSettings::default();
+        reset_path_override();
     }
 
     #[test]
     fn serde_round_trip() {
         let settings = AppSettings {
             ui: UiSettings {
+                language: None,
                 hints: HintSettings { minimize_to_tray: 42 },
                 window: None,
             },
@@ -838,6 +920,15 @@ mod tests {
     fn deserialize_extra_fields_ignored() {
         let toml_str = "[ui.hints]\nminimize_to_tray = 3\n\n[extra]\nunknown_field = true\n";
         let parsed: AppSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.ui.hints.minimize_to_tray, 3);
+    }
+
+    #[test]
+    fn invalid_application_language_falls_back_without_discarding_settings() {
+        let parsed: AppSettings =
+            toml::from_str("[ui]\nlanguage = \"klingon\"\n\n[ui.hints]\nminimize_to_tray = 3\n").unwrap();
+
+        assert_eq!(parsed.ui.language, None);
         assert_eq!(parsed.ui.hints.minimize_to_tray, 3);
     }
 
@@ -958,6 +1049,7 @@ mod tests {
 
         let original = AppSettings {
             ui: UiSettings {
+                language: Some(AppLanguage::De),
                 hints: HintSettings { minimize_to_tray: 99 },
                 window: None,
             },

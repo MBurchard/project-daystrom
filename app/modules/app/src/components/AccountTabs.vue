@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type {ProfileInfo} from '@generated/ProfileInfo';
 import {resolveSelectedProfileStem} from '@app/components/accountTabs';
+import {useI18n} from '@app/i18n';
+import accountsDefaults from '@app/locales/en/accounts.json';
 import {computed, ref, watch} from 'vue';
 
 const props = defineProps<{
@@ -21,11 +23,12 @@ const props = defineProps<{
   /** Determine whether one profile is running or still in its launch cooldown. */
   isProfileRunning: (stem: string) => boolean;
 }>();
-
 const emit = defineEmits<{
   launch: [profile: string];
   addAccount: [];
 }>();
+
+const {t} = useI18n('accounts', accountsDefaults);
 
 const selectedStem = ref<string | null>(null);
 
@@ -52,10 +55,13 @@ function launchProfile(stem: string): void {
 <template>
   <section class="accounts" aria-labelledby="accounts-heading">
     <h2 id="accounts-heading">
-      Accounts
+      {{ t('heading') }}
     </h2>
 
-    <div v-if="props.profiles.length > 0" class="account-tabs" role="group" aria-label="Accounts">
+    <div v-if="props.profiles.length > 0"
+        class="account-tabs"
+        role="group"
+        :aria-label="t('heading')">
       <div class="account-tab-list">
         <div v-for="profile in props.profiles"
             :key="profile.stem"
@@ -67,8 +73,10 @@ function launchProfile(stem: string): void {
               :aria-pressed="selectedStem === profile.stem"
               :aria-controls="`account-panel-${profile.stem}`"
               @click="selectProfile(profile.stem)">
-            {{ profile.name }} · Server {{ profile.server }}
-            <span v-if="props.isProfileRunning(profile.stem)" class="running-indicator" title="Running">
+            {{ profile.name }} · {{ t('server', { server: profile.server }) }}
+            <span v-if="props.isProfileRunning(profile.stem)"
+                class="running-indicator"
+                :title="t('running')">
               ●
             </span>
           </button>
@@ -78,13 +86,13 @@ function launchProfile(stem: string): void {
                 || props.isProfileRunning(profile.stem)
                 || launchBlocked"
               @click="launchProfile(profile.stem)">
-            Start
+            {{ t('start') }}
           </button>
         </div>
       </div>
       <button class="account-tab add-account"
-          title="Start a new account"
-          aria-label="Start a new account"
+          :title="t('add')"
+          :aria-label="t('add')"
           :disabled="!props.modDeployed || props.actionPending || launchBlocked"
           @click="emit('addAccount')">
         +
@@ -92,10 +100,10 @@ function launchProfile(stem: string): void {
     </div>
 
     <div v-if="props.gameOriginPending" class="account-message">
-      Reconnecting to the running game…
+      {{ t('reconnecting') }}
     </div>
     <div v-else-if="props.externalGameRunning" class="account-message">
-      The game was started externally. Close it to launch an account through Daystrom.
+      {{ t('external') }}
     </div>
 
     <div v-if="selectedProfile"
@@ -105,21 +113,21 @@ function launchProfile(stem: string): void {
         :aria-labelledby="`account-tab-${selectedProfile.stem}`">
       <div>
         <h3>{{ selectedProfile.name }}</h3>
-        <p>Server {{ selectedProfile.server }}</p>
+        <p>{{ t('server', { server: selectedProfile.server }) }}</p>
       </div>
     </div>
 
     <div v-else class="account-panel empty-account">
       <div>
-        <h3>{{ props.installed ? 'No account detected' : 'STFC is not installed' }}</h3>
+        <h3>{{ props.installed ? t('none') : t('notInstalled') }}</h3>
         <p v-if="props.installed">
-          Start STFC through Daystrom to add the first account.
+          {{ t('first') }}
         </p>
       </div>
       <button v-if="props.installed"
           :disabled="!props.canLaunchInitial || props.actionPending || launchBlocked"
           @click="emit('launch', 'initial')">
-        Start new account
+        {{ t('startNew') }}
       </button>
     </div>
   </section>

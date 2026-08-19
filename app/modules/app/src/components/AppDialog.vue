@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import {useI18n} from '@app/i18n';
+import globalDefaults from '@app/locales/en/global.json';
 import {onBeforeUnmount, onMounted, ref} from 'vue';
 
 const props = defineProps<{
@@ -9,6 +11,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
 }>();
+
+const {t} = useI18n('global', globalDefaults);
 
 const dialog = ref<HTMLDialogElement | null>(null);
 let previouslyFocused: HTMLElement | null = null;
@@ -44,7 +48,10 @@ onBeforeUnmount(() => {
       <section class="dialog">
         <header class="dialog-header">
           <h2>{{ props.title }}</h2>
-          <button class="dialog-close" title="Close" aria-label="Close" @click="emit('close')">
+          <button class="dialog-close"
+              :title="t('close')"
+              :aria-label="t('close')"
+              @click="emit('close')">
             ✕
           </button>
         </header>

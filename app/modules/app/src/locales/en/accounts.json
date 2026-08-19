@@ -1,0 +1,15 @@
+{
+  "heading": "Accounts",
+  "server": "Server {{server}}",
+  "start": "Start",
+  "running": "Running",
+  "add": "Start a new account",
+  "reconnecting": "Reconnecting to the running game…",
+  "external": "The game was started externally. Close it to launch an account through Daystrom.",
+  "none": "No account detected",
+  "notInstalled": "STFC is not installed",
+  "first": "Start STFC through Daystrom to add the first account.",
+  "startNew": "Start new account",
+  "newQuestion": "Start STFC without an existing Daystrom profile to add a new account?",
+  "newInstructions": "Sign in to the intended Scopely account. Daystrom will detect and add its player profile automatically."
+}
