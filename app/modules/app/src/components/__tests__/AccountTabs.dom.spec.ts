@@ -47,6 +47,15 @@ describe('accountTabs', () => {
     expect(wrapper.emitted('addAccount')).toHaveLength(1);
   });
 
+  it('offers local deletion for the selected account', async () => {
+    const wrapper = mount(AccountTabs, {props: props()});
+
+    expect(wrapper.text()).toContain('Delete this account\'s local profile');
+    await wrapper.get('.account-delete').trigger('click');
+
+    expect(wrapper.emitted('deleteAccount')).toEqual([[PROFILES[0]]]);
+  });
+
   it('shows running accounts and disables their launch action', () => {
     const isRunning = vi.fn((stem: string) => stem === '2_TestBeta');
     const wrapper = mount(AccountTabs, {props: props({isProfileRunning: isRunning})});
@@ -54,6 +63,25 @@ describe('accountTabs', () => {
     expect(wrapper.findAll('.running-indicator')).toHaveLength(1);
     expect(wrapper.findAll('.account-start')[0]!.attributes('disabled')).toBeUndefined();
     expect(wrapper.findAll('.account-start')[1]!.attributes('disabled')).toBeDefined();
+  });
+
+  it.each([
+    {actionPending: true},
+    {externalGameRunning: true},
+    {gameOriginPending: true},
+  ])('blocks local deletion during active game work', (blocked) => {
+    const wrapper = mount(AccountTabs, {props: props(blocked)});
+
+    expect(wrapper.get('.account-delete').attributes('disabled')).toBeDefined();
+  });
+
+  it('blocks local deletion while the selected profile is running', () => {
+    const wrapper = mount(AccountTabs, {
+      props: props({isProfileRunning: stem => stem === '1_TestAlpha'}),
+    });
+
+    expect(wrapper.get('.account-delete').attributes('disabled')).toBeDefined();
+    expect(wrapper.text()).toContain('Close STFC before deleting');
   });
 
   it.each([

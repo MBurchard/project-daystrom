@@ -26,7 +26,7 @@ function handleCancel(event: Event): void {
 onMounted(() => {
   previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   dialog.value?.showModal();
-  dialog.value?.focus();
+  (dialog.value?.querySelector<HTMLElement>('[autofocus]') ?? dialog.value)?.focus();
 });
 
 onBeforeUnmount(() => {

@@ -9,6 +9,8 @@
   "mod_removal_failed": "The Daystrom mod could not be removed. See the log for details.",
   "launcher_unavailable": "The Scopely launcher could not be opened.",
   "game_launch_failed": "STFC could not be started. See the log for details.",
+  "profile_not_found": "This local account profile no longer exists.",
+  "profile_deletion_failed": "The local account data could not be deleted. See the log for details.",
   "update_check_failed": "Could not check for Daystrom updates. Try again later.",
   "update_prepare_failed": "Could not prepare the Daystrom update.",
   "update_confirm_failed": "Could not confirm the Daystrom update.",

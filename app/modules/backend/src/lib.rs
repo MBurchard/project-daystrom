@@ -28,7 +28,7 @@ use daystrom_update::{
     check_for_daystrom_update, dismiss_daystrom_update, get_cached_daystrom_rollback_status,
     get_cached_daystrom_update_status, install_daystrom_update, restore_previous_daystrom_version,
 };
-use profile_state::get_cached_profile_state;
+use profile_state::{delete_local_profile, get_cached_profile_state};
 use settings::{get_app_language, get_game_settings, set_app_language, set_game_settings};
 
 use_log!("Startup");
@@ -362,6 +362,7 @@ pub fn run() {
             set_app_language,
             set_game_settings,
             get_cached_profile_state,
+            delete_local_profile,
             launch_updater,
             prepare_mod,
             remove_mod,

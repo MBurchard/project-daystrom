@@ -1,6 +1,7 @@
 {
   "settings": "Settings",
   "addAccount": "Add account",
+  "removeAccount": "Remove account from Daystrom",
   "update": "Daystrom update",
   "updateAvailable": "{{appName}} {{version}} is available",
   "recovery": "Return to the previous version"

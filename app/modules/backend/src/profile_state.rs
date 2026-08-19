@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use ts_rs::TS;
 
+use crate::ui_error::UiErrorCode;
 use crate::use_log;
 
 use_log!("Profiles");
@@ -151,6 +152,31 @@ fn profile_dir() -> Option<std::path::PathBuf> {
     Some(base.join(env!("TAURI_IDENTIFIER")))
 }
 
+/// Resolve a profile file only when its stem belongs to the current backend-owned profile state.
+fn known_profile_path(
+    dir: &std::path::Path,
+    profiles: &[ProfileInfo],
+    stem: &str,
+) -> Result<std::path::PathBuf, UiErrorCode> {
+    profiles
+        .iter()
+        .find(|profile| profile.stem == stem)
+        .map(|profile| dir.join(format!("{}.toml", profile.stem)))
+        .ok_or(UiErrorCode::ProfileNotFound)
+}
+
+/// Delete one known local profile file, treating an already absent file as successfully deleted.
+fn remove_profile_file(path: &std::path::Path) -> Result<(), UiErrorCode> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            log_warn!("Could not delete local profile {}: {error}", path.display());
+            Err(UiErrorCode::ProfileDeletionFailed)
+        }
+    }
+}
+
 // ---- Tauri Command --------------------------------------------------------
 
 /// Return the current profile state for the frontend.
@@ -159,11 +185,41 @@ pub fn get_cached_profile_state() -> ProfileState {
     get()
 }
 
+/// Delete the selected profile and its local login data without contacting Scopely.
+#[tauri::command]
+pub fn delete_local_profile(app: tauri::AppHandle, stem: String) -> Result<(), UiErrorCode> {
+    let state = get();
+    if crate::game::is_game_running() || !state.running_profiles.is_empty() {
+        return Err(UiErrorCode::GameRunning);
+    }
+
+    let dir = profile_dir().ok_or(UiErrorCode::ProfileDeletionFailed)?;
+    let path = known_profile_path(&dir, &state.profiles, &stem)?;
+    remove_profile_file(&path)?;
+
+    update(&app, |state| {
+        state.profiles.retain(|profile| profile.stem != stem);
+        state.running_profiles.retain(|running| running != &stem);
+    });
+    log_info!("Deleted local profile {stem}");
+    Ok(())
+}
+
 // ---- Tests ----------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a profile suitable for path-resolution tests.
+    fn profile(stem: &str) -> ProfileInfo {
+        ProfileInfo {
+            name: "Test Account".to_string(),
+            server: 1,
+            stem: stem.to_string(),
+            primary: false,
+        }
+    }
 
     #[test]
     fn parse_valid_filename() {
@@ -193,5 +249,34 @@ mod tests {
     #[test]
     fn parse_invalid_empty_name() {
         assert!(parse_profile_filename("106_").is_none());
+    }
+
+    #[test]
+    fn resolves_only_stems_owned_by_profile_state() {
+        let dir = std::path::Path::new("profiles");
+        let profiles = vec![profile("1_TestAccount")];
+
+        assert_eq!(
+            known_profile_path(dir, &profiles, "1_TestAccount").unwrap(),
+            dir.join("1_TestAccount.toml")
+        );
+        assert_eq!(
+            known_profile_path(dir, &profiles, "../foreign"),
+            Err(UiErrorCode::ProfileNotFound)
+        );
+    }
+
+    #[test]
+    fn removes_known_profile_file_and_accepts_an_absent_file() {
+        let dir = std::env::temp_dir().join(format!("daystrom-profile-deletion-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("1_TestAccount.toml");
+        fs::write(&path, "[profil]").unwrap();
+
+        assert_eq!(remove_profile_file(&path), Ok(()));
+        assert!(!path.exists());
+        assert_eq!(remove_profile_file(&path), Ok(()));
+        fs::remove_dir_all(dir).unwrap();
     }
 }
