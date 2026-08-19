@@ -139,6 +139,31 @@ describe('useDaystromUpdate', () => {
     expect(mockInvoke).toHaveBeenCalledWith('install_daystrom_update');
   });
 
+  it.each([
+    ['check', 'check_for_daystrom_update'],
+    ['dismiss', 'dismiss_daystrom_update'],
+    ['install', 'install_daystrom_update'],
+  ] as const)('logs rejected %s requests', async (action, command) => {
+    const error = new Error(`${action} failed`);
+    mockInvoke.mockRejectedValue(error);
+    const state = useDaystromUpdate();
+
+    state[action]();
+
+    await vi.waitFor(() => expect(mockLog.error).toHaveBeenCalledWith(expect.any(String), error));
+    expect(mockInvoke).toHaveBeenCalledWith(command);
+  });
+
+  it('logs listener and cached snapshot failures', async () => {
+    mockListen.mockRejectedValue(new Error('listen failed'));
+    mockInvoke.mockRejectedValue(new Error('snapshot failed'));
+    const state = useDaystromUpdate();
+
+    state.init();
+
+    await vi.waitFor(() => expect(mockLog.error).toHaveBeenCalledTimes(2));
+  });
+
   it('unregisters the event listener on destroy', async () => {
     const unlisten = vi.fn();
     mockListen.mockResolvedValue(unlisten);
@@ -151,5 +176,9 @@ describe('useDaystromUpdate', () => {
     state.destroy();
 
     expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it('can be destroyed before initialisation', () => {
+    expect(() => useDaystromUpdate().destroy()).not.toThrow();
   });
 });

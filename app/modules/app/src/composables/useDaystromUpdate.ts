@@ -67,7 +67,10 @@ export function useDaystromUpdate(): DaystromUpdateState {
 
   /** Register the event listener before fetching the cached state to avoid missing startup checks. */
   function init(): void {
-    initialize().catch(reason => log.error('Failed to initialize Daystrom update state:', reason));
+    initialize().catch(
+      /* v8 ignore next -- initialize handles every expected failure internally. */
+      reason => log.error('Failed to initialize Daystrom update state:', reason),
+    );
   }
 
   /** Subscribe first, then fetch the cached snapshot unless a newer event already arrived. */

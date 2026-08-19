@@ -117,4 +117,69 @@ describe('useProfileState', () => {
       expect(state.profiles.value).toEqual(event);
     });
   });
+
+  it('exposes profile, origin, and running state', async () => {
+    const current = makeProfileState('Current');
+    current.running_profiles = ['411_Current'];
+    current.external_game_running = true;
+    current.game_origin_pending = true;
+    mockInvoke.mockResolvedValue(current);
+    const state = useProfileState();
+
+    state.init();
+    await vi.waitFor(() => expect(state.profiles.value).toEqual(current));
+
+    expect(state.hasProfiles.value).toBe(true);
+    expect(state.externalGameRunning.value).toBe(true);
+    expect(state.gameOriginPending.value).toBe(true);
+    expect(state.isProfileRunning('411_Current')).toBe(true);
+    expect(state.isProfileRunning('411_Other')).toBe(false);
+  });
+
+  it('keeps a launched profile pending until its cooldown expires', () => {
+    vi.useFakeTimers();
+    const state = useProfileState();
+
+    state.markLaunched('411_Current');
+    expect(state.isProfileRunning('411_Current')).toBe(true);
+    vi.advanceTimersByTime(30_000);
+    expect(state.isProfileRunning('411_Current')).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('logs listener and snapshot failures', async () => {
+    const logger = mockGetLogger();
+    mockListen.mockRejectedValue(new Error('listen failed'));
+    mockInvoke.mockRejectedValue(new Error('snapshot failed'));
+    const state = useProfileState();
+
+    state.init();
+
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalledTimes(2));
+  });
+
+  it('applies later profile events', async () => {
+    const current = makeProfileState('Current');
+    const {emit} = captureListener();
+    const state = useProfileState();
+    state.init();
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalled());
+
+    emit(current);
+
+    expect(state.profiles.value).toEqual(current);
+  });
+
+  it('unregisters its listener when destroyed', async () => {
+    const unlisten = vi.fn();
+    mockListen.mockResolvedValue(unlisten);
+    const state = useProfileState();
+    state.init();
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalled());
+
+    state.destroy();
+    state.destroy();
+
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
 });

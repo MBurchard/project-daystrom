@@ -1,13 +1,23 @@
 <script setup lang="ts">
+import AccountTabs from '@app/components/AccountTabs.vue';
+import AppDialog from '@app/components/AppDialog.vue';
+import AppHeader from '@app/components/AppHeader.vue';
+import NewAccountDialog from '@app/components/NewAccountDialog.vue';
+import RollbackDialog from '@app/components/RollbackDialog.vue';
 import SettingsView from '@app/components/SettingsView.vue';
+import StatusBar from '@app/components/StatusBar.vue';
+import UpdateDialog from '@app/components/UpdateDialog.vue';
 import {useDaystromRollback} from '@app/composables/useDaystromRollback';
 import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
 import {useGameState} from '@app/composables/useGameState';
 import {useProfileState} from '@app/composables/useProfileState';
 import {useSettings} from '@app/composables/useSettings';
-import {onMounted, onUnmounted, ref} from 'vue';
+import {computed, onMounted, onUnmounted, ref} from 'vue';
 
-const showSettings = ref(false);
+/** Dialogues that can replace the main interaction layer. */
+type ActiveDialog = 'settings' | 'update' | 'rollback' | 'new-account' | null;
+
+const activeDialog = ref<ActiveDialog>(null);
 
 const {
   version,
@@ -26,9 +36,6 @@ const {
 
 const {
   profiles,
-  hasProfiles,
-  externalGameRunning,
-  gameOriginPending,
   isProfileRunning,
   markLaunched,
   init: initProfileState,
@@ -53,6 +60,42 @@ const {
   destroy: destroyDaystromRollback,
 } = useDaystromRollback();
 
+const updateBusy = computed(() =>
+  ['confirming', 'retaining_rollback', 'downloading', 'installing'].includes(daystromUpdate.value.phase));
+
+const rollbackBusy = computed(() =>
+  ['preparing', 'installing'].includes(daystromRollback.value.phase));
+
+/** Open one application-level dialog. */
+function openDialog(dialog: Exclude<ActiveDialog, null>): void {
+  activeDialog.value = dialog;
+}
+
+/** Close the active application-level dialog. */
+function closeDialog(): void {
+  activeDialog.value = null;
+}
+
+/** Launch one account and apply the existing launch cooldown to known profiles. */
+function handleLaunch(profile: string): void {
+  if (profile !== 'initial' && profile !== 'new_account') {
+    markLaunched(profile);
+  }
+  launchGame(profile);
+}
+
+/** Dismiss the offered update and close its details. */
+function handleUpdateLater(): void {
+  dismissDaystromUpdate();
+  closeDialog();
+}
+
+/** Confirm a new account launch and close its confirmation dialog. */
+function confirmNewAccount(): void {
+  closeDialog();
+  handleLaunch('new_account');
+}
+
 onMounted(() => {
   initGameState();
   initProfileState();
@@ -60,6 +103,7 @@ onMounted(() => {
   initDaystromUpdate();
   initDaystromRollback();
 });
+
 onUnmounted(() => {
   destroyGameState();
   destroyProfileState();
@@ -70,225 +114,60 @@ onUnmounted(() => {
 
 <template>
   <main>
-    <h1>
-      Project Daystrom <small v-if="version">{{ version }}</small>
-      <button class="settings-btn" title="Settings" @click="showSettings = !showSettings">
-        ⚙
-      </button>
-    </h1>
+    <AppHeader :version="version" @open-settings="openDialog('settings')" />
 
-    <SettingsView v-if="showSettings" @close="showSettings = false" />
+    <StatusBar :status="status"
+        :loading="loading"
+        :error="error"
+        :action-error="actionError"
+        :action-pending="actionPending"
+        :update="daystromUpdate"
+        :rollback="daystromRollback"
+        @check-update="checkDaystromUpdate"
+        @open-update="openDialog('update')"
+        @open-rollback="openDialog('rollback')"
+        @install-mod="installMod"
+        @remove-mod="removeMod"
+        @open-game-updater="openUpdater" />
 
-    <template v-else>
-      <div class="daystrom-update-controls">
-        <button :disabled="daystromUpdate.phase === 'checking'
-                  || daystromUpdate.phase === 'confirming'
-                  || daystromUpdate.phase === 'retaining_rollback'
-                  || daystromUpdate.phase === 'downloading'
-                  || daystromUpdate.phase === 'installing'
-                  || daystromRollback.phase === 'preparing'
-                  || daystromRollback.phase === 'installing'"
-            @click="checkDaystromUpdate">
-          Check for Daystrom updates
-        </button>
-        <span v-if="daystromUpdate.phase === 'checking'">Checking…</span>
-        <span v-else-if="daystromUpdate.phase === 'up_to_date'" class="update-ok">Daystrom is up to date.</span>
-        <span v-else-if="daystromUpdate.error" class="error">{{ daystromUpdate.error }}</span>
-      </div>
+    <AccountTabs v-if="!error"
+        :installed="status.installed"
+        :mod-deployed="status.mod_deployed"
+        :can-launch-initial="status.can_launch"
+        :action-pending="actionPending"
+        :external-game-running="profiles.external_game_running"
+        :game-origin-pending="profiles.game_origin_pending"
+        :profiles="profiles.profiles"
+        :is-profile-running="isProfileRunning"
+        @launch="handleLaunch"
+        @add-account="openDialog('new-account')" />
 
-      <section v-if="daystromUpdate.version && !daystromUpdate.dismissed"
-          class="daystrom-update-banner">
-        <h2>Project Daystrom {{ daystromUpdate.version }} is available</h2>
-        <p v-if="daystromUpdate.notes" class="release-notes">
-          {{ daystromUpdate.notes }}
-        </p>
-        <p>
-          Daystrom will restart after verification. A running game stays open, and its Daystrom mod reconnects
-          automatically.
-        </p>
-        <p v-if="daystromUpdate.phase === 'confirming'" class="update-progress">
-          Confirming update…
-        </p>
-        <p v-else-if="daystromUpdate.phase === 'retaining_rollback'" class="update-progress">
-          Preparing rollback package…
-          <progress v-if="daystromUpdate.download_progress !== null"
-              :value="daystromUpdate.download_progress"
-              max="100" />
-          <span v-if="daystromUpdate.download_progress !== null">
-            {{ daystromUpdate.download_progress }}%
-          </span>
-        </p>
-        <p v-else-if="daystromUpdate.phase === 'downloading'" class="update-progress">
-          Downloading and verifying update…
-          <progress v-if="daystromUpdate.download_progress !== null"
-              :value="daystromUpdate.download_progress"
-              max="100" />
-          <span v-if="daystromUpdate.download_progress !== null">
-            {{ daystromUpdate.download_progress }}%
-          </span>
-        </p>
-        <p v-else-if="daystromUpdate.phase === 'installing'" class="update-progress">
-          Installing update and restarting Daystrom…
-        </p>
-        <p v-else-if="daystromUpdate.phase === 'available' && !daystromUpdate.can_install"
-            class="info-message">
-          Installation is disabled in this development build unless a debug update endpoint is configured.
-        </p>
-        <div v-if="daystromUpdate.phase === 'available'" class="update-actions">
-          <button :disabled="!daystromUpdate.can_install
-                    || daystromRollback.phase === 'preparing'
-                    || daystromRollback.phase === 'installing'"
-              @click="installDaystromUpdate">
-            Install update
-          </button>
-          <button @click="dismissDaystromUpdate">
-            Later
-          </button>
-        </div>
-      </section>
+    <AppDialog v-if="activeDialog === 'new-account'" title="Add account" @close="closeDialog">
+      <NewAccountDialog @confirm="confirmNewAccount" @cancel="closeDialog" />
+    </AppDialog>
 
-      <section v-if="daystromRollback.mod_restore_pending" class="daystrom-rollback-banner">
-        <h2>Finish restoring the previous Daystrom mod</h2>
-        <p v-if="status.game_running">
-          Close STFC when convenient. Daystrom will finish restoring the previous mod automatically, and it will take
-          effect the next time you start the game.
-        </p>
-        <p v-else>
-          Daystrom is finishing the restored mod for the next game start.
-        </p>
-        <p v-if="daystromRollback.error" class="error">
-          {{ daystromRollback.error }}
-        </p>
-      </section>
+    <AppDialog v-if="activeDialog === 'settings'" title="Settings" @close="closeDialog">
+      <SettingsView :rollback-version="daystromRollback.version"
+          @open-rollback="openDialog('rollback')" />
+    </AppDialog>
 
-      <section v-if="daystromRollback.version" class="daystrom-rollback-banner">
-        <h2>Restore Project Daystrom {{ daystromRollback.version }}</h2>
-        <p>
-          This restores Daystrom and its bundled mod to the previous verified release. STFC stays open; a mod already
-          loaded by the running game changes only after the game is closed and started again.
-        </p>
-        <p v-if="daystromRollback.phase === 'preparing'" class="update-progress">
-          Verifying rollback package and settings…
-        </p>
-        <p v-else-if="daystromRollback.phase === 'installing'" class="update-progress">
-          Restoring the previous release and restarting Daystrom…
-        </p>
-        <p v-if="daystromRollback.error" class="error">
-          {{ daystromRollback.error }}
-        </p>
-        <button v-if="daystromRollback.phase === 'available' || daystromRollback.phase === 'failed'"
-            :disabled="!daystromRollback.can_restore
-              || daystromUpdate.phase === 'confirming'
-              || daystromUpdate.phase === 'retaining_rollback'
-              || daystromUpdate.phase === 'downloading'
-              || daystromUpdate.phase === 'installing'"
-            @click="restoreDaystrom">
-          Restore Daystrom {{ daystromRollback.version }}
-        </button>
-      </section>
+    <AppDialog v-if="activeDialog === 'update'"
+        :title="daystromUpdate.version
+          ? `Project Daystrom ${daystromUpdate.version} is available`
+          : 'Daystrom update'"
+        @close="closeDialog">
+      <UpdateDialog :status="daystromUpdate"
+          :rollback-busy="rollbackBusy"
+          @install="installDaystromUpdate"
+          @later="handleUpdateLater" />
+    </AppDialog>
 
-      <p v-if="error">
-        Failed to load game status: {{ error }}
-      </p>
-
-      <section v-else>
-        <h2>Status</h2>
-
-        <ul class="checklist">
-          <li v-if="loading" class="neutral">
-            Detecting STFC...
-          </li>
-          <li v-else :class="status.installed ? 'ok' : 'fail'">
-            STFC installed
-            <template v-if="status.installed && status.game_version">
-              (v{{ status.game_version }})
-            </template>
-          </li>
-
-          <li v-if="status.installed" :class="status.version_check_class">
-            <template v-if="status.update_available">
-              v{{ status.remote_version }} available
-              <button :disabled="!status.can_launch_updater || actionPending" @click="openUpdater">
-                Update
-              </button>
-            </template>
-            <template v-else-if="status.update_check_failed">
-              Version check failed
-            </template>
-            <template v-else-if="status.remote_version != null">
-              Version check: up to date
-            </template>
-            <template v-else>
-              Checking for updates...
-            </template>
-          </li>
-
-          <li v-if="status.launcher_running" class="warn">
-            Scopely Launcher running
-          </li>
-
-          <li v-if="status.installed" :class="status.mod_deployed ? 'ok' : status.mod_available ? 'warn' : 'fail'">
-            Daystrom Mod
-            <button v-if="status.mod_available"
-                :disabled="!status.can_install_mod || actionPending"
-                @click="installMod">
-              {{ status.mod_deployed ? 'Reinstall' : status.mod_outdated ? 'Update' : 'Install' }}
-            </button>
-            <button v-if="status.mod_removable" :disabled="!status.can_remove_mod || actionPending" @click="removeMod">
-              Remove
-            </button>
-          </li>
-
-          <li v-if="status.installed" class="game-status">
-            {{ status.game_running ? '🚀 Game is running' : '💤 Game is not running' }}
-          </li>
-        </ul>
-
-        <button v-if="status.installed && !hasProfiles"
-            :disabled="!status.can_launch || actionPending || externalGameRunning || gameOriginPending"
-            class="launch-btn"
-            @click="launchGame('initial')">
-          Launch Game
-        </button>
-
-        <template v-if="status.installed && hasProfiles && !externalGameRunning && !gameOriginPending">
-          <button v-for="p in profiles.profiles" :key="p.stem"
-              :disabled="!status.mod_deployed || actionPending || isProfileRunning(p.stem)"
-              class="launch-btn"
-              @click="markLaunched(p.stem); launchGame(p.stem)">
-            {{ p.name }} (Server {{ p.server }})
-          </button>
-
-          <button :disabled="!status.mod_deployed || actionPending"
-              class="launch-btn add-account-btn"
-              title="Add Account"
-              @click="launchGame('new_account')">
-            +
-          </button>
-        </template>
-
-        <p v-if="gameOriginPending" class="info-message">
-          Reconnecting to the running game…
-        </p>
-
-        <p v-else-if="externalGameRunning" class="info-message">
-          The game was started externally. Close it to use Daystrom.
-        </p>
-
-        <p v-if="actionError" class="error">
-          {{ actionError }}
-        </p>
-
-        <p v-if="status.launcher_started_by_us" class="info-message">
-          The Scopely Launcher has been started. Update the game there, then close the launcher.
-          Do not start the game from the Scopely Launcher. Use Daystrom instead.
-        </p>
-
-        <p v-else-if="status.launcher_running" class="info-message">
-          Close the Scopely Launcher to continue. Do not start the game from there, use Daystrom instead.
-        </p>
-      </section>
-    </template>
+    <AppDialog v-if="activeDialog === 'rollback'" title="Daystrom recovery" @close="closeDialog">
+      <RollbackDialog :status="daystromRollback"
+          :game-running="status.game_running"
+          :update-busy="updateBusy"
+          @restore="restoreDaystrom" />
+    </AppDialog>
   </main>
 </template>
 
@@ -303,182 +182,8 @@ body {
   user-select: none;
 }
 
-.error,
-.info-message {
-  user-select: text;
-}
-</style>
-
-<style scoped>
-.checklist {
-  list-style: none;
-  padding: 0;
-}
-
-.checklist li {
-  padding: 0.25rem 0;
-}
-
-.checklist li::before {
-  display: inline-block;
-  width: 1.5rem;
-  font-weight: bold;
-}
-
-.checklist li.ok::before {
-  content: "✓";
-  color: #4caf50;
-}
-
-.checklist li.fail::before {
-  content: "✗";
-  color: #f44336;
-}
-
-.checklist li.warn::before {
-  content: "!";
-  color: #ff9800;
-}
-
-.checklist li.neutral::before {
-  content: "";
-  width: 0.85rem;
-  height: 0.85rem;
-  margin-right: 0.6rem;
-  vertical-align: middle;
-  position: relative;
-  top: -2px;
-  border-radius: 50%;
-  border: 2px solid #1a8acf;
-  background: conic-gradient(from 0deg, transparent 240deg, #1a8acf 360deg);
-  animation: radar-sweep 1.2s linear infinite;
-}
-
-@keyframes radar-sweep {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.checklist button {
-  margin-left: 0.5rem;
-  font-size: 0.85rem;
-  position: relative;
-  top: -2px;
-}
-
-.launch-btn {
-  margin-top: 1rem;
-  padding: 0.5rem 1.5rem;
-  font-size: 1rem;
-}
-
-.launch-btn + .launch-btn {
-  margin-left: 6px;
-}
-
-.add-account-btn {
-  padding: 0.5rem 0.75rem;
-  font-size: 1.2rem;
-  font-weight: bold;
-  line-height: 1;
-}
-
-.error {
-  color: #f44336;
-  margin-top: 0.5rem;
-}
-
-.info-message {
-  color: #2196f3;
-  margin-top: 0.5rem;
-}
-
-.daystrom-update-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.daystrom-update-controls .error {
-  margin: 0;
-}
-
-.update-ok {
-  color: #4caf50;
-}
-
-.daystrom-update-banner {
-  padding: 1rem;
-  margin-bottom: 1rem;
-  border: 1px solid #ff9800;
-  border-radius: 0.35rem;
-  background: color-mix(in srgb, #ff9800 12%, transparent);
-}
-
-.daystrom-rollback-banner {
-  padding: 1rem;
-  margin-bottom: 1rem;
-  border: 1px solid #2196f3;
-  border-radius: 0.35rem;
-  background: color-mix(in srgb, #2196f3 10%, transparent);
-}
-
-.daystrom-rollback-banner h2 {
-  margin-top: 0;
-}
-
-.daystrom-update-banner h2 {
-  margin-top: 0;
-}
-
-.release-notes {
-  max-height: 12rem;
-  overflow-wrap: anywhere;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  user-select: text;
-}
-
-.update-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.update-progress {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.update-progress progress {
-  width: 10rem;
-}
-
-h1 {
-  display: flex;
-  align-items: baseline;
-}
-
-h1 small {
-  font-size: 0.5em;
-  font-weight: 400;
-  color: #888;
-  margin-left: 0.25em;
-}
-
-.settings-btn {
-  margin-left: auto;
-  background: none;
-  border: none;
-  font-size: 1.25rem;
-  cursor: pointer;
-  padding: 0.25rem 0.5rem;
-  color: inherit;
-  opacity: 0.5;
-}
-
-.settings-btn:hover {
-  opacity: 1;
+button,
+input {
+  font: inherit;
 }
 </style>

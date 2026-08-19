@@ -1,0 +1,176 @@
+import type {GameSettings} from '@generated/GameSettings';
+import {mount} from '@vue/test-utils';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {nextTick, ref} from 'vue';
+import SettingsView from '../SettingsView.vue';
+
+const mocks = vi.hoisted(() => ({
+  clearShortcut: vi.fn(),
+  isShortcutDisabled: vi.fn(),
+  onBannerTypeToggle: vi.fn(),
+  onCargoViewEnabledChange: vi.fn(),
+  onCargoViewTargetChange: vi.fn(),
+  onDisableAllBannersChange: vi.fn(),
+  onShipNamesVisibleInput: vi.fn(),
+  onSliderInput: vi.fn(),
+  onSliderLimitChange: vi.fn(),
+  onSystemZoomInput: vi.fn(),
+  onUiToggle: vi.fn(),
+  shortcutDisplayLabel: vi.fn(),
+  startCapture: vi.fn(),
+}));
+
+let state: Record<string, unknown>;
+
+vi.mock('@app/composables/useSettingsView', () => ({
+  GAME_DEFAULT_SLIDER_MAX: 50,
+  MAX_CONFIGURED_SLIDER_LIMIT: 4_294_967_295,
+  STANDARD_RECRUIT_MAX: 150,
+  shortcutActions: [{key: 'trigger_main_action', label: 'Trigger Main Action', defaultCode: 'Space'}],
+  useSettingsView: () => state,
+}));
+
+/** Build complete settings for component rendering. */
+function settings(): GameSettings {
+  return {
+    ui: {},
+    banners: {},
+    cargo_view: {},
+    slider_limits: {},
+    shortcuts: {},
+  };
+}
+
+describe('settingsView', () => {
+  const currentSettings = ref(settings());
+  const capturingKey = ref<string | null>(null);
+  const allBannersDisabled = ref(false);
+  const disabledBannerSet = ref(new Set<string>());
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentSettings.value = settings();
+    capturingKey.value = null;
+    allBannersDisabled.value = false;
+    disabledBannerSet.value = new Set();
+    mocks.isShortcutDisabled.mockReturnValue(false);
+    mocks.shortcutDisplayLabel.mockReturnValue('Space');
+    state = {
+      settings: currentSettings,
+      effectiveScale: ref(100),
+      effectiveSystemZoom: ref(1000),
+      effectiveShipNamesVisible: ref(1800),
+      effectiveStandardRecruitMax: ref(50),
+      effectiveAllianceDonationMax: ref(50),
+      effectiveTransporterPatternMax: ref(50),
+      onSliderInput: mocks.onSliderInput,
+      onSystemZoomInput: mocks.onSystemZoomInput,
+      onShipNamesVisibleInput: mocks.onShipNamesVisibleInput,
+      onUiToggle: mocks.onUiToggle,
+      onCargoViewEnabledChange: mocks.onCargoViewEnabledChange,
+      onCargoViewTargetChange: mocks.onCargoViewTargetChange,
+      onSliderLimitChange: mocks.onSliderLimitChange,
+      capturingKey,
+      shortcutDisplayLabel: mocks.shortcutDisplayLabel,
+      isShortcutDisabled: mocks.isShortcutDisabled,
+      clearShortcut: mocks.clearShortcut,
+      startCapture: mocks.startCapture,
+      allBannersDisabled,
+      disabledBannerSet,
+      onDisableAllBannersChange: mocks.onDisableAllBannersChange,
+      onBannerTypeToggle: mocks.onBannerTypeToggle,
+    };
+  });
+
+  it('dispatches all settings input events through the composable', async () => {
+    currentSettings.value.cargo_view.enabled = true;
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: '0.9.1'}});
+
+    await wrapper.get('#ui-scale').trigger('input');
+    await wrapper.get('#system-zoom').trigger('input');
+    await wrapper.get('#ship-names-visible').trigger('input');
+    await wrapper.get('#auto-open-sidebar').trigger('change');
+    await wrapper.get('#auto-expand-job-queue').trigger('change');
+    await wrapper.get('#skip-reveal-sequence').trigger('change');
+    await wrapper.get('#skip-first-popup').trigger('change');
+    await wrapper.get('#standard-recruit-max').trigger('change');
+    await wrapper.get('#alliance-donation-max').trigger('change');
+    await wrapper.get('#transporter-pattern-max').trigger('change');
+    await wrapper.get('#cargo-view-enabled').trigger('change');
+    await wrapper.get('#cargo-view-hostiles').trigger('change');
+    await wrapper.get('#cargo-view-armadas').trigger('change');
+    await wrapper.get('#cargo-view-stations').trigger('change');
+    await wrapper.get('#cargo-view-players').trigger('change');
+
+    expect(mocks.onSliderInput).toHaveBeenCalledOnce();
+    expect(mocks.onSystemZoomInput).toHaveBeenCalledOnce();
+    expect(mocks.onShipNamesVisibleInput).toHaveBeenCalledOnce();
+    expect(mocks.onUiToggle).toHaveBeenCalledTimes(4);
+    expect(mocks.onSliderLimitChange).toHaveBeenCalledTimes(3);
+    expect(mocks.onCargoViewEnabledChange).toHaveBeenCalledOnce();
+    expect(mocks.onCargoViewTargetChange).toHaveBeenCalledTimes(4);
+  });
+
+  it('renders enabled and disabled cargo targets', async () => {
+    currentSettings.value.cargo_view.enabled = true;
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    expect(wrapper.get('.cargo-targets').classes()).not.toContain('disabled');
+    expect(wrapper.get('#cargo-view-hostiles').attributes('disabled')).toBeUndefined();
+
+    currentSettings.value.cargo_view.enabled = false;
+    await nextTick();
+
+    expect(wrapper.get('.cargo-targets').classes()).toContain('disabled');
+    expect(wrapper.get('#cargo-view-hostiles').attributes('disabled')).toBeDefined();
+  });
+
+  it('handles shortcut display, capture, disablement, and clearing', async () => {
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    const shortcut = wrapper.get('.shortcut-key');
+    expect(shortcut.text()).toBe('Space');
+    await shortcut.trigger('click');
+    await wrapper.get('.shortcut-clear').trigger('click');
+    expect(mocks.startCapture).toHaveBeenCalledWith('trigger_main_action');
+    expect(mocks.clearShortcut).toHaveBeenCalledWith('trigger_main_action');
+
+    capturingKey.value = 'trigger_main_action';
+    await nextTick();
+    expect(wrapper.get('.shortcut-key').text()).toBe('...');
+    expect(wrapper.find('.shortcut-clear').exists()).toBe(false);
+
+    capturingKey.value = null;
+    mocks.isShortcutDisabled.mockReturnValue(true);
+    currentSettings.value.ui.scale = 101;
+    await nextTick();
+    expect(wrapper.get('.shortcut-key').text()).toBe('—');
+    expect(wrapper.get('.shortcut-key').classes()).toContain('disabled');
+  });
+
+  it('handles banner controls in enabled and disabled states', async () => {
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    await wrapper.get('#disable-all-banners').trigger('change');
+    const banner = wrapper.get('.banner-type input');
+    await banner.setValue(false);
+
+    expect(mocks.onDisableAllBannersChange).toHaveBeenCalledOnce();
+    expect(mocks.onBannerTypeToggle).toHaveBeenCalledWith(expect.any(String), false);
+
+    disabledBannerSet.value = new Set(['AllianceLevelUp']);
+    allBannersDisabled.value = true;
+    await nextTick();
+    expect(wrapper.get('.banner-categories').classes()).toContain('disabled');
+    expect(wrapper.get('.banner-type input').attributes('disabled')).toBeDefined();
+  });
+
+  it('offers recovery only when a verified predecessor exists', async () => {
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    const recovery = wrapper.findAll('button').at(-1)!;
+    expect(recovery.text()).toContain('No recovery version');
+    expect(recovery.attributes('disabled')).toBeDefined();
+
+    await wrapper.setProps({rollbackVersion: '0.9.1'});
+    expect(recovery.text()).toContain('0.9.1');
+    await recovery.trigger('click');
+    expect(wrapper.emitted('openRollback')).toHaveLength(1);
+  });
+});
