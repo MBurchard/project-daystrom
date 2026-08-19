@@ -36,12 +36,19 @@ function rollbackStatus(overrides: Partial<DaystromRollbackStatus> = {}): Daystr
 }
 
 describe('appHeader', () => {
-  it('renders an optional version and opens settings', async () => {
+  it('renders an optional version and exposes draggable window controls', async () => {
     const wrapper = mount(AppHeader, {props: {version: '0.10.0'}});
 
     expect(wrapper.text()).toContain('0.10.0');
-    await wrapper.get('button').trigger('click');
+    expect(wrapper.get('.app-header').attributes('data-tauri-drag-region')).toBe('');
+    expect(wrapper.get('.app-drag-region').attributes('data-tauri-drag-region')).toBe('');
+    await wrapper.get('.settings-button').trigger('click');
+    await wrapper.get('.close-button').trigger('click');
     expect(wrapper.emitted('openSettings')).toHaveLength(1);
+    expect(wrapper.emitted('closeWindow')).toHaveLength(1);
+    expect(wrapper.get('.close-button').classes()).toContain('hover-suppressed');
+    await wrapper.get('.close-button').trigger('pointerleave');
+    expect(wrapper.get('.close-button').classes()).not.toContain('hover-suppressed');
     await wrapper.setProps({version: ''});
     expect(wrapper.find('small').exists()).toBe(false);
   });

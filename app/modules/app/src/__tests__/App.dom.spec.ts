@@ -22,6 +22,7 @@ const mockUseSettings = vi.hoisted(() => vi.fn());
 const mockUseDaystromUpdate = vi.hoisted(() => vi.fn());
 const mockUseDaystromRollback = vi.hoisted(() => vi.fn());
 const mockDeleteLocalProfile = vi.hoisted(() => vi.fn());
+const mockCloseMainWindow = vi.hoisted(() => vi.fn());
 
 vi.mock('@app/composables/useGameState', () => ({useGameState: mockUseGameState}));
 vi.mock('@app/composables/useProfileState', () => ({useProfileState: mockUseProfileState}));
@@ -29,6 +30,7 @@ vi.mock('@app/composables/useSettings', () => ({useSettings: mockUseSettings}));
 vi.mock('@app/composables/useDaystromUpdate', () => ({useDaystromUpdate: mockUseDaystromUpdate}));
 vi.mock('@app/composables/useDaystromRollback', () => ({useDaystromRollback: mockUseDaystromRollback}));
 vi.mock('@app/commands/profiles', () => ({deleteLocalProfile: mockDeleteLocalProfile}));
+vi.mock('@app/commands/window', () => ({closeMainWindow: mockCloseMainWindow}));
 
 /** Build a complete neutral game status. */
 function gameStatus(): GameStatus {
@@ -124,6 +126,7 @@ describe('app', () => {
     update.value = updateStatus();
     rollback.value = rollbackStatus();
     mockDeleteLocalProfile.mockResolvedValue(undefined);
+    mockCloseMainWindow.mockResolvedValue(undefined);
     mockUseGameState.mockReturnValue({
       version: ref('0.10.0'),
       status,
@@ -194,6 +197,19 @@ describe('app', () => {
     expect(actions.openUpdater).toHaveBeenCalledOnce();
   });
 
+  it('delegates custom title-bar close requests and handles IPC rejection', async () => {
+    const wrapper = shallowMount(App);
+    const header = wrapper.findComponent(AppHeader);
+
+    header.vm.$emit('closeWindow');
+    await flushPromises();
+    mockCloseMainWindow.mockRejectedValueOnce('IPC unavailable');
+    header.vm.$emit('closeWindow');
+    await flushPromises();
+
+    expect(mockCloseMainWindow).toHaveBeenCalledTimes(2);
+  });
+
   it('marks known profiles before launch but leaves special launches unmarked', () => {
     const wrapper = shallowMount(App);
     const tabs = wrapper.findComponent(AccountTabs);
@@ -216,6 +232,14 @@ describe('app', () => {
     expect(wrapper.findComponent(AccountTabs).exists()).toBe(false);
     expect(wrapper.findComponent(SettingsView).exists()).toBe(true);
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(AppHeader).vm.$emit('openSettings');
+    await nextTick();
+    expect(wrapper.findComponent(SettingsView).exists()).toBe(false);
+    expect(wrapper.findComponent(AccountTabs).exists()).toBe(true);
+
+    wrapper.findComponent(AppHeader).vm.$emit('openSettings');
+    await nextTick();
 
     wrapper.findComponent(SettingsView).vm.$emit('openRollback');
     await nextTick();

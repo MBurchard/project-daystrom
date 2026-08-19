@@ -10,12 +10,18 @@
     "beforeBuildCommand": "pnpm build:frontend"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Project Daystrom",
         "width": 1024,
         "height": 768,
+        "decorations": false,
+        "transparent": true,
+        "resizable": true,
+        "maximizable": false,
+        "minimizable": false,
         "visible": false,
         "acceptFirstMouse": true
       }

@@ -75,19 +75,16 @@ function launchProfile(stem: string): void {
               :aria-controls="`account-panel-${profile.stem}`"
               @click="selectProfile(profile.stem)">
             {{ profile.name }} · {{ t('server', { server: profile.server }) }}
-            <span v-if="props.isProfileRunning(profile.stem)"
-                class="running-indicator"
-                :title="t('running')">
-              ●
-            </span>
           </button>
           <button class="account-start"
+              :class="{ running: props.isProfileRunning(profile.stem) }"
               :disabled="!props.modDeployed
                 || props.actionPending
                 || props.isProfileRunning(profile.stem)
                 || launchBlocked"
               @click="launchProfile(profile.stem)">
-            {{ t('start') }}
+            <span v-if="props.isProfileRunning(profile.stem)" class="running-indicator" aria-hidden="true" />
+            {{ t(props.isProfileRunning(profile.stem) ? 'running' : 'start') }}
           </button>
         </div>
       </div>
@@ -208,7 +205,10 @@ function launchProfile(stem: string): void {
 }
 
 .account-start {
+  display: flex;
   align-self: center;
+  align-items: center;
+  gap: 0.35rem;
   margin: 0.2rem 0.4rem 0.2rem 0;
   padding: 0.2rem 0.7rem;
   border: 1px solid #5cddff;
@@ -227,6 +227,11 @@ function launchProfile(stem: string): void {
   cursor: default;
   filter: saturate(0.45);
   opacity: 0.4;
+}
+
+.account-start.running {
+  filter: none;
+  opacity: 1;
 }
 
 .account-start:hover:not(:disabled) {
@@ -256,9 +261,11 @@ function launchProfile(stem: string): void {
 }
 
 .running-indicator {
-  margin-left: 0.35rem;
-  color: #4caf50;
-  font-size: 0.7rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #57e36e;
+  box-shadow: 0 0 0.35rem rgb(87 227 110 / 90%);
 }
 
 .account-panel {
