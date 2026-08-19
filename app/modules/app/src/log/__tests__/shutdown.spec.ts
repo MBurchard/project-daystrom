@@ -71,4 +71,36 @@ describe('logging shutdown', () => {
       expect(mockInvoke).toHaveBeenCalledTimes(2);
     });
   });
+
+  it('continues shutdown after logging fails', async () => {
+    const error = new Error('flush failed');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockCloseLogging.mockRejectedValueOnce(error);
+    const {registerLoggingShutdownHandler} = await import('../shutdown');
+    await registerLoggingShutdownHandler();
+
+    const handler = mockListen.mock.calls[0]?.[1] as () => void;
+    handler();
+
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('complete_shutdown'));
+    expect(consoleError).toHaveBeenCalledWith('Failed to close frontend logging', error);
+  });
+
+  it('logs backend completion failures and allows another shutdown', async () => {
+    const error = new Error('completion failed');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockInvoke.mockRejectedValueOnce(error).mockResolvedValueOnce(undefined);
+    const {registerLoggingShutdownHandler} = await import('../shutdown');
+    await registerLoggingShutdownHandler();
+
+    const handler = mockListen.mock.calls[0]?.[1] as () => void;
+    handler();
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith(
+      'Failed to complete application shutdown',
+      error,
+    ));
+    handler();
+
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
+  });
 });

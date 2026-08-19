@@ -94,7 +94,10 @@ export function useProfileState(): ProfileStateComposable {
    * Register the event listener and fetch the initial state.
    */
   function init(): void {
-    initializeProfileState().catch(reason => log.error('Failed to initialize profile state:', reason));
+    initializeProfileState().catch(
+      /* v8 ignore next -- initializeProfileState handles every expected failure internally. */
+      reason => log.error('Failed to initialize profile state:', reason),
+    );
   }
 
   /**

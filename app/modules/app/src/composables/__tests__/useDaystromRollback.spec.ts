@@ -67,6 +67,19 @@ describe('useDaystromRollback', () => {
     expect(mockInvoke).toHaveBeenCalledWith('restore_previous_daystrom_version');
   });
 
+  it('logs rejected restoration requests', async () => {
+    const error = new Error('restore failed');
+    mockInvoke.mockRejectedValue(error);
+    const state = useDaystromRollback();
+
+    state.restore();
+
+    await vi.waitFor(() => expect(mockLog.error).toHaveBeenCalledWith(
+      'Failed to request Daystrom rollback:',
+      error,
+    ));
+  });
+
   it('applies backend rollback events', async () => {
     let listener: ((event: {payload: DaystromRollbackStatus}) => void) | undefined;
     mockListen.mockImplementation((_eventName, callback) => {
@@ -81,5 +94,56 @@ describe('useDaystromRollback', () => {
 
     expect(state.status.value.version).toBe('0.9.0');
     expect(state.status.value.can_restore).toBe(true);
+  });
+
+  it('applies the cached rollback snapshot', async () => {
+    const available = makeStatus({phase: 'available', version: '0.9.1'});
+    mockInvoke.mockResolvedValue(available);
+    const state = useDaystromRollback();
+
+    state.init();
+
+    await vi.waitFor(() => expect(state.status.value).toEqual(available));
+  });
+
+  it('does not overwrite an event received while the cached snapshot is loading', async () => {
+    let listener!: (event: {payload: DaystromRollbackStatus}) => void;
+    let resolveSnapshot!: (status: DaystromRollbackStatus) => void;
+    mockListen.mockImplementation((_name, callback) => {
+      listener = callback;
+      return Promise.resolve(vi.fn());
+    });
+    mockInvoke.mockReturnValue(new Promise(resolve => resolveSnapshot = resolve));
+    const state = useDaystromRollback();
+    state.init();
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalled());
+
+    listener({payload: makeStatus({phase: 'available', version: '0.9.1'})});
+    resolveSnapshot(makeStatus());
+
+    await vi.waitFor(() => expect(state.status.value.version).toBe('0.9.1'));
+  });
+
+  it('logs listener and cached snapshot failures', async () => {
+    mockListen.mockRejectedValue(new Error('listen failed'));
+    mockInvoke.mockRejectedValue(new Error('snapshot failed'));
+    const state = useDaystromRollback();
+
+    state.init();
+
+    await vi.waitFor(() => expect(mockLog.error).toHaveBeenCalledTimes(2));
+  });
+
+  it('unregisters its listener when destroyed', async () => {
+    const unlisten = vi.fn();
+    mockListen.mockResolvedValue(unlisten);
+    const state = useDaystromRollback();
+    state.init();
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalled());
+
+    state.destroy();
+    state.destroy();
+
+    expect(unlisten).toHaveBeenCalledOnce();
   });
 });

@@ -9,8 +9,13 @@ import {
 
 import bannerCategories from './toast-banner-categories.json';
 
+const props = defineProps<{
+  /** Verified predecessor release available for recovery, if any. */
+  rollbackVersion: string | null;
+}>();
+
 const emit = defineEmits<{
-  close: [];
+  openRollback: [];
 }>();
 
 const {
@@ -42,13 +47,6 @@ const {
 
 <template>
   <div class="settings">
-    <header class="settings-header">
-      <h2>Settings</h2>
-      <button class="close-btn" title="Close" @click="emit('close')">
-        ✕
-      </button>
-    </header>
-
     <section class="settings-category">
       <h3>Game UI</h3>
 
@@ -265,38 +263,22 @@ const {
         </details>
       </div>
     </section>
+
+    <section class="settings-category">
+      <h3>Recovery</h3>
+      <p class="recovery-description">
+        Restore the previous verified Daystrom release only if the current release causes problems.
+      </p>
+      <button :disabled="!props.rollbackVersion" @click="emit('openRollback')">
+        {{ props.rollbackVersion ? `Recovery options for ${props.rollbackVersion}` : 'No recovery version available' }}
+      </button>
+    </section>
   </div>
 </template>
 
 <style scoped>
 .settings {
-  padding: 0 0.5rem;
-}
-
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-}
-
-.settings-header h2 {
-  margin: 0;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 1.4rem;
-  cursor: pointer;
-  padding: 0.25rem 0.5rem;
-  line-height: 1;
-  color: inherit;
-  opacity: 0.6;
-}
-
-.close-btn:hover {
-  opacity: 1;
+  padding: 0 0.25rem;
 }
 
 .settings-category h3 {
@@ -342,6 +324,11 @@ const {
   margin: 0.25rem 0 0;
   font-size: 0.8rem;
   opacity: 0.7;
+}
+
+.recovery-description {
+  max-width: 34rem;
+  user-select: text;
 }
 
 .scale-value {

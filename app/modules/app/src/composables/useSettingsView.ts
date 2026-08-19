@@ -150,12 +150,8 @@ export function useSettingsView() {
   }
 
   function finishCapture(code: string, label: string) {
-    const key = capturingKey.value;
+    const key = capturingKey.value!;
     stopShortcutCapture();
-    if (!key) {
-      return;
-    }
-
     keyDisplayLabels[code] = label;
     setShortcut(key, code);
   }

@@ -49,7 +49,10 @@ export function useDaystromRollback(): DaystromRollbackState {
 
   /** Register the event listener before fetching the cached state. */
   function init(): void {
-    initialize().catch(reason => log.error('Failed to initialize Daystrom rollback state:', reason));
+    initialize().catch(
+      /* v8 ignore next -- initialize handles every expected failure internally. */
+      reason => log.error('Failed to initialize Daystrom rollback state:', reason),
+    );
   }
 
   /** Subscribe first, then fetch the cached snapshot unless a newer event already arrived. */

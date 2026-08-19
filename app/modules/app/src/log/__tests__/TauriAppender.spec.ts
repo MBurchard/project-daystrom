@@ -84,6 +84,11 @@ describe('tauriAppender', () => {
       await (appender as any).doHandle(makeEvent({level: 'FATAL'}));
       expect(mockError).toHaveBeenCalledOnce();
     });
+
+    it('routes unknown runtime levels to info()', async () => {
+      await (appender as any).doHandle(makeEvent({level: 'UNKNOWN' as ILogEvent['level']}));
+      expect(mockInfo).toHaveBeenCalledOnce();
+    });
   });
 
   describe('message protocol', () => {
@@ -126,6 +131,24 @@ describe('tauriAppender', () => {
         'Test\x1Ftop-level lazy',
         undefined,
       );
+    });
+
+    it('replaces failing lazy payload items', async () => {
+      await (appender as any).doHandle(makeEvent({
+        payload: [() => {
+          throw new Error('lazy item failed');
+        }],
+      }));
+      expect(mockInfo).toHaveBeenCalledWith('Test\x1F[lazy eval error]', undefined);
+    });
+
+    it('replaces a failing top-level lazy payload', async () => {
+      await (appender as any).doHandle(makeEvent({
+        payload: () => {
+          throw new Error('lazy payload failed');
+        },
+      }));
+      expect(mockInfo).toHaveBeenCalledWith('Test\x1F[lazy eval error]', undefined);
     });
   });
 

@@ -173,7 +173,10 @@ export function useGameState(): GameState {
       version.value = v;
     }).catch(reason => log.error('Failed to get app version:', reason));
 
-    initializeGameStatus().catch(reason => log.error('Failed to initialize game status:', reason));
+    initializeGameStatus().catch(
+      /* v8 ignore next -- initializeGameStatus handles every expected failure internally. */
+      reason => log.error('Failed to initialize game status:', reason),
+    );
   }
 
   /**
