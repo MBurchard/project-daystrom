@@ -12,12 +12,15 @@ import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
 import {useGameState} from '@app/composables/useGameState';
 import {useProfileState} from '@app/composables/useProfileState';
 import {useSettings} from '@app/composables/useSettings';
+import {useI18n} from '@app/i18n';
+import shellDefaults from '@app/locales/en/shell.json';
 import {computed, onMounted, onUnmounted, ref} from 'vue';
 
 /** Dialogues that can replace the main interaction layer. */
 type ActiveDialog = 'settings' | 'update' | 'rollback' | 'new-account' | null;
 
 const activeDialog = ref<ActiveDialog>(null);
+const {t} = useI18n('shell', shellDefaults);
 
 const {
   version,
@@ -142,19 +145,19 @@ onUnmounted(() => {
         @launch="handleLaunch"
         @add-account="openDialog('new-account')" />
 
-    <AppDialog v-if="activeDialog === 'new-account'" title="Add account" @close="closeDialog">
+    <AppDialog v-if="activeDialog === 'new-account'" :title="t('addAccount')" @close="closeDialog">
       <NewAccountDialog @confirm="confirmNewAccount" @cancel="closeDialog" />
     </AppDialog>
 
-    <AppDialog v-if="activeDialog === 'settings'" title="Settings" @close="closeDialog">
+    <AppDialog v-if="activeDialog === 'settings'" :title="t('settings')" @close="closeDialog">
       <SettingsView :rollback-version="daystromRollback.version"
           @open-rollback="openDialog('rollback')" />
     </AppDialog>
 
     <AppDialog v-if="activeDialog === 'update'"
         :title="daystromUpdate.version
-          ? `Project Daystrom ${daystromUpdate.version} is available`
-          : 'Daystrom update'"
+          ? t('updateAvailable', { version: daystromUpdate.version })
+          : t('update')"
         @close="closeDialog">
       <UpdateDialog :status="daystromUpdate"
           :rollback-busy="rollbackBusy"
@@ -162,7 +165,7 @@ onUnmounted(() => {
           @later="handleUpdateLater" />
     </AppDialog>
 
-    <AppDialog v-if="activeDialog === 'rollback'" title="Daystrom recovery" @close="closeDialog">
+    <AppDialog v-if="activeDialog === 'rollback'" :title="t('recovery')" @close="closeDialog">
       <RollbackDialog :status="daystromRollback"
           :game-running="status.game_running"
           :update-busy="updateBusy"

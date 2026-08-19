@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type {AppLanguage} from '@generated/AppLanguage';
 import {
   GAME_DEFAULT_SLIDER_MAX,
   MAX_CONFIGURED_SLIDER_LIMIT,
@@ -6,6 +7,9 @@ import {
   STANDARD_RECRUIT_MAX,
   useSettingsView,
 } from '@app/composables/useSettingsView';
+import {useI18n} from '@app/i18n';
+import settingsDefaults from '@app/locales/en/settings.json';
+import {getLogger} from '@app/log';
 
 import bannerCategories from './toast-banner-categories.json';
 
@@ -13,10 +17,21 @@ const props = defineProps<{
   /** Verified predecessor release available for recovery, if any. */
   rollbackVersion: string | null;
 }>();
-
 const emit = defineEmits<{
   openRollback: [];
 }>();
+const log = getLogger('Settings');
+const {language, setLanguage, t} = useI18n('settings', settingsDefaults);
+const bannerCategoryLabels: Record<string, keyof typeof settingsDefaults> = {
+  Armada: 'bannerArmada',
+  Combat: 'bannerCombat',
+  Economy: 'bannerEconomy',
+  'Events & Challenges': 'bannerEvents',
+  Faction: 'bannerFaction',
+  Other: 'bannerOther',
+  Station: 'bannerStation',
+  Territory: 'bannerTerritory',
+};
 
 const {
   settings,
@@ -43,15 +58,37 @@ const {
   onDisableAllBannersChange,
   onBannerTypeToggle,
 } = useSettingsView();
+
+/** Persist a language selected through the application settings. */
+function onLanguageChange(event: Event): void {
+  const nextLanguage = (event.target as HTMLSelectElement).value as AppLanguage;
+  setLanguage(nextLanguage).catch(reason => log.error('Failed to change application language:', reason));
+}
 </script>
 
 <template>
   <div class="settings">
     <section class="settings-category">
-      <h3>Game UI</h3>
+      <h3>{{ t('application') }}</h3>
 
       <div class="setting-row">
-        <label for="ui-scale">UI Scale</label>
+        <label for="app-language">{{ t('language') }}</label>
+        <select id="app-language" :value="language" @change="onLanguageChange">
+          <option value="en">
+            {{ t('languageEnglish') }}
+          </option>
+          <option value="de">
+            {{ t('languageGerman') }}
+          </option>
+        </select>
+      </div>
+    </section>
+
+    <section class="settings-category">
+      <h3>{{ t('gameUi') }}</h3>
+
+      <div class="setting-row">
+        <label for="ui-scale">{{ t('uiScale') }}</label>
         <input id="ui-scale"
             type="range"
             min="50"
@@ -63,7 +100,7 @@ const {
       </div>
 
       <div class="setting-row">
-        <label for="system-zoom">System Zoom</label>
+        <label for="system-zoom">{{ t('systemZoom') }}</label>
         <input id="system-zoom"
             type="range"
             min="1000"
@@ -75,7 +112,7 @@ const {
       </div>
 
       <div class="setting-row">
-        <label for="ship-names-visible">Ship Names Visible</label>
+        <label for="ship-names-visible">{{ t('shipNames') }}</label>
         <input id="ship-names-visible"
             type="range"
             min="1000"
@@ -87,7 +124,7 @@ const {
       </div>
 
       <div class="setting-row">
-        <label for="auto-open-sidebar">Auto-open Chat Sidebar</label>
+        <label for="auto-open-sidebar">{{ t('autoOpenChat') }}</label>
         <input id="auto-open-sidebar"
             type="checkbox"
             :checked="settings.ui.auto_open_sidebar ?? false"
@@ -95,7 +132,7 @@ const {
       </div>
 
       <div class="setting-row">
-        <label for="auto-expand-job-queue">Auto-expand Job Queue</label>
+        <label for="auto-expand-job-queue">{{ t('autoExpandQueue') }}</label>
         <input id="auto-expand-job-queue"
             type="checkbox"
             :checked="settings.ui.auto_expand_job_queue ?? false"
@@ -103,7 +140,7 @@ const {
       </div>
 
       <div class="setting-row">
-        <label for="skip-reveal-sequence">Skip Loot Box Animation</label>
+        <label for="skip-reveal-sequence">{{ t('skipLootAnimation') }}</label>
         <input id="skip-reveal-sequence"
             type="checkbox"
             :checked="settings.ui.skip_reveal_sequence ?? true"
@@ -111,7 +148,7 @@ const {
       </div>
 
       <div class="setting-row">
-        <label for="skip-first-popup">Skip First Popup</label>
+        <label for="skip-first-popup">{{ t('skipFirstPopup') }}</label>
         <input id="skip-first-popup"
             type="checkbox"
             :checked="settings.ui.skip_first_popup ?? true"
@@ -120,10 +157,10 @@ const {
     </section>
 
     <section class="settings-category">
-      <h3>Slider Limits</h3>
+      <h3>{{ t('sliderLimits') }}</h3>
 
       <div class="setting-row">
-        <label for="standard-recruit-max">Standard Recruit</label>
+        <label for="standard-recruit-max">{{ t('standardRecruit') }}</label>
         <input id="standard-recruit-max"
             class="limit-input"
             type="number"
@@ -132,11 +169,11 @@ const {
             step="1"
             :value="effectiveStandardRecruitMax"
             @change="onSliderLimitChange('standard_recruit_max', $event)">
-        <span class="setting-hint">Game default: 50</span>
+        <span class="setting-hint">{{ t('gameDefault') }}</span>
       </div>
 
       <div class="setting-row">
-        <label for="alliance-donation-max">Alliance Donation</label>
+        <label for="alliance-donation-max">{{ t('allianceDonation') }}</label>
         <input id="alliance-donation-max"
             class="limit-input"
             type="number"
@@ -145,11 +182,11 @@ const {
             step="1"
             :value="effectiveAllianceDonationMax"
             @change="onSliderLimitChange('alliance_donation_max', $event)">
-        <span class="setting-hint">Game default: 50</span>
+        <span class="setting-hint">{{ t('gameDefault') }}</span>
       </div>
 
       <div class="setting-row">
-        <label for="transporter-pattern-max">Transporter Patterns*</label>
+        <label for="transporter-pattern-max">{{ t('transporterPatterns') }}</label>
         <input id="transporter-pattern-max"
             class="limit-input"
             type="number"
@@ -158,19 +195,19 @@ const {
             step="1"
             :value="effectiveTransporterPatternMax"
             @change="onSliderLimitChange('transporter_pattern_max', $event)">
-        <span class="setting-hint">Game default: 50</span>
+        <span class="setting-hint">{{ t('gameDefault') }}</span>
       </div>
 
       <p class="setting-caution">
-        * No safe maximum is known. Increase this value cautiously and test in small steps.
+        {{ t('sliderCaution') }}
       </p>
     </section>
 
     <section class="settings-category">
-      <h3>Cargo View</h3>
+      <h3>{{ t('cargoView') }}</h3>
 
       <div class="setting-row">
-        <label for="cargo-view-enabled">Auto-open Cargo</label>
+        <label for="cargo-view-enabled">{{ t('autoOpenCargo') }}</label>
         <input id="cargo-view-enabled"
             type="checkbox"
             :checked="settings.cargo_view.enabled ?? false"
@@ -179,7 +216,7 @@ const {
 
       <div class="cargo-targets" :class="{ disabled: !(settings.cargo_view.enabled ?? false) }">
         <div class="setting-row">
-          <label for="cargo-view-hostiles">Hostiles</label>
+          <label for="cargo-view-hostiles">{{ t('hostiles') }}</label>
           <input id="cargo-view-hostiles"
               type="checkbox"
               :disabled="!(settings.cargo_view.enabled ?? false)"
@@ -188,7 +225,7 @@ const {
         </div>
 
         <div class="setting-row">
-          <label for="cargo-view-armadas">Armadas</label>
+          <label for="cargo-view-armadas">{{ t('armadas') }}</label>
           <input id="cargo-view-armadas"
               type="checkbox"
               :disabled="!(settings.cargo_view.enabled ?? false)"
@@ -197,7 +234,7 @@ const {
         </div>
 
         <div class="setting-row">
-          <label for="cargo-view-stations">Stations</label>
+          <label for="cargo-view-stations">{{ t('stations') }}</label>
           <input id="cargo-view-stations"
               type="checkbox"
               :disabled="!(settings.cargo_view.enabled ?? false)"
@@ -206,7 +243,7 @@ const {
         </div>
 
         <div class="setting-row">
-          <label for="cargo-view-players">Player Ships</label>
+          <label for="cargo-view-players">{{ t('playerShips') }}</label>
           <input id="cargo-view-players"
               type="checkbox"
               :disabled="!(settings.cargo_view.enabled ?? false)"
@@ -217,10 +254,10 @@ const {
     </section>
 
     <section class="settings-category">
-      <h3>Shortcuts</h3>
+      <h3>{{ t('shortcuts') }}</h3>
 
       <div v-for="action in shortcutActions" :key="action.key" class="setting-row">
-        <label>{{ action.label }}</label>
+        <label>{{ t(action.labelKey) }}</label>
         <span class="shortcut-key"
             :class="{ disabled: isShortcutDisabled(action.key), capturing: capturingKey === action.key }"
             tabindex="0"
@@ -229,7 +266,7 @@ const {
             : shortcutDisplayLabel(action.key, action.defaultCode) }}
         </span>
         <button v-if="!isShortcutDisabled(action.key) && capturingKey !== action.key"
-            class="clear-btn shortcut-clear" title="Disable shortcut"
+            class="clear-btn shortcut-clear" :title="t('disableShortcut')"
             @click="clearShortcut(action.key)">
           ✕
         </button>
@@ -237,10 +274,10 @@ const {
     </section>
 
     <section class="settings-category">
-      <h3>Toast Banners</h3>
+      <h3>{{ t('toastBanners') }}</h3>
 
       <div class="setting-row">
-        <label for="disable-all-banners">Disable All Banners</label>
+        <label for="disable-all-banners">{{ t('disableAllBanners') }}</label>
         <input id="disable-all-banners"
             type="checkbox"
             :checked="allBannersDisabled"
@@ -250,7 +287,7 @@ const {
       <div class="banner-categories" :class="{ disabled: allBannersDisabled }">
         <details v-for="(types, category) in bannerCategories" :key="category"
             class="banner-category">
-          <summary>{{ category }}</summary>
+          <summary>{{ t(bannerCategoryLabels[category]!) }}</summary>
           <div class="banner-type-list">
             <label v-for="name in types" :key="name" class="banner-type">
               <input type="checkbox"
@@ -265,12 +302,13 @@ const {
     </section>
 
     <section class="settings-category">
-      <h3>Recovery</h3>
+      <h3>{{ t('recovery') }}</h3>
       <p class="recovery-description">
-        Restore the previous verified Daystrom release only if the current release causes problems.
+        {{ t('recoveryDescription') }}
       </p>
       <button :disabled="!props.rollbackVersion" @click="emit('openRollback')">
-        {{ props.rollbackVersion ? `Recovery options for ${props.rollbackVersion}` : 'No recovery version available' }}
+        {{ props.rollbackVersion ? t('recoveryFor', { version: props.rollbackVersion })
+          : t('noRecovery') }}
       </button>
     </section>
   </div>

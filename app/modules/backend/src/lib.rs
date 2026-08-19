@@ -27,7 +27,7 @@ use daystrom_update::{
     get_cached_daystrom_update_status, install_daystrom_update, restore_previous_daystrom_version,
 };
 use profile_state::get_cached_profile_state;
-use settings::{get_game_settings, set_game_settings};
+use settings::{get_app_language, get_game_settings, set_app_language, set_game_settings};
 
 use_log!("Startup");
 
@@ -357,7 +357,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_cached_game_status,
             get_cached_daystrom_update_status,
+            get_app_language,
             get_game_settings,
+            set_app_language,
             set_game_settings,
             get_cached_profile_state,
             launch_updater,

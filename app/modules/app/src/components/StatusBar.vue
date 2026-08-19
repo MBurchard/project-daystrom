@@ -2,6 +2,8 @@
 import type {DaystromRollbackStatus} from '@generated/DaystromRollbackStatus';
 import type {DaystromUpdateStatus} from '@generated/DaystromUpdateStatus';
 import type {GameStatus} from '@generated/GameStatus';
+import {useI18n} from '@app/i18n';
+import statusDefaults from '@app/locales/en/status.json';
 
 const props = defineProps<{
   /** Backend-owned game and mod status. */
@@ -29,6 +31,8 @@ const emit = defineEmits<{
   openGameUpdater: [];
 }>();
 
+const {t} = useI18n('status', statusDefaults);
+
 /** Whether update or rollback work currently blocks another update check. */
 function maintenanceBusy(): boolean {
   return ['checking', 'confirming', 'retaining_rollback', 'downloading', 'installing'].includes(props.update.phase) ||
@@ -37,66 +41,69 @@ function maintenanceBusy(): boolean {
 </script>
 
 <template>
-  <section class="status-bar" aria-label="Status">
-    <span v-if="props.loading" class="status-item neutral">Detecting STFC…</span>
-    <span v-else-if="props.error" class="status-item fail">Game status unavailable</span>
+  <section class="status-bar" :aria-label="t('label')">
+    <span v-if="props.loading" class="status-item neutral">{{ t('detecting') }}</span>
+    <span v-else-if="props.error" class="status-item fail">{{ t('unavailable') }}</span>
     <span v-else-if="props.status.installed" class="status-item ok">
       STFC<span v-if="props.status.game_version"> v{{ props.status.game_version }}</span>
     </span>
-    <span v-else class="status-item fail">STFC not installed</span>
+    <span v-else class="status-item fail">{{ t('notInstalled') }}</span>
 
     <button v-if="props.status.installed && props.status.update_available"
         class="status-item warn interactive"
         :disabled="!props.status.can_launch_updater || props.actionPending"
         @click="emit('openGameUpdater')">
-      STFC v{{ props.status.remote_version }} available
+      {{ t('gameUpdateAvailable', { version: props.status.remote_version ?? '' }) }}
     </button>
     <span v-else-if="props.status.installed && props.status.update_check_failed" class="status-item warn">
-      STFC update check failed
+      {{ t('gameUpdateFailed') }}
     </span>
 
-    <span v-if="props.status.installed && props.status.mod_deployed" class="status-item ok">Mod ready</span>
+    <span v-if="props.status.installed && props.status.mod_deployed" class="status-item ok">
+      {{ t('modReady') }}
+    </span>
     <span v-else-if="props.status.installed && !props.status.mod_available" class="status-item fail">
-      Mod unavailable
+      {{ t('modUnavailable') }}
     </span>
     <button v-if="props.status.installed && props.status.mod_available"
         :class="props.status.mod_deployed ? 'status-action' : 'status-item warn interactive'"
         :disabled="!props.status.can_install_mod || props.actionPending"
         @click="emit('installMod')">
-      {{ props.status.mod_deployed ? 'Reinstall mod' : props.status.mod_outdated ? 'Update mod' : 'Install mod' }}
+      {{ props.status.mod_deployed ? t('reinstallMod')
+        : props.status.mod_outdated ? t('updateMod') : t('installMod') }}
     </button>
     <button v-if="props.status.mod_removable"
         class="status-action"
         :disabled="!props.status.can_remove_mod || props.actionPending"
         @click="emit('removeMod')">
-      Remove mod
+      {{ t('removeMod') }}
     </button>
 
-    <span v-if="props.status.game_running" class="status-item ok">Game running</span>
-    <span v-else-if="props.status.installed" class="status-item neutral">Game not running</span>
+    <span v-if="props.status.game_running" class="status-item ok">{{ t('gameRunning') }}</span>
+    <span v-else-if="props.status.installed" class="status-item neutral">{{ t('gameNotRunning') }}</span>
 
-    <span v-if="props.status.launcher_running" class="status-item warn">Scopely Launcher running</span>
+    <span v-if="props.status.launcher_running" class="status-item warn">{{ t('launcherRunning') }}</span>
 
     <button v-if="props.update.version && !props.update.dismissed"
         class="status-item warn interactive"
         @click="emit('openUpdate')">
-      Daystrom {{ props.update.version }} available
+      {{ t('daystromAvailable', { version: props.update.version }) }}
     </button>
     <span v-else-if="props.update.phase === 'checking'" class="status-item neutral">
-      Checking Daystrom updates…
+      {{ t('checkingDaystrom') }}
     </span>
     <span v-else-if="props.update.error" class="status-item fail" :title="props.update.error">
-      Daystrom update check failed
+      {{ t('daystromCheckFailed') }}
     </span>
 
     <button v-if="props.rollback.mod_restore_pending"
         class="status-item warn interactive"
         @click="emit('openRollback')">
-      Mod restore pending
+      {{ t('modRestorePending') }}
     </button>
 
     <button class="check-button" :disabled="maintenanceBusy()" @click="emit('checkUpdate')">
-      Check Daystrom
+      {{ t('checkDaystrom') }}
     </button>
   </section>
 
@@ -104,11 +111,10 @@ function maintenanceBusy(): boolean {
     {{ props.actionError }}
   </p>
   <p v-if="props.status.launcher_started_by_us" class="message info">
-    The Scopely Launcher has been started. Update the game there, then close the launcher. Do not start the game from
-    the Scopely Launcher; use Daystrom instead.
+    {{ t('launcherStarted') }}
   </p>
   <p v-else-if="props.status.launcher_running" class="message info">
-    Close the Scopely Launcher to continue. Do not start the game from there; use Daystrom instead.
+    {{ t('closeLauncher') }}
   </p>
 </template>
 

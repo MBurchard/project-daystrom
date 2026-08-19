@@ -1,0 +1,9 @@
+{
+  "restart": "Daystrom will restart after verification. A running game stays open, and its Daystrom mod reconnects automatically.",
+  "confirming": "Confirming update…",
+  "retaining": "Preparing rollback package…",
+  "downloading": "Downloading and verifying update…",
+  "installing": "Installing update and restarting Daystrom…",
+  "devDisabled": "Installation is disabled in this development build unless a debug update endpoint is configured.",
+  "install": "Install update"
+}

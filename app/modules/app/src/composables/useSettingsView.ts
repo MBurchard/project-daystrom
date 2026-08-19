@@ -7,7 +7,7 @@ export const MAX_CONFIGURED_SLIDER_LIMIT = 4_294_967_295;
 
 /** Known shortcut actions with display labels and default bindings. */
 export const shortcutActions = [
-  {key: 'trigger_main_action', label: 'Trigger Main Action', defaultCode: 'Space'},
+  {key: 'trigger_main_action', labelKey: 'triggerMainAction' as const, defaultCode: 'Space'},
 ];
 
 type CargoViewTargetKey =

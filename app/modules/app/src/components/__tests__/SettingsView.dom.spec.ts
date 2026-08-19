@@ -7,6 +7,8 @@ import SettingsView from '../SettingsView.vue';
 const mocks = vi.hoisted(() => ({
   clearShortcut: vi.fn(),
   isShortcutDisabled: vi.fn(),
+  language: {value: 'en'},
+  languageError: vi.fn(),
   onBannerTypeToggle: vi.fn(),
   onCargoViewEnabledChange: vi.fn(),
   onCargoViewTargetChange: vi.fn(),
@@ -18,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   onUiToggle: vi.fn(),
   shortcutDisplayLabel: vi.fn(),
   startCapture: vi.fn(),
+  setLanguage: vi.fn(),
 }));
 
 let state: Record<string, unknown>;
@@ -26,9 +29,24 @@ vi.mock('@app/composables/useSettingsView', () => ({
   GAME_DEFAULT_SLIDER_MAX: 50,
   MAX_CONFIGURED_SLIDER_LIMIT: 4_294_967_295,
   STANDARD_RECRUIT_MAX: 150,
-  shortcutActions: [{key: 'trigger_main_action', label: 'Trigger Main Action', defaultCode: 'Space'}],
+  shortcutActions: [{key: 'trigger_main_action', labelKey: 'triggerMainAction', defaultCode: 'Space'}],
   useSettingsView: () => state,
 }));
+vi.mock('@app/i18n', () => ({
+  useI18n: () => ({
+    language: mocks.language,
+    setLanguage: mocks.setLanguage,
+    t: (key: string, values?: Record<string, string>) => {
+      const translations: Record<string, string> = {
+        noRecovery: 'No recovery version available',
+        recoveryFor: 'Recovery options for {{version}}',
+        triggerMainAction: 'Trigger Main Action',
+      };
+      return (translations[key] ?? key).replace('{{version}}', values?.version ?? '');
+    },
+  }),
+}));
+vi.mock('@app/log', () => ({getLogger: () => ({error: mocks.languageError})}));
 
 /** Build complete settings for component rendering. */
 function settings(): GameSettings {
@@ -55,6 +73,7 @@ describe('settingsView', () => {
     disabledBannerSet.value = new Set();
     mocks.isShortcutDisabled.mockReturnValue(false);
     mocks.shortcutDisplayLabel.mockReturnValue('Space');
+    mocks.setLanguage.mockResolvedValue(undefined);
     state = {
       settings: currentSettings,
       effectiveScale: ref(100),
@@ -80,6 +99,18 @@ describe('settingsView', () => {
       onDisableAllBannersChange: mocks.onDisableAllBannersChange,
       onBannerTypeToggle: mocks.onBannerTypeToggle,
     };
+  });
+
+  it('persists language selections and reports unexpected change failures', async () => {
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    await wrapper.get('#app-language').setValue('de');
+    expect(mocks.setLanguage).toHaveBeenCalledWith('de');
+
+    const reason = new Error('translation failure');
+    mocks.setLanguage.mockRejectedValue(reason);
+    await wrapper.get('#app-language').setValue('en');
+    await Promise.resolve();
+    expect(mocks.languageError).toHaveBeenCalledWith('Failed to change application language:', reason);
   });
 
   it('dispatches all settings input events through the composable', async () => {

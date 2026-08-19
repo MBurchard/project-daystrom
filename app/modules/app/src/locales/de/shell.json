@@ -1,0 +1,7 @@
+{
+  "settings": "Einstellungen",
+  "addAccount": "Account hinzufügen",
+  "update": "Daystrom-Update",
+  "updateAvailable": "{{appName}} {{version}} ist verfügbar",
+  "recovery": "Daystrom-Wiederherstellung"
+}

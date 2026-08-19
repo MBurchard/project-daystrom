@@ -100,6 +100,8 @@ describe('statusBar', () => {
     });
     expect(wrapper.findAll('button').find(button => button.text().includes('STFC v189'))!
       .attributes('disabled')).toBeDefined();
+    await wrapper.setProps({status: gameStatus({update_available: true, remote_version: null})});
+    expect(wrapper.text()).toContain('STFC v available');
     await wrapper.setProps({
       actionPending: false,
       status: gameStatus({update_check_failed: true}),

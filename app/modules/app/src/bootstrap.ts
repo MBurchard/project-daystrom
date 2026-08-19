@@ -1,3 +1,4 @@
+import {initI18n} from '@app/i18n';
 import {getLogger} from '@app/log';
 import {registerLoggingShutdownHandler} from '@app/log/shutdown';
 import {createPinia} from 'pinia';
@@ -18,6 +19,7 @@ export async function initApp(): Promise<void> {
     } catch (error) {
       log.warn('Failed to register coordinated shutdown; relying on backend timeout:', error);
     }
+    await initI18n();
     log.debug('Project Daystrom frontend started');
     const app = createApp(App);
     app.use(createPinia());
