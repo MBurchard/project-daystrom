@@ -20,16 +20,16 @@ const {percent, visible} = useUiZoom();
   left: 50%;
   min-width: 7rem;
   padding: 0.75rem 1.5rem;
-  border: 1px solid rgb(92 221 255 / 65%);
+  border: 1px solid var(--zoom-border);
   border-radius: 0.75rem;
-  background: rgb(0 18 42 / 80%);
-  box-shadow: 0 0 1rem rgb(0 183 255 / 45%);
-  color: #fff;
+  background: var(--zoom-surface);
+  box-shadow: var(--zoom-shadow);
+  color: var(--text-on-emphasis);
   font-size: 1.75rem;
   font-weight: 600;
   pointer-events: none;
   text-align: center;
-  text-shadow: 0 0 0.5rem rgb(92 221 255 / 80%);
+  text-shadow: var(--zoom-text-shadow);
   transform: translate(-50%, -50%);
 }
 

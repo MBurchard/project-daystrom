@@ -268,7 +268,8 @@ body {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--text-primary);
+  font-family: var(--font-interface);
 }
 
 .app-content {
@@ -286,9 +287,9 @@ main {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgb(127 127 127 / 35%);
+  border: 1px solid var(--border-default);
   border-radius: 0.75rem;
-  background: Canvas;
+  background: var(--surface-canvas);
 }
 
 *,

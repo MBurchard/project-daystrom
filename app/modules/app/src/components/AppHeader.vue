@@ -53,8 +53,8 @@ function requestClose(): void {
   display: flex;
   min-height: 3.25rem;
   align-items: stretch;
-  border-bottom: 1px solid rgb(127 127 127 / 25%);
-  background: rgb(127 127 127 / 8%);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
 }
 
 .app-drag-region {
@@ -74,7 +74,7 @@ h1 {
 
 h1 small {
   margin-left: 0.25em;
-  color: #888;
+  color: var(--text-muted);
   font-size: 0.5em;
   font-weight: 400;
 }
@@ -108,19 +108,17 @@ h1 small {
 
 .settings-button:focus-visible,
 .close-button:focus-visible {
-  outline: 2px solid #2196f3;
+  outline: 2px solid var(--focus-ring);
   outline-offset: -3px;
 }
 
 .settings-button:hover,
 .close-button:hover:not(.hover-suppressed) {
-  border-color: #5cddff;
-  background: linear-gradient(180deg, #159fe8 0%, #0769c8 100%);
-  box-shadow:
-    0 0 0.55rem rgb(0 203 255 / 80%),
-    inset 0 0 0.35rem rgb(184 246 255 / 65%);
-  color: #fff;
+  border-color: var(--action-primary-border);
+  background: var(--action-primary-surface);
+  box-shadow: var(--action-primary-shadow);
+  color: var(--text-on-emphasis);
   opacity: 1;
-  text-shadow: 0 1px 1px rgb(0 29 75 / 70%);
+  text-shadow: var(--action-primary-text-shadow);
 }
 </style>

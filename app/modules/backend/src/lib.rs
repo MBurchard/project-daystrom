@@ -30,7 +30,9 @@ use daystrom_update::{
     get_cached_daystrom_update_status, install_daystrom_update, restore_previous_daystrom_version,
 };
 use profile_state::{delete_local_profile, get_cached_profile_state};
-use settings::{get_app_language, get_game_settings, set_app_language, set_game_settings};
+use settings::{
+    get_app_language, get_app_theme, get_game_settings, set_app_language, set_app_theme, set_game_settings,
+};
 use ui_zoom::change_ui_zoom;
 
 use_log!("Startup");
@@ -396,8 +398,10 @@ pub fn run() {
             get_cached_game_status,
             get_cached_daystrom_update_status,
             get_app_language,
+            get_app_theme,
             get_game_settings,
             set_app_language,
+            set_app_theme,
             set_game_settings,
             change_ui_zoom,
             get_cached_profile_state,

@@ -74,9 +74,9 @@ const canDelete = computed(() => confirmation.value === props.profile.name && !p
 .access-warning {
   margin: 1.25rem 0;
   padding: 1rem;
-  border: 1px solid #d1242f;
+  border: 1px solid var(--danger-border);
   border-radius: 0.4rem;
-  background: rgb(209 36 47 / 8%);
+  background: var(--danger-surface-dialog);
 }
 
 label,
@@ -96,7 +96,7 @@ input {
 }
 
 .delete-error {
-  color: #d1242f;
+  color: var(--danger-border);
 }
 
 .dialog-actions {
@@ -107,10 +107,10 @@ input {
 }
 
 .delete-button {
-  border: 1px solid #b4232c;
+  border: 1px solid var(--danger-text);
   border-radius: 0.3rem;
-  background: #cf222e;
-  color: #fff;
+  background: var(--danger-surface);
+  color: var(--text-on-emphasis);
   font-weight: 600;
 }
 
@@ -119,6 +119,6 @@ input {
 }
 
 .delete-button:hover:not(:disabled) {
-  background: #a40e26;
+  background: var(--danger-surface-hover);
 }
 </style>

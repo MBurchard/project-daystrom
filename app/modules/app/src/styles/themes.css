@@ -1,0 +1,63 @@
+:root:not([data-theme]),
+:root[data-theme="classic"] {
+  color-scheme: light dark;
+}
+
+:root[data-theme="omega"] {
+  color-scheme: dark;
+}
+
+:root {
+  --font-interface: system-ui, -apple-system, sans-serif;
+  --surface-canvas: Canvas;
+  --surface-subtle: rgb(127 127 127 / 8%);
+  --surface-muted: rgb(127 127 127 / 10%);
+  --surface-hover: rgb(127 127 127 / 22%);
+  --surface-overlay: rgb(0 0 0 / 55%);
+  --text-primary: CanvasText;
+  --text-muted: #888;
+  --text-subtle: #777;
+  --text-on-emphasis: #fff;
+  --border-subtle: rgb(127 127 127 / 25%);
+  --border-soft: rgb(127 127 127 / 30%);
+  --border-default: rgb(127 127 127 / 35%);
+  --border-control: rgb(127 127 127 / 40%);
+  --border-strong: rgb(127 127 127 / 45%);
+  --focus-ring: #2196f3;
+  --status-success: #4caf50;
+  --status-warning: #ff9800;
+  --status-danger: #f44336;
+  --status-info: #2196f3;
+  --action-primary-border: #5cddff;
+  --action-primary-border-hover: #b4f4ff;
+  --action-primary-surface: linear-gradient(180deg, #159fe8 0%, #0769c8 100%);
+  --action-primary-surface-hover: linear-gradient(180deg, #25c8f5 0%, #0877dc 100%);
+  --action-primary-shadow: 0 0 0.55rem rgb(0 203 255 / 80%), inset 0 0 0.35rem rgb(184 246 255 / 65%);
+  --action-primary-shadow-compact: 0 0 0.35rem rgb(0 183 255 / 70%), inset 0 0 0.3rem rgb(116 231 255 / 55%);
+  --action-primary-shadow-hover: 0 0 0.55rem rgb(0 203 255 / 90%), inset 0 0 0.35rem rgb(184 246 255 / 70%);
+  --action-primary-text-shadow: 0 1px 1px rgb(0 29 75 / 70%);
+  --activity-indicator: #57e36e;
+  --activity-shadow: 0 0 0.35rem rgb(87 227 110 / 90%);
+  --danger-border: #d1242f;
+  --danger-text: #b4232c;
+  --danger-surface-subtle: rgb(209 36 47 / 6%);
+  --danger-surface-dialog: rgb(209 36 47 / 8%);
+  --danger-surface: #cf222e;
+  --danger-surface-hover: #a40e26;
+  --warning-border: #d29922;
+  --warning-text: #b77900;
+  --warning-text-strong: #8a5a00;
+  --warning-surface-subtle: rgb(210 153 34 / 8%);
+  --warning-surface: rgb(210 153 34 / 14%);
+  --warning-surface-hover: rgb(210 153 34 / 24%);
+  --control-border: rgb(255 255 255 / 20%);
+  --control-border-hover: rgb(255 255 255 / 40%);
+  --control-border-active: rgb(100 180 255 / 60%);
+  --tooltip-surface: #222;
+  --tooltip-text: #fff;
+  --dialog-shadow: 0 1rem 3rem rgb(0 0 0 / 35%);
+  --zoom-border: rgb(92 221 255 / 65%);
+  --zoom-surface: rgb(0 18 42 / 80%);
+  --zoom-shadow: 0 0 1rem rgb(0 183 255 / 45%);
+  --zoom-text-shadow: 0 0 0.5rem rgb(92 221 255 / 80%);
+}

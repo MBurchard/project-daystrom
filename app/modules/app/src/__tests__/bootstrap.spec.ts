@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   createApp: vi.fn(),
   createPinia: vi.fn(),
   initI18n: vi.fn(),
+  initTheme: vi.fn(),
   log: {
     debug: vi.fn(),
     error: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('../App.vue', () => ({default: {}}));
 vi.mock('@app/log', () => ({getLogger: () => mocks.log}));
 vi.mock('@app/log/shutdown', () => ({registerLoggingShutdownHandler: mocks.registerShutdown}));
 vi.mock('@app/i18n', () => ({initI18n: mocks.initI18n}));
+vi.mock('@app/theme', () => ({initTheme: mocks.initTheme}));
 vi.mock('pinia', () => ({createPinia: mocks.createPinia}));
 vi.mock('vue', () => ({createApp: mocks.createApp}));
 
@@ -31,6 +33,7 @@ describe('initApp', () => {
     mocks.createApp.mockReturnValue(mocks.app);
     mocks.createPinia.mockReturnValue({});
     mocks.initI18n.mockResolvedValue(undefined);
+    mocks.initTheme.mockResolvedValue(undefined);
     mocks.registerShutdown.mockResolvedValue(undefined);
   });
 
@@ -38,6 +41,7 @@ describe('initApp', () => {
     await initApp();
 
     expect(mocks.registerShutdown).toHaveBeenCalledOnce();
+    expect(mocks.initTheme).toHaveBeenCalledOnce();
     expect(mocks.initI18n).toHaveBeenCalledOnce();
     expect(mocks.createApp).toHaveBeenCalledOnce();
     expect(mocks.app.use).toHaveBeenCalledWith(expect.anything());

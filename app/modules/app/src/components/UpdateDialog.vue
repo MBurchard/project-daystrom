@@ -95,12 +95,12 @@ const {errorText} = useUiError();
 }
 
 .error {
-  color: #f44336;
+  color: var(--status-danger);
   user-select: text;
 }
 
 .info {
-  color: #2196f3;
+  color: var(--status-info);
   user-select: text;
 }
 </style>

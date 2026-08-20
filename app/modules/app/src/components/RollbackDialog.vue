@@ -67,7 +67,7 @@ const {errorText} = useUiError();
 }
 
 .error {
-  color: #f44336;
+  color: var(--status-danger);
   user-select: text;
 }
 </style>

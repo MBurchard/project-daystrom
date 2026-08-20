@@ -175,10 +175,10 @@ function launchProfile(stem: string): void {
   display: flex;
   align-items: stretch;
   padding: 0;
-  border: 1px solid rgb(127 127 127 / 40%);
+  border: 1px solid var(--border-control);
   border-bottom: 0;
   border-radius: 0;
-  background: rgb(127 127 127 / 10%);
+  background: var(--surface-muted);
   color: inherit;
   white-space: nowrap;
 }
@@ -192,7 +192,7 @@ function launchProfile(stem: string): void {
 }
 
 .account-tab.active {
-  background: rgb(127 127 127 / 22%);
+  background: var(--surface-hover);
   font-weight: 600;
 }
 
@@ -215,16 +215,14 @@ function launchProfile(stem: string): void {
   gap: 0.35rem;
   margin: 0.2rem 0.4rem 0.2rem 0;
   padding: 0.2rem 0.7rem;
-  border: 1px solid #5cddff;
+  border: 1px solid var(--action-primary-border);
   border-radius: 999px;
-  background: linear-gradient(180deg, #159fe8 0%, #0769c8 100%);
-  box-shadow:
-    0 0 0.35rem rgb(0 183 255 / 70%),
-    inset 0 0 0.3rem rgb(116 231 255 / 55%);
-  color: #fff;
+  background: var(--action-primary-surface);
+  box-shadow: var(--action-primary-shadow-compact);
+  color: var(--text-on-emphasis);
   font-size: 0.8rem;
   font-weight: 400;
-  text-shadow: 0 1px 1px rgb(0 29 75 / 70%);
+  text-shadow: var(--action-primary-text-shadow);
 }
 
 .account-start:disabled {
@@ -239,11 +237,9 @@ function launchProfile(stem: string): void {
 }
 
 .account-start:hover:not(:disabled) {
-  border-color: #b4f4ff;
-  background: linear-gradient(180deg, #25c8f5 0%, #0877dc 100%);
-  box-shadow:
-    0 0 0.55rem rgb(0 203 255 / 90%),
-    inset 0 0 0.35rem rgb(184 246 255 / 70%);
+  border-color: var(--action-primary-border-hover);
+  background: var(--action-primary-surface-hover);
+  box-shadow: var(--action-primary-shadow-hover);
 }
 
 .add-account {
@@ -268,8 +264,8 @@ function launchProfile(stem: string): void {
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 50%;
-  background: #57e36e;
-  box-shadow: 0 0 0.35rem rgb(87 227 110 / 90%);
+  background: var(--activity-indicator);
+  box-shadow: var(--activity-shadow);
 }
 
 .account-panel {
@@ -281,7 +277,7 @@ function launchProfile(stem: string): void {
   min-height: 5rem;
   padding: 1rem;
   overflow-y: auto;
-  border: 1px solid rgb(127 127 127 / 40%);
+  border: 1px solid var(--border-control);
 }
 
 .account-summary {
@@ -296,14 +292,14 @@ function launchProfile(stem: string): void {
 .account-danger {
   margin-top: auto;
   padding: 1rem;
-  border: 1px solid #d1242f;
+  border: 1px solid var(--danger-border);
   border-radius: 0.4rem;
-  background: rgb(209 36 47 / 6%);
+  background: var(--danger-surface-subtle);
 }
 
 .account-danger h4 {
   margin: 0;
-  color: #b4232c;
+  color: var(--danger-text);
   text-transform: uppercase;
 }
 
@@ -319,10 +315,10 @@ function launchProfile(stem: string): void {
 
 .account-delete {
   padding: 0.4rem 0.75rem;
-  border: 1px solid #b4232c;
+  border: 1px solid var(--danger-text);
   border-radius: 0.3rem;
-  background: Canvas;
-  color: #b4232c;
+  background: var(--surface-canvas);
+  color: var(--danger-text);
   font-weight: 600;
 }
 
@@ -331,8 +327,8 @@ function launchProfile(stem: string): void {
 }
 
 .account-delete:hover:not(:disabled) {
-  background: #cf222e;
-  color: #fff;
+  background: var(--danger-surface);
+  color: var(--text-on-emphasis);
 }
 
 .account-panel p {
@@ -347,7 +343,7 @@ function launchProfile(stem: string): void {
 
 .account-message {
   padding: 0.65rem 0.8rem;
-  border: 1px solid #2196f3;
-  color: #2196f3;
+  border: 1px solid var(--status-info);
+  color: var(--status-info);
 }
 </style>

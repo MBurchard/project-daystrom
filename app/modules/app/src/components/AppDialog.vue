@@ -76,18 +76,18 @@ onBeforeUnmount(() => {
 }
 
 .dialog-shell::backdrop {
-  background: rgb(0 0 0 / 55%);
+  background: var(--surface-overlay);
 }
 
 .dialog {
   width: 100%;
   max-height: calc(100vh - 3rem);
   overflow: hidden;
-  border: 1px solid rgb(127 127 127 / 45%);
+  border: 1px solid var(--border-strong);
   border-radius: 0.5rem;
-  background: Canvas;
-  color: CanvasText;
-  box-shadow: 0 1rem 3rem rgb(0 0 0 / 35%);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  box-shadow: var(--dialog-shadow);
 }
 
 .dialog-header {
@@ -95,7 +95,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid rgb(127 127 127 / 30%);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .dialog-header h2 {
