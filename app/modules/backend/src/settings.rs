@@ -226,9 +226,9 @@ pub enum AppLanguage {
 #[ts(export)]
 pub enum AppTheme {
     /// Existing system-aware Daystrom appearance.
-    #[default]
     Classic,
     /// Dark gold Omega appearance.
+    #[default]
     Omega,
 }
 
@@ -694,7 +694,7 @@ pub fn set_ui_zoom(zoom: f64) {
     });
 }
 
-/// Return the persisted application theme or the classic default.
+/// Return the persisted application theme or the Omega default.
 #[tauri::command]
 pub fn get_app_theme() -> AppTheme {
     SETTINGS.lock().unwrap().ui.theme.unwrap_or_default()
@@ -1010,14 +1010,14 @@ mod tests {
         let path = use_temp_path("application_theme");
         *SETTINGS.lock().unwrap() = AppSettings::default();
 
-        assert_eq!(get_app_theme(), AppTheme::Classic);
-        set_app_theme(AppTheme::Omega);
+        assert_eq!(get_app_theme(), AppTheme::Omega);
+        set_app_theme(AppTheme::Classic);
         flush_saves();
 
-        assert_eq!(get_app_theme(), AppTheme::Omega);
-        assert!(fs::read_to_string(path).unwrap().contains("theme = \"omega\""));
+        assert_eq!(get_app_theme(), AppTheme::Classic);
+        assert!(fs::read_to_string(path).unwrap().contains("theme = \"classic\""));
 
-        set_app_theme(AppTheme::Omega);
+        set_app_theme(AppTheme::Classic);
         *SETTINGS.lock().unwrap() = AppSettings::default();
         reset_path_override();
     }

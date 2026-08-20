@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   shortcutDisplayLabel: vi.fn(),
   startCapture: vi.fn(),
   setLanguage: vi.fn(),
+  setTheme: vi.fn(),
+  theme: {value: 'omega'},
 }));
 
 let state: Record<string, unknown>;
@@ -47,6 +49,9 @@ vi.mock('@app/i18n', () => ({
   }),
 }));
 vi.mock('@app/log', () => ({getLogger: () => ({error: mocks.languageError})}));
+vi.mock('@app/theme', () => ({
+  useTheme: () => ({theme: mocks.theme, setTheme: mocks.setTheme}),
+}));
 
 /** Build complete settings for component rendering. */
 function settings(): GameSettings {
@@ -74,6 +79,7 @@ describe('settingsView', () => {
     mocks.isShortcutDisabled.mockReturnValue(false);
     mocks.shortcutDisplayLabel.mockReturnValue('Space');
     mocks.setLanguage.mockResolvedValue(undefined);
+    mocks.setTheme.mockResolvedValue(undefined);
     state = {
       settings: currentSettings,
       effectiveScale: ref(100),
@@ -117,6 +123,19 @@ describe('settingsView', () => {
     await wrapper.get('#app-language').setValue('en');
     await Promise.resolve();
     expect(mocks.languageError).toHaveBeenCalledWith('Failed to change application language:', reason);
+  });
+
+  it('persists theme selections and reports unexpected change failures', async () => {
+    const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+
+    await wrapper.get('#app-theme').setValue('classic');
+    expect(mocks.setTheme).toHaveBeenCalledWith('classic');
+
+    const reason = new Error('theme failure');
+    mocks.setTheme.mockRejectedValue(reason);
+    await wrapper.get('#app-theme').setValue('omega');
+    await Promise.resolve();
+    expect(mocks.languageError).toHaveBeenCalledWith('Failed to change application theme:', reason);
   });
 
   it('moves focus into settings, handles Escape, and restores the previous focus', async () => {

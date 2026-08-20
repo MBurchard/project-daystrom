@@ -5,6 +5,7 @@ import {initTheme} from '@app/theme';
 import {createPinia} from 'pinia';
 import {createApp} from 'vue';
 import App from './App.vue';
+import './styles/fonts.css';
 import './styles/themes.css';
 
 const log = getLogger('Main');

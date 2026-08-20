@@ -3,7 +3,7 @@ import {getAppTheme, setAppTheme} from '@app/commands/theme';
 import {getLogger} from '@app/log';
 import {readonly, ref} from 'vue';
 
-const DEFAULT_THEME: AppTheme = 'classic';
+const DEFAULT_THEME: AppTheme = 'omega';
 const log = getLogger('Theme');
 const theme = ref<AppTheme>(DEFAULT_THEME);
 let initialized = false;
@@ -24,7 +24,7 @@ export async function initTheme(): Promise<void> {
   try {
     initialTheme = await getAppTheme();
   } catch (reason) {
-    log.warn('Failed to resolve application theme; using classic:', reason);
+    log.warn('Failed to resolve application theme; using Omega:', reason);
   }
   applyTheme(initialTheme);
   initialized = true;
