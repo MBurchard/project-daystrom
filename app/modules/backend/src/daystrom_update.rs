@@ -72,6 +72,7 @@ static STATE: Mutex<DaystromUpdateStatus> = Mutex::new(DaystromUpdateStatus {
     error: None,
     dismissed: false,
     can_install: false,
+    busy: false,
 });
 
 /// Current phase of Daystrom's application-update discovery.
@@ -99,6 +100,16 @@ pub enum DaystromUpdatePhase {
     Failed,
 }
 
+impl DaystromUpdatePhase {
+    /// Return whether this phase represents active update work.
+    const fn is_busy(&self) -> bool {
+        matches!(
+            self,
+            Self::Checking | Self::Confirming | Self::RetainingRollback | Self::Downloading | Self::Installing
+        )
+    }
+}
+
 /// Display-safe snapshot of Project Daystrom's update state.
 #[derive(Clone, Debug, PartialEq, Serialize, TS)]
 #[ts(export)]
@@ -117,6 +128,8 @@ pub struct DaystromUpdateStatus {
     pub dismissed: bool,
     /// Whether this build may install the currently available update.
     pub can_install: bool,
+    /// Whether the current visible update phase represents active work.
+    pub busy: bool,
 }
 
 impl Default for DaystromUpdateStatus {
@@ -129,6 +142,7 @@ impl Default for DaystromUpdateStatus {
             error: None,
             dismissed: false,
             can_install: false,
+            busy: false,
         }
     }
 }
@@ -585,6 +599,7 @@ fn available_status(
         error: None,
         dismissed,
         can_install,
+        busy: false,
     }
 }
 
@@ -625,7 +640,10 @@ fn failure_status(
 
 /// Mutate the cached status and emit it only when its display-safe value changed.
 fn update_state(app: &tauri::AppHandle, updater: impl FnOnce(&mut DaystromUpdateStatus)) {
-    if let Some(payload) = crate::state_update::update_if_changed(&STATE, updater) {
+    if let Some(payload) = crate::state_update::update_if_changed(&STATE, |status| {
+        updater(status);
+        status.busy = status.phase.is_busy();
+    }) {
         log_debug!("Daystrom update status changed, emitting to frontend");
         let _ = app.emit("daystrom-update-status", payload);
     }
@@ -634,6 +652,23 @@ fn update_state(app: &tauri::AppHandle, updater: impl FnOnce(&mut DaystromUpdate
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_phases_are_backend_owned() {
+        for (phase, expected) in [
+            (DaystromUpdatePhase::Idle, false),
+            (DaystromUpdatePhase::Checking, true),
+            (DaystromUpdatePhase::UpToDate, false),
+            (DaystromUpdatePhase::Available, false),
+            (DaystromUpdatePhase::Confirming, true),
+            (DaystromUpdatePhase::RetainingRollback, true),
+            (DaystromUpdatePhase::Downloading, true),
+            (DaystromUpdatePhase::Installing, true),
+            (DaystromUpdatePhase::Failed, false),
+        ] {
+            assert_eq!(phase.is_busy(), expected, "unexpected busy state for {phase:?}");
+        }
+    }
 
     /// Fixed release-line anchor used by rollout-delay tests.
     fn rollout_time() -> OffsetDateTime {

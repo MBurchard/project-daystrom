@@ -56,7 +56,6 @@ const {
 const {
   profiles,
   isProfileRunning,
-  markLaunched,
   init: initProfileState,
   destroy: destroyProfileState,
 } = useProfileState();
@@ -79,14 +78,11 @@ const {
   destroy: destroyDaystromRollback,
 } = useDaystromRollback();
 
-const updateBusy = computed(() =>
-  ['confirming', 'retaining_rollback', 'downloading', 'installing'].includes(daystromUpdate.value.phase));
+const updateBusy = computed(() => daystromUpdate.value.busy);
 
-const rollbackBusy = computed(() =>
-  ['preparing', 'installing'].includes(daystromRollback.value.phase));
+const rollbackBusy = computed(() => daystromRollback.value.busy);
 
-const updateCheckBusy = computed(() =>
-  daystromUpdate.value.phase === 'checking' || updateBusy.value || rollbackBusy.value);
+const updateCheckBusy = computed(() => updateBusy.value || rollbackBusy.value);
 
 /** Open one application-level dialogue. */
 function openDialog(dialog: Exclude<ActiveDialog, null>): void {
@@ -108,11 +104,8 @@ function showAccounts(): void {
   activeView.value = 'accounts';
 }
 
-/** Launch one account and apply the existing launch cooldown to known profiles. */
+/** Request the backend to launch one account. */
 function handleLaunch(profile: string): void {
-  if (profile !== 'initial' && profile !== 'new_account') {
-    markLaunched(profile);
-  }
   launchGame(profile);
 }
 

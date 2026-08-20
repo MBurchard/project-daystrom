@@ -409,6 +409,7 @@ mod tests {
             error: None,
             dismissed: false,
             can_install: false,
+            busy: true,
         };
 
         restore_available_after_failure(&mut status, UiErrorCode::UpdateInstallFailed, true);

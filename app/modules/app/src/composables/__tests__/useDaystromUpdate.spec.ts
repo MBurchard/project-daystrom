@@ -40,6 +40,7 @@ function makeStatus(overrides: Partial<DaystromUpdateStatus> = {}): DaystromUpda
     error: null,
     dismissed: false,
     can_install: false,
+    busy: false,
     ...overrides,
   };
 }

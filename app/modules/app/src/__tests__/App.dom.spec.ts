@@ -78,6 +78,7 @@ function updateStatus(): DaystromUpdateStatus {
     error: null,
     dismissed: false,
     can_install: true,
+    busy: false,
   };
 }
 
@@ -89,6 +90,7 @@ function rollbackStatus(): DaystromRollbackStatus {
     error: null,
     can_restore: true,
     mod_restore_pending: false,
+    busy: false,
   };
 }
 
@@ -101,7 +103,6 @@ describe('app', () => {
     initGameState: vi.fn(),
     destroyGameState: vi.fn(),
     isProfileRunning: vi.fn(() => false),
-    markLaunched: vi.fn(),
     initProfileState: vi.fn(),
     destroyProfileState: vi.fn(),
     initSettings: vi.fn(),
@@ -144,7 +145,6 @@ describe('app', () => {
     mockUseProfileState.mockReturnValue({
       profiles: ref(profileState()),
       isProfileRunning: actions.isProfileRunning,
-      markLaunched: actions.markLaunched,
       init: actions.initProfileState,
       destroy: actions.destroyProfileState,
     });
@@ -210,15 +210,13 @@ describe('app', () => {
     expect(mockCloseMainWindow).toHaveBeenCalledTimes(2);
   });
 
-  it('marks known profiles before launch but leaves special launches unmarked', () => {
+  it('delegates profile launches to the backend', () => {
     const wrapper = shallowMount(App);
     const tabs = wrapper.findComponent(AccountTabs);
 
     tabs.vm.$emit('launch', 'test-profile');
     tabs.vm.$emit('launch', 'initial');
 
-    expect(actions.markLaunched).toHaveBeenCalledOnce();
-    expect(actions.markLaunched).toHaveBeenCalledWith('test-profile');
     expect(actions.launchGame).toHaveBeenNthCalledWith(1, 'test-profile');
     expect(actions.launchGame).toHaveBeenNthCalledWith(2, 'initial');
   });
@@ -276,7 +274,7 @@ describe('app', () => {
     expect(wrapper.findComponent(AppDialog).props('title')).toBe('Daystrom update');
   });
 
-  it('confirms new accounts without marking a known profile', async () => {
+  it('confirms new account launches', async () => {
     const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
 
     wrapper.findComponent(AccountTabs).vm.$emit('addAccount');
@@ -285,7 +283,6 @@ describe('app', () => {
     wrapper.findComponent(NewAccountDialog).vm.$emit('confirm');
     await nextTick();
 
-    expect(actions.markLaunched).not.toHaveBeenCalled();
     expect(actions.launchGame).toHaveBeenCalledWith('new_account');
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
   });
@@ -347,13 +344,13 @@ describe('app', () => {
   it('passes maintenance states to the opposite recovery action', async () => {
     const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
 
-    update.value.phase = 'downloading';
+    update.value.busy = true;
     wrapper.findComponent(StatusBar).vm.$emit('openRollback');
     await nextTick();
     expect(wrapper.findComponent(RollbackDialog).props('updateBusy')).toBe(true);
 
     wrapper.findComponent(AppDialog).vm.$emit('close');
-    rollback.value.phase = 'preparing';
+    rollback.value.busy = true;
     wrapper.findComponent(StatusBar).vm.$emit('openUpdate');
     await nextTick();
     expect(wrapper.findComponent(UpdateDialog).props('rollbackBusy')).toBe(true);

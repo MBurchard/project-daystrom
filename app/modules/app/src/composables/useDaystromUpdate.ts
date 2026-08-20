@@ -15,6 +15,7 @@ const DEFAULT_STATUS: DaystromUpdateStatus = {
   error: null,
   dismissed: false,
   can_install: false,
+  busy: false,
 };
 
 /** Reactive application-update state and the narrow commands exposed by the backend. */
