@@ -84,10 +84,13 @@ const {errorText} = useUiError();
     </div>
 
     <button v-if="props.status.installed && props.status.update_available"
-        class="status-item warn interactive"
+        class="status-item warn interactive segmented-status segmented-action"
         :disabled="!props.status.can_launch_updater || props.actionPending"
         @click="emit('openGameUpdater')">
-      {{ t('gameUpdateAvailable', { version: props.status.remote_version ?? '' }) }}
+      <span class="segmented-status-label">
+        {{ t('gameUpdateAvailable', { version: props.status.remote_version ?? '' }) }}
+      </span>
+      <span class="forward-action" aria-hidden="true">›</span>
     </button>
     <span v-else-if="props.status.installed && props.status.update_check_failed" class="status-item warn">
       {{ t('gameUpdateFailed') }}
@@ -108,10 +111,13 @@ const {errorText} = useUiError();
       {{ t('modUnavailable') }}
     </span>
     <button v-if="props.status.installed && props.status.mod_available && !props.status.mod_deployed"
-        class="status-item warn interactive"
+        class="status-item warn interactive segmented-status segmented-action"
         :disabled="!props.status.can_install_mod || props.actionPending"
         @click="emit('installMod')">
-      {{ props.status.mod_outdated ? t('updateMod') : t('installMod') }}
+      <span class="segmented-status-label">
+        {{ props.status.mod_outdated ? t('updateMod') : t('installMod') }}
+      </span>
+      <span class="forward-action" aria-hidden="true">›</span>
     </button>
     <button v-if="props.status.mod_removable"
         class="status-action"
@@ -193,6 +199,19 @@ const {errorText} = useUiError();
 
 .segmented-status.neutral .segmented-status-label {
   padding-left: 0.5rem;
+}
+
+.forward-action {
+  display: grid;
+  min-width: 1.9rem;
+  border-left: 1px solid currentcolor;
+  background: color-mix(in srgb, currentcolor 8%, transparent);
+  font-size: 1rem;
+  place-items: center;
+}
+
+.segmented-action:hover:not(:disabled) .forward-action {
+  background: color-mix(in srgb, currentcolor 22%, transparent);
 }
 
 .status-refresh {
