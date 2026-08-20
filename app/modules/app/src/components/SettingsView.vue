@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {AppLanguage} from '@generated/AppLanguage';
+import type {AppTheme} from '@generated/AppTheme';
 import {
   GAME_DEFAULT_SLIDER_MAX,
   MAX_CONFIGURED_SLIDER_LIMIT,
@@ -11,6 +12,7 @@ import {useI18n} from '@app/i18n';
 import settingsDefaults from '@app/locales/en/settings.json';
 import toastDefaults from '@app/locales/en/toast.json';
 import {getLogger} from '@app/log';
+import {useTheme} from '@app/theme';
 import {onBeforeUnmount, onMounted, ref} from 'vue';
 
 import bannerCategories from './toast-banner-categories.json';
@@ -26,6 +28,7 @@ const emit = defineEmits<{
 const log = getLogger('Settings');
 const {language, setLanguage, t} = useI18n('settings', settingsDefaults);
 const {t: tToast} = useI18n('toast', toastDefaults);
+const {theme, setTheme} = useTheme();
 const view = ref<HTMLElement | null>(null);
 let previouslyFocused: HTMLElement | null = null;
 const bannerCategoryLabels: Record<string, keyof typeof settingsDefaults> = {
@@ -80,6 +83,16 @@ function onLanguageChange(event: Event): void {
   setLanguage(nextLanguage).catch(reason => log.error('Failed to change application language:', reason));
 }
 
+/**
+ * Persist an interface theme selected through the application settings.
+ *
+ * @param event - Change event emitted by the theme selector.
+ */
+function onThemeChange(event: Event): void {
+  const nextTheme = (event.target as HTMLSelectElement).value as AppTheme;
+  setTheme(nextTheme).catch(reason => log.error('Failed to change application theme:', reason));
+}
+
 onMounted(() => {
   previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   view.value?.focus();
@@ -107,6 +120,18 @@ onBeforeUnmount(() => {
 
     <section class="settings-category">
       <h3>{{ t('application') }}</h3>
+
+      <div class="setting-row">
+        <label for="app-theme">{{ t('theme') }}</label>
+        <select id="app-theme" :value="theme" @change="onThemeChange">
+          <option value="omega">
+            {{ t('themeOmega') }}
+          </option>
+          <option value="classic">
+            {{ t('themeClassic') }}
+          </option>
+        </select>
+      </div>
 
       <div class="setting-row">
         <label for="app-language">{{ t('language') }}</label>

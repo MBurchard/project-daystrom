@@ -5,10 +5,14 @@
 
 :root[data-theme="omega"] {
   color-scheme: dark;
+
+  --font-interface: "Inter", system-ui, sans-serif;
+  --font-display: "Rajdhani", "Inter", system-ui, sans-serif;
 }
 
 :root {
   --font-interface: system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-interface);
   --surface-canvas: Canvas;
   --surface-subtle: rgb(127 127 127 / 8%);
   --surface-muted: rgb(127 127 127 / 10%);

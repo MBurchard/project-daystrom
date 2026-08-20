@@ -1,0 +1,43 @@
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url("../assets/fonts/Inter-Latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Rajdhani;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/Rajdhani-Regular-Latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Rajdhani;
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/Rajdhani-Medium-Latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Rajdhani;
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/Rajdhani-SemiBold-Latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Rajdhani;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/Rajdhani-Bold-Latin.woff2") format("woff2");
+}
+
+:root[data-theme="omega"] :where(h1, h2, h3, h4, button, label, summary) {
+  font-family: var(--font-display);
+}
