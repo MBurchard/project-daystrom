@@ -92,6 +92,7 @@ describe('statusBar', () => {
       props: props({status: gameStatus({update_available: true, remote_version: 189})}),
     });
     const updateButton = wrapper.findAll('button').find(button => button.text().includes('STFC v189'))!;
+    expect(updateButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
     await updateButton.trigger('click');
     expect(wrapper.emitted('openGameUpdater')).toHaveLength(1);
 
@@ -128,7 +129,9 @@ describe('statusBar', () => {
       status: gameStatus({mod_deployed: false, mod_outdated: false, mod_removable: false}),
     });
     expect(wrapper.text()).toContain('Install mod');
-    await wrapper.findAll('button').find(button => button.text() === 'Install mod')!.trigger('click');
+    const installButton = wrapper.findAll('button').find(button => button.text().includes('Install mod'))!;
+    expect(installButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
+    await installButton.trigger('click');
     expect(wrapper.emitted('installMod')).toHaveLength(2);
     await wrapper.setProps({
       status: gameStatus({mod_deployed: false, mod_outdated: true, mod_removable: false}),
@@ -145,8 +148,10 @@ describe('statusBar', () => {
         can_remove_mod: false,
       }),
     });
-    expect(wrapper.findAll('button').filter(button => ['Update mod', 'Remove mod'].includes(button.text()))
-      .every(button => button.attributes('disabled') !== undefined)).toBe(true);
+    const disabledActions = wrapper.findAll('button')
+      .filter(button => button.text().includes('Update mod') || button.text() === 'Remove mod');
+    expect(disabledActions).toHaveLength(2);
+    expect(disabledActions.every(button => button.attributes('disabled') !== undefined)).toBe(true);
     await wrapper.setProps({status: gameStatus({mod_deployed: false, mod_available: false})});
     expect(wrapper.text()).toContain('Mod unavailable');
   });
