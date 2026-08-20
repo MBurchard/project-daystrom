@@ -209,6 +209,8 @@ pub enum AppLanguage {
     En,
     /// German application interface.
     De,
+    /// Klingon application interface.
+    Tlh,
 }
 
 /// UI settings that are sent to the game mod via WebSocket.
@@ -709,10 +711,10 @@ fn resolve_app_language(language: Option<AppLanguage>, system_locale: Option<&st
         let primary = system_locale
             .and_then(|locale| locale.split(['-', '_']).next())
             .unwrap_or_default();
-        if primary.eq_ignore_ascii_case("de") {
-            AppLanguage::De
-        } else {
-            AppLanguage::En
+        match primary.to_ascii_lowercase().as_str() {
+            "de" => AppLanguage::De,
+            "tlh" => AppLanguage::Tlh,
+            _ => AppLanguage::En,
         }
     })
 }
@@ -896,11 +898,12 @@ mod tests {
     }
 
     #[test]
-    fn application_language_uses_persisted_selection_or_german_locale_family() {
+    fn application_language_uses_persisted_selection_or_supported_locale_family() {
         assert_eq!(resolve_app_language(Some(AppLanguage::En), Some("de-DE")), AppLanguage::En);
         assert_eq!(resolve_app_language(None, Some("de-DE")), AppLanguage::De);
         assert_eq!(resolve_app_language(None, Some("DE_at")), AppLanguage::De);
         assert_eq!(resolve_app_language(None, Some("de-CH")), AppLanguage::De);
+        assert_eq!(resolve_app_language(None, Some("tlh-Latn")), AppLanguage::Tlh);
         assert_eq!(resolve_app_language(None, Some("en-DE")), AppLanguage::En);
         assert_eq!(resolve_app_language(None, None), AppLanguage::En);
     }
@@ -911,13 +914,13 @@ mod tests {
         let path = use_temp_path("application_language");
         *SETTINGS.lock().unwrap() = AppSettings::default();
 
-        set_app_language_value(AppLanguage::De);
+        set_app_language_value(AppLanguage::Tlh);
         flush_saves();
 
-        assert_eq!(resolve_and_activate_app_language(Some("en-US")), AppLanguage::De);
-        assert!(fs::read_to_string(path).unwrap().contains("language = \"de\""));
+        assert_eq!(resolve_and_activate_app_language(Some("en-US")), AppLanguage::Tlh);
+        assert!(fs::read_to_string(path).unwrap().contains("language = \"tlh\""));
 
-        set_app_language_value(AppLanguage::De);
+        set_app_language_value(AppLanguage::Tlh);
         *SETTINGS.lock().unwrap() = AppSettings::default();
         reset_path_override();
     }
@@ -955,7 +958,7 @@ mod tests {
     #[test]
     fn invalid_application_language_falls_back_without_discarding_settings() {
         let parsed: AppSettings =
-            toml::from_str("[ui]\nlanguage = \"klingon\"\n\n[ui.hints]\nminimize_to_tray = 3\n").unwrap();
+            toml::from_str("[ui]\nlanguage = \"elvish\"\n\n[ui.hints]\nminimize_to_tray = 3\n").unwrap();
 
         assert_eq!(parsed.ui.language, None);
         assert_eq!(parsed.ui.hints.minimize_to_tray, 3);

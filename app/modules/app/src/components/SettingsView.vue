@@ -117,6 +117,9 @@ onBeforeUnmount(() => {
           <option value="de">
             {{ t('languageGerman') }}
           </option>
+          <option value="tlh">
+            {{ t('languageKlingon') }}
+          </option>
         </select>
       </div>
     </section>
