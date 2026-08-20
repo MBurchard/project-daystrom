@@ -156,7 +156,7 @@ const {errorText} = useUiError();
   flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.65rem;
-  border: 1px solid rgb(127 127 127 / 30%);
+  border: 1px solid var(--border-soft);
   border-radius: 0.35rem;
 }
 
@@ -174,7 +174,7 @@ const {errorText} = useUiError();
 }
 
 .status-item.ok {
-  color: #4caf50;
+  color: var(--status-success);
 }
 
 .status-item.ok::before {
@@ -233,8 +233,8 @@ const {errorText} = useUiError();
   right: 0;
   padding: 0.3rem 0.5rem;
   border-radius: 0.3rem;
-  background: #222;
-  color: #fff;
+  background: var(--tooltip-surface);
+  color: var(--tooltip-text);
   content: attr(data-tooltip);
   font-size: 0.75rem;
   line-height: 1.2;
@@ -260,7 +260,7 @@ const {errorText} = useUiError();
 }
 
 .status-item.warn {
-  color: #ff9800;
+  color: var(--status-warning);
 }
 
 .status-item.warn::before {
@@ -268,7 +268,7 @@ const {errorText} = useUiError();
 }
 
 .status-item.fail {
-  color: #f44336;
+  color: var(--status-danger);
 }
 
 .status-item.fail::before {
@@ -276,7 +276,7 @@ const {errorText} = useUiError();
 }
 
 .status-item.neutral {
-  color: #777;
+  color: var(--text-subtle);
 }
 
 .status-bar button {
@@ -301,10 +301,10 @@ const {errorText} = useUiError();
 }
 
 .error {
-  color: #f44336;
+  color: var(--status-danger);
 }
 
 .info {
-  color: #2196f3;
+  color: var(--status-info);
 }
 </style>

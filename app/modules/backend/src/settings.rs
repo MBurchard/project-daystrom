@@ -184,6 +184,13 @@ pub struct UiSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub language: Option<AppLanguage>,
+    /// Explicitly selected application theme; absent until the user chooses one.
+    #[serde(
+        default,
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub theme: Option<AppTheme>,
     /// Persisted zoom factor for the Daystrom application interface.
     #[serde(
         default,
@@ -211,6 +218,18 @@ pub enum AppLanguage {
     De,
     /// Klingon application interface.
     Tlh,
+}
+
+/// Visual themes supported by the Daystrom application interface.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum AppTheme {
+    /// Existing system-aware Daystrom appearance.
+    #[default]
+    Classic,
+    /// Dark gold Omega appearance.
+    Omega,
 }
 
 /// UI settings that are sent to the game mod via WebSocket.
@@ -439,6 +458,7 @@ pub struct AppSettings {
 static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
     ui: UiSettings {
         language: None,
+        theme: None,
         zoom: None,
         hints: HintSettings { minimize_to_tray: 0 },
         window: None,
@@ -674,6 +694,24 @@ pub fn set_ui_zoom(zoom: f64) {
     });
 }
 
+/// Return the persisted application theme or the classic default.
+#[tauri::command]
+pub fn get_app_theme() -> AppTheme {
+    SETTINGS.lock().unwrap().ui.theme.unwrap_or_default()
+}
+
+/// Persist an explicit application theme selection.
+#[tauri::command]
+pub fn set_app_theme(theme: AppTheme) {
+    update(|settings| {
+        if settings.ui.theme == Some(theme) {
+            return false;
+        }
+        settings.ui.theme = Some(theme);
+        true
+    });
+}
+
 /// Return the saved window geometry, if any.
 ///
 /// Returns `None` on the first launch (no `[ui.window]` section in the settings file).
@@ -894,6 +932,7 @@ mod tests {
         let settings = AppSettings::default();
         assert_eq!(settings.ui.hints.minimize_to_tray, 0);
         assert_eq!(settings.ui.language, None);
+        assert_eq!(settings.ui.theme, None);
         assert_eq!(settings.ui.zoom, None);
     }
 
@@ -930,6 +969,7 @@ mod tests {
         let settings = AppSettings {
             ui: UiSettings {
                 language: None,
+                theme: None,
                 zoom: None,
                 hints: HintSettings { minimize_to_tray: 42 },
                 window: None,
@@ -961,6 +1001,33 @@ mod tests {
             toml::from_str("[ui]\nlanguage = \"elvish\"\n\n[ui.hints]\nminimize_to_tray = 3\n").unwrap();
 
         assert_eq!(parsed.ui.language, None);
+        assert_eq!(parsed.ui.hints.minimize_to_tray, 3);
+    }
+
+    #[test]
+    fn application_theme_defaults_and_persists_explicit_selection() {
+        let _lock = lock_tests();
+        let path = use_temp_path("application_theme");
+        *SETTINGS.lock().unwrap() = AppSettings::default();
+
+        assert_eq!(get_app_theme(), AppTheme::Classic);
+        set_app_theme(AppTheme::Omega);
+        flush_saves();
+
+        assert_eq!(get_app_theme(), AppTheme::Omega);
+        assert!(fs::read_to_string(path).unwrap().contains("theme = \"omega\""));
+
+        set_app_theme(AppTheme::Omega);
+        *SETTINGS.lock().unwrap() = AppSettings::default();
+        reset_path_override();
+    }
+
+    #[test]
+    fn invalid_application_theme_falls_back_without_discarding_settings() {
+        let parsed: AppSettings =
+            toml::from_str("[ui]\ntheme = \"borg\"\n\n[ui.hints]\nminimize_to_tray = 3\n").unwrap();
+
+        assert_eq!(parsed.ui.theme, None);
         assert_eq!(parsed.ui.hints.minimize_to_tray, 3);
     }
 
@@ -1082,6 +1149,7 @@ mod tests {
         let original = AppSettings {
             ui: UiSettings {
                 language: Some(AppLanguage::De),
+                theme: Some(AppTheme::Omega),
                 zoom: Some(1.2),
                 hints: HintSettings { minimize_to_tray: 99 },
                 window: None,

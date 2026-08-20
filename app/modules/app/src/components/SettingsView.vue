@@ -429,14 +429,14 @@ onBeforeUnmount(() => {
 .version-return-zone {
   margin-top: 1.5rem;
   padding: 1rem;
-  border: 1px solid #d29922;
+  border: 1px solid var(--warning-border);
   border-radius: 0.5rem;
-  background: rgb(210 153 34 / 8%);
+  background: var(--warning-surface-subtle);
 }
 
 .version-return-zone h3 {
   margin-top: 0;
-  color: #b77900;
+  color: var(--warning-text);
   opacity: 1;
 }
 
@@ -446,25 +446,25 @@ onBeforeUnmount(() => {
 
 .version-return-action {
   padding: 0.4rem 0.85rem;
-  border: 1px solid #b77900;
+  border: 1px solid var(--warning-text);
   border-radius: 999px;
-  background: rgb(210 153 34 / 14%);
-  color: #8a5a00;
+  background: var(--warning-surface);
+  color: var(--warning-text-strong);
   cursor: pointer;
   font-weight: 600;
 }
 
 .version-return-action:hover {
-  background: rgb(210 153 34 / 24%);
+  background: var(--warning-surface-hover);
 }
 
 .version-return-action:focus-visible {
-  outline: 2px solid #d29922;
+  outline: 2px solid var(--warning-border);
   outline-offset: 2px;
 }
 
 .version-return-unavailable {
-  color: #777;
+  color: var(--text-subtle);
   font-size: 0.85rem;
 }
 
@@ -477,7 +477,7 @@ onBeforeUnmount(() => {
 .shortcut-key {
   font-family: monospace;
   padding: 0.2rem 0.5rem;
-  border: 1px solid rgb(255 255 255 / 20%);
+  border: 1px solid var(--control-border);
   border-radius: 0.25rem;
   min-width: 4rem;
   text-align: center;
@@ -485,7 +485,7 @@ onBeforeUnmount(() => {
 }
 
 .shortcut-key:hover {
-  border-color: rgb(255 255 255 / 40%);
+  border-color: var(--control-border-hover);
 }
 
 .shortcut-key.disabled {
@@ -494,7 +494,7 @@ onBeforeUnmount(() => {
 }
 
 .shortcut-key.capturing {
-  border-color: rgb(100 180 255 / 60%);
+  border-color: var(--control-border-active);
   animation: pulse 1s ease-in-out infinite;
 }
 

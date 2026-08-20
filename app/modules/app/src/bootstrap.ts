@@ -1,9 +1,11 @@
 import {initI18n} from '@app/i18n';
 import {getLogger} from '@app/log';
 import {registerLoggingShutdownHandler} from '@app/log/shutdown';
+import {initTheme} from '@app/theme';
 import {createPinia} from 'pinia';
 import {createApp} from 'vue';
 import App from './App.vue';
+import './styles/themes.css';
 
 const log = getLogger('Main');
 
@@ -19,6 +21,7 @@ export async function initApp(): Promise<void> {
     } catch (error) {
       log.warn('Failed to register coordinated shutdown; relying on backend timeout:', error);
     }
+    await initTheme();
     await initI18n();
     log.debug('Project Daystrom frontend started');
     const app = createApp(App);
