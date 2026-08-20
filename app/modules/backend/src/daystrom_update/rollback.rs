@@ -17,6 +17,7 @@ static STATE: Mutex<DaystromRollbackStatus> = Mutex::new(DaystromRollbackStatus 
     error: None,
     can_restore: false,
     mod_restore_pending: false,
+    busy: false,
 });
 
 /// Verified rollback retained until frontend logging has been flushed.
@@ -39,6 +40,13 @@ pub enum DaystromRollbackPhase {
     Failed,
 }
 
+impl DaystromRollbackPhase {
+    /// Return whether this phase represents active rollback work.
+    const fn is_busy(&self) -> bool {
+        matches!(self, Self::Preparing | Self::Installing)
+    }
+}
+
 /// Display-safe snapshot of Project Daystrom's rollback state.
 #[derive(Clone, Debug, PartialEq, Serialize, TS)]
 #[ts(export)]
@@ -53,6 +61,8 @@ pub struct DaystromRollbackStatus {
     pub can_restore: bool,
     /// Whether STFC must close before the restored bundled mod can become active.
     pub mod_restore_pending: bool,
+    /// Whether the current rollback phase represents active work.
+    pub busy: bool,
 }
 
 /// Reconcile and publish rollback availability after application startup.
@@ -258,12 +268,16 @@ fn availability_status(
         version,
         error,
         mod_restore_pending,
+        busy: false,
     }
 }
 
 /// Mutate rollback state and emit a snapshot only when it changed.
 fn update_state(app: &tauri::AppHandle, updater: impl FnOnce(&mut DaystromRollbackStatus)) {
-    if let Some(payload) = crate::state_update::update_if_changed(&STATE, updater) {
+    if let Some(payload) = crate::state_update::update_if_changed(&STATE, |status| {
+        updater(status);
+        status.busy = status.phase.is_busy();
+    }) {
         log_debug!("Daystrom rollback status changed, emitting to frontend");
         let _ = app.emit("daystrom-rollback-status", payload);
     }
@@ -272,6 +286,19 @@ fn update_state(app: &tauri::AppHandle, updater: impl FnOnce(&mut DaystromRollba
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_phases_are_backend_owned() {
+        for (phase, expected) in [
+            (DaystromRollbackPhase::Unavailable, false),
+            (DaystromRollbackPhase::Available, false),
+            (DaystromRollbackPhase::Preparing, true),
+            (DaystromRollbackPhase::Installing, true),
+            (DaystromRollbackPhase::Failed, false),
+        ] {
+            assert_eq!(phase.is_busy(), expected, "unexpected busy state for {phase:?}");
+        }
+    }
 
     #[test]
     fn available_status_keeps_retry_action_after_failure() {

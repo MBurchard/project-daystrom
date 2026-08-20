@@ -13,6 +13,7 @@ const DEFAULT_STATUS: DaystromRollbackStatus = {
   error: null,
   can_restore: false,
   mod_restore_pending: false,
+  busy: false,
 };
 
 /** Reactive rollback state and the narrow restore command exposed by the backend. */

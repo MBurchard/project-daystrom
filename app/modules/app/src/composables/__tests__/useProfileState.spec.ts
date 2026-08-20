@@ -136,17 +136,6 @@ describe('useProfileState', () => {
     expect(state.isProfileRunning('411_Other')).toBe(false);
   });
 
-  it('keeps a launched profile pending until its cooldown expires', () => {
-    vi.useFakeTimers();
-    const state = useProfileState();
-
-    state.markLaunched('411_Current');
-    expect(state.isProfileRunning('411_Current')).toBe(true);
-    vi.advanceTimersByTime(30_000);
-    expect(state.isProfileRunning('411_Current')).toBe(false);
-    vi.useRealTimers();
-  });
-
   it('logs listener and snapshot failures', async () => {
     const logger = mockGetLogger();
     mockListen.mockRejectedValue(new Error('listen failed'));

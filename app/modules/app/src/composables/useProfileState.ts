@@ -18,10 +18,8 @@ export interface ProfileStateComposable {
   externalGameRunning: Readonly<Ref<boolean>>;
   /** Whether Daystrom is waiting for a running game to restore its launch identity. */
   gameOriginPending: Readonly<Ref<boolean>>;
-  /** Check whether a specific profile is currently running or recently launched. */
+  /** Check whether a specific profile is currently running. */
   isProfileRunning: (stem: string) => boolean;
-  /** Mark a profile as recently launched (30s cooldown). */
-  markLaunched: (stem: string) => void;
   /** Register event listeners and load the initial state. Call from onMounted. */
   init: () => void;
   /** Unregister event listeners. Call from onUnmounted. */
@@ -44,15 +42,9 @@ const DEFAULT_PROFILE_STATE: ProfileState = {
  *
  * @returns reactive profile state, running checks, and lifecycle functions
  */
-/// How long a profile button stays disabled after launch (ms).
-const LAUNCH_COOLDOWN_MS = 30_000;
-
 export function useProfileState(): ProfileStateComposable {
   const profiles = ref<ProfileState>({...DEFAULT_PROFILE_STATE});
   let unlisten: (() => void) | null = null;
-
-  /** Profile stems that were recently launched (cooldown period). */
-  const pendingLaunches = ref<Set<string>>(new Set());
 
   const hasProfiles = computed(() => profiles.value.profiles.length > 0);
 
@@ -61,26 +53,12 @@ export function useProfileState(): ProfileStateComposable {
   const gameOriginPending = computed(() => profiles.value.game_origin_pending);
 
   /**
-   * Check whether a specific profile is currently running or recently launched.
+   * Check whether a specific profile is currently running.
    *
    * @param stem - profile stem (e.g. "106_Nabor")
    */
   function isProfileRunning(stem: string): boolean {
-    return profiles.value.running_profiles.includes(stem) ||
-      pendingLaunches.value.has(stem);
-  }
-
-  /**
-   * Mark a profile as recently launched. The cooldown expires after 30 seconds
-   * or when the backend reports the profile as running (whichever comes first).
-   *
-   * @param stem - profile stem (e.g. "106_Nabor")
-   */
-  function markLaunched(stem: string): void {
-    pendingLaunches.value.add(stem);
-    setTimeout(() => {
-      pendingLaunches.value.delete(stem);
-    }, LAUNCH_COOLDOWN_MS);
+    return profiles.value.running_profiles.includes(stem);
   }
 
   /**
@@ -140,7 +118,6 @@ export function useProfileState(): ProfileStateComposable {
     externalGameRunning,
     gameOriginPending,
     isProfileRunning,
-    markLaunched,
     init,
     destroy,
   };

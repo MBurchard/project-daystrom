@@ -402,6 +402,10 @@ pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(),
     let profile_stem = profile.unwrap_or_default();
     crate::process_origin::register_launch(child, profile_stem);
     crate::process_origin::mark_game_started();
+    let running_profiles = crate::process_origin::running_profiles();
+    crate::profile_state::update(&app, |status| {
+        status.running_profiles = running_profiles;
+    });
     crate::game_state::update(&app, |s| {
         s.game_started_by_us = true;
     });

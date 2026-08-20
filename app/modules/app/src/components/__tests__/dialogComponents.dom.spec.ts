@@ -19,6 +19,7 @@ function updateStatus(overrides: Partial<DaystromUpdateStatus> = {}): DaystromUp
     error: null,
     dismissed: false,
     can_install: true,
+    busy: false,
     ...overrides,
   };
 }
@@ -31,6 +32,7 @@ function rollbackStatus(overrides: Partial<DaystromRollbackStatus> = {}): Daystr
     error: null,
     can_restore: true,
     mod_restore_pending: false,
+    busy: false,
     ...overrides,
   };
 }

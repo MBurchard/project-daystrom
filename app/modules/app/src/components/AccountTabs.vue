@@ -20,7 +20,7 @@ const props = defineProps<{
   gameOriginPending: boolean;
   /** Known player profiles. */
   profiles: ProfileInfo[];
-  /** Determine whether one profile is running or still in its launch cooldown. */
+  /** Determine whether one profile is currently running. */
   isProfileRunning: (stem: string) => boolean;
 }>();
 const emit = defineEmits<{

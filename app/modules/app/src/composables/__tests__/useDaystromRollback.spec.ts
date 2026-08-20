@@ -31,6 +31,7 @@ function makeStatus(overrides: Partial<DaystromRollbackStatus> = {}): DaystromRo
     error: null,
     can_restore: false,
     mod_restore_pending: false,
+    busy: false,
     ...overrides,
   };
 }
