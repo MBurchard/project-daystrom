@@ -23,6 +23,7 @@ mod main_action;
 pub(crate) mod main_thread;
 pub(crate) mod navigation_view;
 mod player_prefs;
+mod shop_inspection;
 mod shop_reveal;
 mod slider_limits;
 pub(crate) mod system_zoom;
@@ -98,6 +99,7 @@ pub fn install_all_hooks() {
     job_queue::install(api);
     toast_banner::install(api);
     system_zoom::install(api);
+    shop_inspection::install(api);
     shop_reveal::install(api);
     slider_limits::install(api);
     interstitial::install(api);

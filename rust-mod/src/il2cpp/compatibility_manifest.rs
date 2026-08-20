@@ -14,6 +14,7 @@ pub const CHAT_FRAME: &str = "chat-frame";
 pub const JOB_QUEUE: &str = "job-queue";
 pub const TOAST_BANNER: &str = "toast-banner";
 pub const SYSTEM_ZOOM: &str = "system-zoom";
+pub const SHOP_INSPECTION: &str = "shop-inspection";
 pub const SHOP_REVEAL: &str = "shop-reveal";
 pub const SLIDER_LIMITS: &str = "slider-limits";
 pub const INTERSTITIAL: &str = "interstitial";
@@ -31,6 +32,7 @@ pub const FEATURES: &[&str] = &[
     JOB_QUEUE,
     TOAST_BANNER,
     SYSTEM_ZOOM,
+    SHOP_INSPECTION,
     SHOP_REVEAL,
     SLIDER_LIMITS,
     INTERSTITIAL,
@@ -1175,6 +1177,26 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         ],
         "*",
         Requirement::Optional,
+    ),
+    methods(
+        SHOP_INSPECTION,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Shop",
+        "BundleDataWidget",
+        &["OnActionButtonPressedCallback", "AuxViewButtonPressedHandler"],
+        "void",
+        &[],
+        false,
+        Requirement::Required,
+    ),
+    field(
+        SHOP_INSPECTION,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Shop",
+        "BundleDataWidget",
+        &["_currentState"],
+        "BundleDataWidget.ItemState",
+        Requirement::Required,
     ),
     method(
         SHOP_REVEAL,
