@@ -7,6 +7,7 @@ pub fn show_window() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Show Window",
         AppLanguage::De => "Fenster anzeigen",
+        AppLanguage::Tlh => "Qorwagh yI'ang",
     }
 }
 
@@ -15,6 +16,7 @@ pub fn quit() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Quit",
         AppLanguage::De => "Beenden",
+        AppLanguage::Tlh => "yImej",
     }
 }
 
@@ -23,6 +25,7 @@ pub fn still_running_title() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Still Running",
         AppLanguage::De => "Läuft noch",
+        AppLanguage::Tlh => "QaptaH",
     }
 }
 
@@ -53,6 +56,18 @@ pub fn quit_blocked_message(launcher_running: bool, game_running: bool) -> Optio
             "Das Spiel läuft noch.\n\
              Daystrom wurde stattdessen in den Infobereich minimiert.",
         ),
+        (AppLanguage::Tlh, true, true) => Some(
+            "Launcher Quj je QaptaH.\n\
+             System trayDaq Daystrom So'lu'.",
+        ),
+        (AppLanguage::Tlh, true, false) => Some(
+            "Launcher QaptaH.\n\
+             System trayDaq Daystrom So'lu'.",
+        ),
+        (AppLanguage::Tlh, false, true) => Some(
+            "Quj QaptaH.\n\
+             System trayDaq Daystrom So'lu'.",
+        ),
         (_, false, false) => None,
     }
 }
@@ -62,6 +77,7 @@ pub fn minimized_title() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Minimized to Tray",
         AppLanguage::De => "In den Infobereich minimiert",
+        AppLanguage::Tlh => "System trayDaq So'lu'",
     }
 }
 
@@ -76,6 +92,10 @@ pub fn minimized_dialogue_body() -> &'static str {
             "Project Daystrom läuft im Hintergrund weiter.\n\
              Klicke auf das Symbol im Infobereich, um das Fenster erneut zu öffnen."
         }
+        AppLanguage::Tlh => {
+            "'emDaq QaptaH Project Daystrom.\n\
+             Qorwagh 'angqa'meH system tray Degh yIwIv."
+        }
     }
 }
 
@@ -84,6 +104,7 @@ pub fn minimized_notification_body() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Project Daystrom is still running. Click the tray icon to reopen.",
         AppLanguage::De => "Project Daystrom läuft weiter. Klicke zum erneuten Öffnen auf das Symbol im Infobereich.",
+        AppLanguage::Tlh => "QaptaH Project Daystrom. Qorwagh 'angqa'meH system tray Degh yIwIv.",
     }
 }
 
@@ -93,6 +114,7 @@ pub fn remove_mod_title() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Remove Mod",
         AppLanguage::De => "Mod entfernen",
+        AppLanguage::Tlh => "mod yIteq",
     }
 }
 
@@ -108,6 +130,10 @@ pub fn remove_mod_body() -> &'static str {
             "Den Daystrom-Mod entfernen?\n\n\
              Danach kann das Spiel nur noch über den Scopely Launcher gestartet werden."
         }
+        AppLanguage::Tlh => {
+            "Daystrom mod dateq'a'?\n\n\
+             ghIq Scopely Launcher neH lo'taHvIS Quj taghlaHlu'."
+        }
     }
 }
 
@@ -117,6 +143,7 @@ pub fn remove() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Remove",
         AppLanguage::De => "Entfernen",
+        AppLanguage::Tlh => "yIteq",
     }
 }
 
@@ -126,6 +153,7 @@ pub fn cancel() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Cancel",
         AppLanguage::De => "Abbrechen",
+        AppLanguage::Tlh => "yIqIl",
     }
 }
 
@@ -134,6 +162,7 @@ pub fn game_update_title() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "STFC update available",
         AppLanguage::De => "STFC-Update verfügbar",
+        AppLanguage::Tlh => "STFC chu'moHmeH De' tu'lu'",
     }
 }
 
@@ -146,6 +175,9 @@ pub fn game_update_body(version: u32) -> String {
         AppLanguage::De => {
             format!("Version {version} ist verfügbar. Schließe das Spiel und öffne Daystrom, um das Update zu starten.")
         }
+        AppLanguage::Tlh => {
+            format!("Version {version} tu'lu'. chu'moHmeH Quj yISoQmoH 'ej Daystrom yIpoSmoH.")
+        }
     }
 }
 
@@ -154,6 +186,7 @@ pub fn daystrom_update_title() -> &'static str {
     match settings::active_app_language() {
         AppLanguage::En => "Project Daystrom update available",
         AppLanguage::De => "Project-Daystrom-Update verfügbar",
+        AppLanguage::Tlh => "Project Daystrom chu'moHmeH De' tu'lu'",
     }
 }
 
@@ -163,6 +196,9 @@ pub fn daystrom_update_body(version: &str) -> String {
         AppLanguage::En => format!("Version {version} is ready. Open Daystrom to review the update."),
         AppLanguage::De => {
             format!("Version {version} ist bereit. Öffne Daystrom, um das Update anzusehen.")
+        }
+        AppLanguage::Tlh => {
+            format!("Version {version} SuqlaHlu'. chu'moHmeH Daystrom yIpoSmoH.")
         }
     }
 }

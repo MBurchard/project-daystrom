@@ -18,6 +18,15 @@ import enShell from '../en/shell.json';
 import enStatus from '../en/status.json';
 import enToast from '../en/toast.json';
 import enUpdate from '../en/update.json';
+import tlhAccounts from '../tlh/accounts.json';
+import tlhErrors from '../tlh/errors.json';
+import tlhGlobal from '../tlh/global.json';
+import tlhRollback from '../tlh/rollback.json';
+import tlhSettings from '../tlh/settings.json';
+import tlhShell from '../tlh/shell.json';
+import tlhStatus from '../tlh/status.json';
+import tlhToast from '../tlh/toast.json';
+import tlhUpdate from '../tlh/update.json';
 
 const locales = {
   de: {
@@ -42,6 +51,17 @@ const locales = {
     toast: enToast,
     update: enUpdate,
   },
+  tlh: {
+    accounts: tlhAccounts,
+    errors: tlhErrors,
+    global: tlhGlobal,
+    rollback: tlhRollback,
+    settings: tlhSettings,
+    shell: tlhShell,
+    status: tlhStatus,
+    toast: tlhToast,
+    update: tlhUpdate,
+  },
 };
 
 /** Return sorted interpolation placeholders contained in one translation. */
@@ -50,22 +70,26 @@ function placeholders(translation: string): string[] {
 }
 
 describe('locales', () => {
-  it('keeps German namespace and translation keys aligned with the English source locale', () => {
-    expect(Object.keys(locales.de).sort()).toEqual(Object.keys(locales.en).sort());
+  it('keeps translated namespaces and keys aligned with the English source locale', () => {
+    for (const [locale, translations] of Object.entries(locales)) {
+      expect(Object.keys(translations).sort(), locale).toEqual(Object.keys(locales.en).sort());
 
-    for (const namespace of Object.keys(locales.en) as Array<keyof typeof locales.en>) {
-      expect(Object.keys(locales.de[namespace]).sort(), namespace)
-        .toEqual(Object.keys(locales.en[namespace]).sort());
+      for (const namespace of Object.keys(locales.en) as Array<keyof typeof locales.en>) {
+        expect(Object.keys(translations[namespace]).sort(), `${locale}.${namespace}`)
+          .toEqual(Object.keys(locales.en[namespace]).sort());
+      }
     }
   });
 
-  it('preserves interpolation placeholders in every German translation', () => {
-    for (const namespace of Object.keys(locales.en) as Array<keyof typeof locales.en>) {
-      const english = locales.en[namespace] as Record<string, string>;
-      const german = locales.de[namespace] as Record<string, string>;
-      for (const key of Object.keys(english)) {
-        expect(placeholders(german[key]!), `${namespace}.${key}`)
-          .toEqual(placeholders(english[key]!));
+  it('preserves interpolation placeholders in every translation', () => {
+    for (const [locale, translations] of Object.entries(locales)) {
+      for (const namespace of Object.keys(locales.en) as Array<keyof typeof locales.en>) {
+        const english = locales.en[namespace] as Record<string, string>;
+        const translated = translations[namespace] as Record<string, string>;
+        for (const key of Object.keys(english)) {
+          expect(placeholders(translated[key]!), `${locale}.${namespace}.${key}`)
+            .toEqual(placeholders(english[key]!));
+        }
       }
     }
   });

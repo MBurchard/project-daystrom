@@ -109,6 +109,9 @@ describe('settingsView', () => {
     await wrapper.get('#app-language').setValue('de');
     expect(mocks.setLanguage).toHaveBeenCalledWith('de');
 
+    await wrapper.get('#app-language').setValue('tlh');
+    expect(mocks.setLanguage).toHaveBeenCalledWith('tlh');
+
     const reason = new Error('translation failure');
     mocks.setLanguage.mockRejectedValue(reason);
     await wrapper.get('#app-language').setValue('en');

@@ -1,0 +1,10 @@
+{
+  "closeGame": "DanejDI' STFC yISoQmoH. nungbogh mod VersionDaq choH Daystrom; Quj Dataghqa'DI' QapchoH.",
+  "finishingMod": "Quj taghlu'qa'DI' nungbogh mod Version lo'meH Daystrom 'oH lIH.",
+  "description": "nungbogh Version 'ollu'pu'bogh, {{version}}, lo'qa' Daystrom modDaj je.",
+  "runningGame": "QaptaH STFC. QaptaHbogh QujDaq mod lujomlu'pu'bogh choHlu'be'; Quj SoQmoHlu'DI' taghqa'lu'DI' je choH Qap.",
+  "verifying": "nungbogh Version package settings je 'ollI'…",
+  "installing": "nungbogh VersionDaq cheghlI' 'ej Daystrom taghqa'lI'…",
+  "restore": "Daystrom {{version}}Daq yIchegh",
+  "none": "nungbogh Daystrom release 'ollu'pu'bogh tu'lu'be'."
+}
