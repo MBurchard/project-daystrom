@@ -1,4 +1,6 @@
 {
+  "modConnectionTitle": "STFC is running without the Daystrom mod",
+  "modConnectionBody": "There is no connection to the Daystrom mod. Mod features are unavailable for this game session. Close STFC, then start it again through Daystrom.",
   "settings": "Settings",
   "closeWindow": "Close Daystrom",
   "addAccount": "Add account",

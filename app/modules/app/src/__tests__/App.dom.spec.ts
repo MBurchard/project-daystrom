@@ -65,6 +65,7 @@ function profileState(): ProfileState {
     running_profiles: [],
     external_game_running: false,
     game_origin_pending: false,
+    mod_connection_missing: false,
   };
 }
 
@@ -119,6 +120,7 @@ describe('app', () => {
   const error = ref<string | null>(null);
   const update = ref(updateStatus());
   const rollback = ref(rollbackStatus());
+  const profiles = ref(profileState());
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -126,6 +128,7 @@ describe('app', () => {
     error.value = null;
     update.value = updateStatus();
     rollback.value = rollbackStatus();
+    profiles.value = profileState();
     mockDeleteLocalProfile.mockResolvedValue(undefined);
     mockCloseMainWindow.mockResolvedValue(undefined);
     mockUseGameState.mockReturnValue({
@@ -143,7 +146,7 @@ describe('app', () => {
       destroy: actions.destroyGameState,
     });
     mockUseProfileState.mockReturnValue({
-      profiles: ref(profileState()),
+      profiles,
       isProfileRunning: actions.isProfileRunning,
       init: actions.initProfileState,
       destroy: actions.destroyProfileState,
@@ -260,7 +263,12 @@ describe('app', () => {
     wrapper.findComponent(StatusBar).vm.$emit('openUpdate');
     await nextTick();
     expect(wrapper.findComponent(AppDialog).props('title')).toBe('Project Daystrom 0.10.1 is available');
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
 
+    wrapper.findComponent(StatusBar).vm.$emit('openUpdate');
+    await nextTick();
     wrapper.findComponent(UpdateDialog).vm.$emit('install');
     expect(actions.installDaystromUpdate).toHaveBeenCalledOnce();
     wrapper.findComponent(UpdateDialog).vm.$emit('later');
@@ -274,12 +282,93 @@ describe('app', () => {
     expect(wrapper.findComponent(AppDialog).props('title')).toBe('Daystrom update');
   });
 
+  it('opens missing-mod guidance automatically and from the status bar', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    profiles.value.mod_connection_missing = true;
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
+    expect(wrapper.findComponent(AppDialog).text()).toContain('There is no connection to the Daystrom mod');
+
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(StatusBar).vm.$emit('openModWarning');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
+
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    profiles.value.mod_connection_missing = false;
+    await nextTick();
+    profiles.value.mod_connection_missing = true;
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
+  });
+
+  it('interrupts and resumes an ordinary dialogue for missing-mod guidance', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    wrapper.findComponent(StatusBar).vm.$emit('openUpdate');
+    await nextTick();
+    expect(wrapper.findComponent(UpdateDialog).exists()).toBe(true);
+
+    profiles.value.mod_connection_missing = true;
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
+    expect(wrapper.findComponent(UpdateDialog).exists()).toBe(false);
+
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(UpdateDialog).exists()).toBe(true);
+  });
+
+  it('queues missing-mod guidance behind active update and rollback operations', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    update.value.busy = true;
+    wrapper.findComponent(StatusBar).vm.$emit('openUpdate');
+    await nextTick();
+    profiles.value.mod_connection_missing = true;
+    await nextTick();
+    expect(wrapper.findComponent(UpdateDialog).exists()).toBe(true);
+
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
+    profiles.value.mod_connection_missing = false;
+    await nextTick();
+
+    rollback.value.busy = true;
+    wrapper.findComponent(StatusBar).vm.$emit('openRollback');
+    await nextTick();
+    profiles.value.mod_connection_missing = true;
+    await nextTick();
+    expect(wrapper.findComponent(RollbackDialog).exists()).toBe(true);
+
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
+  });
+
   it('confirms new account launches', async () => {
     const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
 
     wrapper.findComponent(AccountTabs).vm.$emit('addAccount');
     await nextTick();
     expect(wrapper.findComponent(AppDialog).props('title')).toBe('Add account');
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(AccountTabs).vm.$emit('addAccount');
+    await nextTick();
+    wrapper.findComponent(NewAccountDialog).vm.$emit('cancel');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(AccountTabs).vm.$emit('addAccount');
+    await nextTick();
     wrapper.findComponent(NewAccountDialog).vm.$emit('confirm');
     await nextTick();
 
@@ -302,20 +391,28 @@ describe('app', () => {
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
   });
 
-  it('keeps the deletion dialogue open with a normalized backend error', async () => {
+  it('keeps deletion errors visible before showing a queued mod warning', async () => {
     const profile = {name: 'Test Account', server: 1, stem: '1_TestAccount', primary: false};
-    mockDeleteLocalProfile.mockRejectedValue('profile_deletion_failed');
+    let rejectDeletion!: (reason: unknown) => void;
+    mockDeleteLocalProfile.mockReturnValue(new Promise<void>((_resolve, reject) => {
+      rejectDeletion = reject;
+    }));
     const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
 
     wrapper.findComponent(AccountTabs).vm.$emit('deleteAccount', profile);
     await nextTick();
     wrapper.findComponent(DeleteAccountDialog).vm.$emit('confirm');
+    profiles.value.mod_connection_missing = true;
+    await nextTick();
+
+    expect(wrapper.findComponent(DeleteAccountDialog).exists()).toBe(true);
+    rejectDeletion('profile_deletion_failed');
     await flushPromises();
 
     expect(wrapper.findComponent(DeleteAccountDialog).props('error')).toBe('profile_deletion_failed');
     wrapper.findComponent(DeleteAccountDialog).vm.$emit('cancel');
     await nextTick();
-    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
   });
 
   it('prevents duplicate deletion and closing while deletion is pending', async () => {
@@ -332,13 +429,14 @@ describe('app', () => {
     await nextTick();
     wrapper.findComponent(DeleteAccountDialog).vm.$emit('confirm');
     wrapper.findComponent(AppDialog).vm.$emit('close');
+    profiles.value.mod_connection_missing = true;
     await nextTick();
 
     expect(mockDeleteLocalProfile).toHaveBeenCalledOnce();
-    expect(wrapper.findComponent(AppDialog).exists()).toBe(true);
+    expect(wrapper.findComponent(DeleteAccountDialog).exists()).toBe(true);
     resolveDeletion();
     await flushPromises();
-    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
   });
 
   it('passes maintenance states to the opposite recovery action', async () => {

@@ -6,6 +6,7 @@
   "gameUpdateAvailable": "STFC v{{version}} tu'lu'",
   "gameUpdateFailed": "STFC chu'moHmeH De' nejlu'DI' Qagh",
   "modReady": "mod lIHlu'pu'",
+  "modNotActive": "mod Qapbe'",
   "modUnavailable": "mod tu'lu'be'",
   "reinstallMod": "mod yIjomqa'",
   "updateMod": "mod yIchu'moH",

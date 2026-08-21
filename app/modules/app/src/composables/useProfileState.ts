@@ -31,6 +31,7 @@ const DEFAULT_PROFILE_STATE: ProfileState = {
   running_profiles: [],
   external_game_running: false,
   game_origin_pending: false,
+  mod_connection_missing: false,
 };
 
 /**

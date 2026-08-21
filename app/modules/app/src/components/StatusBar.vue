@@ -24,6 +24,8 @@ const props = defineProps<{
   update: DaystromUpdateStatus;
   /** Backend-owned Daystrom rollback status. */
   rollback: DaystromRollbackStatus;
+  /** Whether a running game has no active Daystrom mod connection. */
+  modConnectionMissing: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -33,6 +35,7 @@ const emit = defineEmits<{
   installMod: [];
   removeMod: [];
   openGameUpdater: [];
+  openModWarning: [];
 }>();
 
 const {t} = useI18n('status', statusDefaults);
@@ -96,7 +99,14 @@ const {errorText} = useUiError();
       {{ t('gameUpdateFailed') }}
     </span>
 
-    <div v-if="props.status.installed && props.status.mod_deployed" class="status-item ok segmented-status">
+    <button v-if="props.status.installed && props.status.mod_deployed && props.modConnectionMissing"
+        class="status-item warn interactive segmented-status segmented-action"
+        @click="emit('openModWarning')">
+      <span class="segmented-status-label">{{ t('modNotActive') }}</span>
+      <span class="forward-action" aria-hidden="true">›</span>
+    </button>
+    <div v-else-if="props.status.installed && props.status.mod_deployed"
+        class="status-item ok segmented-status">
       <span class="segmented-status-label">{{ t('modReady') }}</span>
       <button v-if="props.status.mod_available"
           class="status-refresh mod-reinstall"

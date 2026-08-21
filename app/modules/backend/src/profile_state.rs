@@ -56,6 +56,8 @@ pub struct ProfileState {
     pub external_game_running: bool,
     /// Whether Daystrom is waiting for a running game to restore its launch identity.
     pub game_origin_pending: bool,
+    /// Whether a running game has not established a validated Daystrom mod connection.
+    pub mod_connection_missing: bool,
 }
 
 /// Global profile state.
@@ -64,6 +66,7 @@ static STATE: Mutex<ProfileState> = Mutex::new(ProfileState {
     running_profiles: Vec::new(),
     external_game_running: false,
     game_origin_pending: false,
+    mod_connection_missing: false,
 });
 
 /// Return a snapshot of the current profile state.

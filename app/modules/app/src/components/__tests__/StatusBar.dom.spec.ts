@@ -71,6 +71,7 @@ function props(overrides: Record<string, unknown> = {}) {
     updateCheckBusy: false,
     update: updateStatus(),
     rollback: rollbackStatus(),
+    modConnectionMissing: false,
     ...overrides,
   };
 }
@@ -156,6 +157,17 @@ describe('statusBar', () => {
     expect(disabledActions.every(button => button.attributes('disabled') !== undefined)).toBe(true);
     await wrapper.setProps({status: gameStatus({mod_deployed: false, mod_available: false})});
     expect(wrapper.text()).toContain('Mod unavailable');
+  });
+
+  it('opens guidance when a running game has no mod connection', async () => {
+    const wrapper = mount(StatusBar, {props: props({modConnectionMissing: true})});
+
+    const warning = wrapper.findAll('button').find(button => button.text().includes('Mod not active'))!;
+    expect(warning.get('.forward-action').attributes('aria-hidden')).toBe('true');
+    expect(wrapper.find('.mod-reinstall').exists()).toBe(false);
+    await warning.trigger('click');
+
+    expect(wrapper.emitted('openModWarning')).toHaveLength(1);
   });
 
   it('renders game and launcher state with the relevant guidance', async () => {

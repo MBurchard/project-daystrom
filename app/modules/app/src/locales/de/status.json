@@ -6,6 +6,7 @@
   "gameUpdateAvailable": "STFC v{{version}} verfügbar",
   "gameUpdateFailed": "STFC-Updateprüfung fehlgeschlagen",
   "modReady": "Mod bereit",
+  "modNotActive": "Mod nicht aktiv",
   "modUnavailable": "Mod nicht verfügbar",
   "reinstallMod": "Mod neu installieren",
   "updateMod": "Mod aktualisieren",
