@@ -38,17 +38,17 @@ describe('application theme', () => {
     expect(document.documentElement.dataset.theme).toBe('omega');
   });
 
-  it('falls back to Omega when the backend theme cannot be resolved', async () => {
+  it('falls back to Classic when the backend theme cannot be resolved', async () => {
     const reason = new Error('offline');
     mocks.getTheme.mockRejectedValue(reason);
     const {initTheme, useTheme} = await importTheme();
 
     await initTheme();
 
-    expect(useTheme().theme.value).toBe('omega');
-    expect(document.documentElement.dataset.theme).toBe('omega');
+    expect(useTheme().theme.value).toBe('classic');
+    expect(document.documentElement.dataset.theme).toBe('classic');
     expect(mocks.log.warn).toHaveBeenCalledWith(
-      'Failed to resolve application theme; using Omega:',
+      'Failed to resolve application theme; using Classic:',
       reason,
     );
   });

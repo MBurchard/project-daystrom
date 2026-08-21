@@ -127,7 +127,7 @@ onBeforeUnmount(() => {
     <section class="settings-category">
       <h3>{{ t('application') }}</h3>
 
-      <div class="setting-row">
+      <div class="setting-row theme-setting">
         <label for="app-theme">{{ t('theme') }}</label>
         <select id="app-theme" :value="theme" @change="onThemeChange">
           <option value="omega">
@@ -431,6 +431,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0;
+}
+
+.theme-setting {
+  display: none;
 }
 
 .setting-row label {

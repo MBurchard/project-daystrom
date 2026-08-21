@@ -128,9 +128,11 @@ describe('settingsView', () => {
     expect(mocks.languageError).toHaveBeenCalledWith('Failed to change application language:', reason);
   });
 
-  it('persists theme selections and reports unexpected change failures', async () => {
+  it('keeps the hidden theme selector ready for a later release', async () => {
     const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    const themeSetting = wrapper.find('.theme-setting');
 
+    expect(themeSetting.exists()).toBe(true);
     await wrapper.get('#app-theme').setValue('classic');
     expect(mocks.setTheme).toHaveBeenCalledWith('classic');
 
