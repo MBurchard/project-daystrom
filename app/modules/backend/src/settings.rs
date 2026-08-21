@@ -781,7 +781,7 @@ fn set_app_language_value(language: AppLanguage) {
 #[tauri::command]
 pub fn get_app_language(app: tauri::AppHandle, system_locale: Option<String>) -> AppLanguage {
     let language = resolve_and_activate_app_language(system_locale.as_deref());
-    crate::refresh_tray_labels(&app);
+    crate::refresh_native_menu_labels(&app);
     language
 }
 
@@ -789,7 +789,7 @@ pub fn get_app_language(app: tauri::AppHandle, system_locale: Option<String>) ->
 #[tauri::command]
 pub fn set_app_language(app: tauri::AppHandle, language: AppLanguage) {
     set_app_language_value(language);
-    crate::refresh_tray_labels(&app);
+    crate::refresh_native_menu_labels(&app);
 }
 
 /// Return the language currently used by native application surfaces.
