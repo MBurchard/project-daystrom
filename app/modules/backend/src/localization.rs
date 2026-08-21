@@ -20,6 +20,116 @@ pub fn quit() -> &'static str {
     }
 }
 
+/// Return the native macOS label for the application information item.
+#[cfg(target_os = "macos")]
+pub fn about_daystrom() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "About Project Daystrom",
+        AppLanguage::De => "Über Project Daystrom",
+        AppLanguage::Tlh => "Project Daystrom De'",
+    }
+}
+
+/// Return the native macOS label for the system services item.
+#[cfg(target_os = "macos")]
+pub fn services() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Services",
+        AppLanguage::De => "Dienste",
+        AppLanguage::Tlh => "Qu'mey",
+    }
+}
+
+/// Return the native macOS label for undoing the last edit.
+#[cfg(target_os = "macos")]
+pub fn undo() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Undo",
+        AppLanguage::De => "Widerrufen",
+        AppLanguage::Tlh => "yIvangHa'",
+    }
+}
+
+/// Return the native macOS label for repeating the last edit.
+#[cfg(target_os = "macos")]
+pub fn redo() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Redo",
+        AppLanguage::De => "Wiederholen",
+        AppLanguage::Tlh => "yIvangqa'",
+    }
+}
+
+/// Return the native macOS label for cutting selected text.
+#[cfg(target_os = "macos")]
+pub fn cut() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Cut",
+        AppLanguage::De => "Ausschneiden",
+        AppLanguage::Tlh => "yIpe'",
+    }
+}
+
+/// Return the native macOS label for copying selected text.
+#[cfg(target_os = "macos")]
+pub fn copy() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Copy",
+        AppLanguage::De => "Kopieren",
+        AppLanguage::Tlh => "latlh yIchenmoH",
+    }
+}
+
+/// Return the native macOS label for pasting text.
+#[cfg(target_os = "macos")]
+pub fn paste() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Paste",
+        AppLanguage::De => "Einsetzen",
+        AppLanguage::Tlh => "yIlan",
+    }
+}
+
+/// Return the native macOS label for selecting all text.
+#[cfg(target_os = "macos")]
+pub fn select_all() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Select All",
+        AppLanguage::De => "Alles auswählen",
+        AppLanguage::Tlh => "Hoch yIwIv",
+    }
+}
+
+/// Return the native macOS label for hiding Daystrom.
+#[cfg(target_os = "macos")]
+pub fn hide_daystrom() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Hide Project Daystrom",
+        AppLanguage::De => "Project Daystrom ausblenden",
+        AppLanguage::Tlh => "Project Daystrom yISo'",
+    }
+}
+
+/// Return the native macOS label for hiding other applications.
+#[cfg(target_os = "macos")]
+pub fn hide_others() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Hide Others",
+        AppLanguage::De => "Andere ausblenden",
+        AppLanguage::Tlh => "latlhmey yISo'",
+    }
+}
+
+/// Return the native macOS label for quitting Daystrom.
+#[cfg(target_os = "macos")]
+pub fn quit_daystrom() -> &'static str {
+    match settings::active_app_language() {
+        AppLanguage::En => "Quit Project Daystrom",
+        AppLanguage::De => "Project Daystrom beenden",
+        AppLanguage::Tlh => "Project Daystrom yISoQmoH",
+    }
+}
+
 /// Return the native title shown when a Daystrom-owned process blocks quitting.
 pub fn still_running_title() -> &'static str {
     match settings::active_app_language() {

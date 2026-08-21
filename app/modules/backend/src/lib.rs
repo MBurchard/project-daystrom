@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, PredefinedMenuItem, Submenu};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Listener, Manager};
@@ -68,13 +70,54 @@ struct TrayMenuItems {
     quit: MenuItem<tauri::Wry>,
 }
 
-/// Refresh native tray labels after language detection or an explicit language change.
-pub(crate) fn refresh_tray_labels(app: &tauri::AppHandle) {
-    let Some(items) = app.try_state::<TrayMenuItems>() else {
-        return;
+/// Refresh native menu labels after language detection or an explicit language change.
+pub(crate) fn refresh_native_menu_labels(app: &tauri::AppHandle) {
+    if let Some(items) = app.try_state::<TrayMenuItems>() {
+        let _ = items.show.set_text(localization::show_window());
+        let _ = items.quit.set_text(localization::quit());
+    }
+    #[cfg(target_os = "macos")]
+    if let Err(error) = install_macos_application_menu(app) {
+        log_warn!("Failed to refresh the macOS application menu: {error}");
+    }
+}
+
+/// Replace Tauri's full default menu with the single conventional macOS application menu.
+#[cfg(target_os = "macos")]
+fn install_macos_application_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let package = app.package_info();
+    let metadata = AboutMetadata {
+        name: Some(package.name.clone()),
+        version: Some(package.version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        authors: app.config().bundle.publisher.clone().map(|publisher| vec![publisher]),
+        ..Default::default()
     };
-    let _ = items.show.set_text(localization::show_window());
-    let _ = items.quit.set_text(localization::quit());
+    let application_menu = Submenu::with_items(
+        app,
+        package.name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some(localization::about_daystrom()), Some(metadata))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, Some(localization::services()))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::undo(app, Some(localization::undo()))?,
+            &PredefinedMenuItem::redo(app, Some(localization::redo()))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some(localization::cut()))?,
+            &PredefinedMenuItem::copy(app, Some(localization::copy()))?,
+            &PredefinedMenuItem::paste(app, Some(localization::paste()))?,
+            &PredefinedMenuItem::select_all(app, Some(localization::select_all()))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, Some(localization::hide_daystrom()))?,
+            &PredefinedMenuItem::hide_others(app, Some(localization::hide_others()))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, Some(localization::quit_daystrom()))?,
+        ],
+    )?;
+    app.set_menu(Menu::with_items(app, &[&application_menu])?)?;
+    Ok(())
 }
 
 /// Return whether the frontend has completed its coordinated shutdown work.
@@ -332,6 +375,7 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
+                install_macos_application_menu(app.handle())?;
                 macos_hooks::set_app_handle(app.handle().clone());
                 macos_hooks::install_quit_guard();
             }
