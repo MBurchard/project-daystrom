@@ -24,8 +24,8 @@ struct TrackedGame {
     child: Option<Child>,
     /// Profile stem used by the corresponding launch button.
     profile_stem: String,
-    /// WebSocket connection that reconstructed this entry after a backend restart.
-    reconnect_owner: Option<u64>,
+    /// Validated mod WebSocket connection currently owned by this game process.
+    connection_owner: Option<u64>,
 }
 
 /// Map of PID to tracked game metadata for instances launched by Daystrom.
@@ -33,7 +33,8 @@ struct TrackedGame {
 /// Storing the [`Child`] handle allows us to call [`Child::try_wait`] to reap exited processes,
 /// preventing zombies on Unix/macOS. Without reaping, `pgrep` would still find zombie processes
 /// and report them as running. Reconnected games have no handle because their original Daystrom
-/// parent has already exited; their WebSocket connection owns their reconstructed entry instead.
+/// parent has already exited; their process ID keeps the reconstructed entry valid across temporary
+/// WebSocket disconnects.
 static LAUNCHED_PROFILES: Mutex<Option<HashMap<u32, TrackedGame>>> = Mutex::new(None);
 
 /// Mark the game as having been started by Daystrom.
@@ -81,7 +82,7 @@ pub fn register_launch(child: Child, profile_stem: String) {
         TrackedGame {
             child: Some(child),
             profile_stem,
-            reconnect_owner: None,
+            connection_owner: None,
         },
     );
 }
@@ -95,9 +96,7 @@ pub fn register_reconnected_launch(pid: u32, profile_stem: String, connection_id
     let map = guard.get_or_insert_with(HashMap::new);
     match map.get_mut(&pid) {
         Some(game) => {
-            if game.child.is_none() {
-                game.reconnect_owner = Some(connection_id);
-            }
+            game.connection_owner = Some(connection_id);
         }
         None => {
             map.insert(
@@ -105,7 +104,7 @@ pub fn register_reconnected_launch(pid: u32, profile_stem: String, connection_id
                 TrackedGame {
                     child: None,
                     profile_stem,
-                    reconnect_owner: Some(connection_id),
+                    connection_owner: Some(connection_id),
                 },
             );
         }
@@ -113,16 +112,19 @@ pub fn register_reconnected_launch(pid: u32, profile_stem: String, connection_id
     mark_game_started();
 }
 
-/// Remove a reconstructed launch when its WebSocket connection closes.
+/// Release a mod connection when its WebSocket closes.
 ///
-/// Returns whether an entry without an owned child handle was removed.
+/// A reconstructed entry remains tracked while its process is alive so a temporary disconnect is
+/// distinguishable from an external game. Returns whether an exited reconstructed entry was removed.
 pub fn unregister_reconnected_launch(pid: u32, connection_id: u64) -> bool {
     let mut guard = LAUNCHED_PROFILES.lock().unwrap();
     let Some(map) = guard.as_mut() else { return false };
-    if map
-        .get(&pid)
-        .is_some_and(|game| game.child.is_none() && game.reconnect_owner == Some(connection_id))
-    {
+    let Some(game) = map.get_mut(&pid) else { return false };
+    if game.connection_owner != Some(connection_id) {
+        return false;
+    }
+    game.connection_owner = None;
+    if game.child.is_none() && !crate::game::is_process_id_running(pid) {
         map.remove(&pid);
         return true;
     }
@@ -134,6 +136,24 @@ pub fn has_tracked_game() -> bool {
     LAUNCHED_PROFILES.lock().unwrap().as_ref().is_some_and(|map| !map.is_empty())
 }
 
+/// Return whether at least one tracked game has a validated mod connection.
+pub fn has_active_mod_connection() -> bool {
+    LAUNCHED_PROFILES
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|map| map.values().any(|game| game.connection_owner.is_some()))
+}
+
+/// Return whether at least one tracked game is waiting for its mod to reconnect.
+pub fn has_unconnected_tracked_game() -> bool {
+    LAUNCHED_PROFILES
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|map| map.values().any(|game| game.connection_owner.is_none()))
+}
+
 /// Reap zombie child processes spawned by Daystrom.
 ///
 /// Calls [`Child::try_wait`] on each tracked process. Exited processes are removed from the
@@ -142,7 +162,12 @@ pub fn has_tracked_game() -> bool {
 pub fn reap_children() {
     let mut guard = LAUNCHED_PROFILES.lock().unwrap();
     let Some(map) = guard.as_mut() else { return };
-    map.retain(|_, game| game.child.as_mut().is_none_or(|child| matches!(child.try_wait(), Ok(None))));
+    map.retain(|pid, game| {
+        game.child.as_mut().map_or_else(
+            || game.connection_owner.is_some() || crate::game::is_process_id_running(*pid),
+            |child| matches!(child.try_wait(), Ok(None)),
+        )
+    });
 }
 
 /// Update the stored stem for a running profile after an in-game rename.
@@ -239,6 +264,23 @@ mod tests {
         assert_eq!(running_profiles(), vec!["106_Nabor"]);
         assert!(unregister_reconnected_launch(4242, 1));
         assert!(!has_tracked_game());
+    }
+
+    #[test]
+    fn live_disconnected_game_remains_tracked_for_reconnect_detection() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        reset_flags();
+        let pid = std::process::id();
+
+        register_reconnected_launch(pid, "106_Nabor".to_string(), 1);
+        assert!(has_active_mod_connection());
+        assert!(!has_unconnected_tracked_game());
+
+        assert!(!unregister_reconnected_launch(pid, 1));
+        assert!(!has_active_mod_connection());
+        assert!(has_unconnected_tracked_game());
+        reap_children();
+        assert!(has_tracked_game());
     }
 
     #[test]

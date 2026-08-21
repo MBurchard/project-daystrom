@@ -255,6 +255,7 @@ async fn handle_client(
                     state.running_profiles = running_profiles;
                     state.external_game_running = false;
                     state.game_origin_pending = false;
+                    state.mod_connection_missing = false;
                 });
                 *registered_pid = Some(hello.pid);
                 log_info!("Restored Daystrom game tracking: PID {}, profile {}", hello.pid, hello.profile);

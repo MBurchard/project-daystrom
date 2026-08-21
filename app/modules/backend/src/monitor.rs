@@ -26,6 +26,9 @@ const API_RECHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// Maximum time to wait for a running mod to restore its Daystrom launch identity.
 const GAME_ORIGIN_RECONNECT_GRACE: Duration = Duration::from_secs(10);
 
+/// Maximum time to wait for a running game mod to restore its WebSocket connection.
+const MOD_CONNECTION_RECONNECT_GRACE: Duration = Duration::from_secs(10);
+
 /// Flag indicating whether a monitor thread is currently active.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -93,6 +96,7 @@ struct MonitorState {
     last_seen_remote_version: Option<u32>,
     game_origin_reconnect_deadline: Option<Instant>,
     daystrom_origin_confirmed: bool,
+    mod_connection_reconnect_deadline: Option<Instant>,
 }
 
 impl MonitorState {
@@ -108,6 +112,7 @@ impl MonitorState {
             last_seen_remote_version: initial_remote_version,
             game_origin_reconnect_deadline: None,
             daystrom_origin_confirmed: false,
+            mod_connection_reconnect_deadline: None,
         }
     }
 
@@ -143,6 +148,27 @@ impl MonitorState {
         self.game_origin_reconnect_deadline = None;
         self.daystrom_origin_confirmed = false;
         GameOrigin::External
+    }
+
+    /// Report a missing runtime mod connection only after its reconnect grace period expires.
+    fn is_mod_connection_missing(
+        &mut self,
+        game_running: bool,
+        mod_expected: bool,
+        active_connection: bool,
+        unconnected_tracked_game: bool,
+        now: Instant,
+    ) -> bool {
+        let connection_missing = game_running && mod_expected && (unconnected_tracked_game || !active_connection);
+        if !connection_missing {
+            self.mod_connection_reconnect_deadline = None;
+            return false;
+        }
+
+        let deadline = self
+            .mod_connection_reconnect_deadline
+            .get_or_insert(now + MOD_CONNECTION_RECONNECT_GRACE);
+        now >= *deadline
     }
 
     /// Evaluate one monitoring cycle and return the actions to execute.
@@ -258,7 +284,9 @@ fn run_loop(app: tauri::AppHandle) {
 
         let game = game::is_game_running();
         let launcher = game::is_launcher_running();
-        let installed = crate::game_state::get().installed;
+        let game_status = crate::game_state::get();
+        let installed = game_status.installed;
+        let mod_expected = game_status.mod_deployed;
 
         // Process tick actions first: origin flags must be cleared before the store emits,
         // so that listeners (e.g. tray quit item) see the correct should_block_quit() state.
@@ -332,11 +360,24 @@ fn run_loop(app: tauri::AppHandle) {
         }
         let running = crate::process_origin::running_profiles();
         let origin = state.classify_game_origin(game, crate::process_origin::is_game_started(), Instant::now());
+        let previous_mod_connection_missing = crate::profile_state::get().mod_connection_missing;
+        let mod_connection_missing = state.is_mod_connection_missing(
+            game,
+            mod_expected,
+            crate::process_origin::has_active_mod_connection(),
+            crate::process_origin::has_unconnected_tracked_game(),
+            Instant::now(),
+        );
         crate::profile_state::update(&app, |s| {
             s.running_profiles = running;
             s.external_game_running = origin == GameOrigin::External;
             s.game_origin_pending = origin == GameOrigin::Pending;
+            s.mod_connection_missing = mod_connection_missing;
         });
+        if mod_connection_missing && !previous_mod_connection_missing {
+            log_warn!("Running STFC process did not restore its Daystrom mod connection");
+            crate::show_main_window(&app);
+        }
 
         thread::sleep(POLL_INTERVAL);
     }
@@ -589,6 +630,60 @@ mod tests {
             state.classify_game_origin(true, true, now + Duration::from_secs(1)),
             GameOrigin::Daystrom
         );
+    }
+
+    #[test]
+    fn missing_mod_connection_is_reported_after_reconnect_grace() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+
+        assert!(!state.is_mod_connection_missing(true, true, false, true, now));
+        assert!(!state.is_mod_connection_missing(
+            true,
+            true,
+            false,
+            true,
+            now + MOD_CONNECTION_RECONNECT_GRACE - Duration::from_millis(1),
+        ));
+        assert!(state.is_mod_connection_missing(true, true, false, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
+    }
+
+    #[test]
+    fn external_game_without_mod_connection_is_reported_after_reconnect_grace() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+
+        assert!(!state.is_mod_connection_missing(true, true, false, false, now));
+        assert!(state.is_mod_connection_missing(true, true, false, false, now + MOD_CONNECTION_RECONNECT_GRACE,));
+    }
+
+    #[test]
+    fn restored_mod_connection_clears_warning_and_rearms_grace() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+
+        assert!(!state.is_mod_connection_missing(true, true, false, true, now));
+        assert!(state.is_mod_connection_missing(true, true, false, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
+        assert!(!state.is_mod_connection_missing(true, true, true, false, now + MOD_CONNECTION_RECONNECT_GRACE,));
+        assert!(!state.is_mod_connection_missing(true, true, false, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
+    }
+
+    #[test]
+    fn one_unconnected_game_is_detected_among_connected_instances() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+
+        assert!(!state.is_mod_connection_missing(true, true, true, true, now));
+        assert!(state.is_mod_connection_missing(true, true, true, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
+    }
+
+    #[test]
+    fn stopped_game_or_undeployed_mod_does_not_expect_a_connection() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+
+        assert!(!state.is_mod_connection_missing(true, false, false, false, now));
+        assert!(!state.is_mod_connection_missing(false, true, false, true, now));
     }
 
     #[test]

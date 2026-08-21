@@ -1,4 +1,6 @@
 {
+  "modConnectionTitle": "STFC läuft ohne Daystrom-Mod",
+  "modConnectionBody": "Es besteht keine Verbindung zum Daystrom-Mod. Die Mod-Funktionen stehen in dieser Spielsitzung nicht zur Verfügung. Beende STFC und starte es anschließend über Daystrom neu.",
   "settings": "Einstellungen",
   "closeWindow": "Daystrom schließen",
   "addAccount": "Account hinzufügen",

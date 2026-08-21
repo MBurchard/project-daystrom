@@ -151,6 +151,54 @@ fn is_process_active(pattern: &str) -> bool {
     }
 }
 
+/// Check whether a process with the exact operating-system process identifier is still running.
+///
+/// Used to retain profile ownership while a running mod temporarily reconnects, without leaving a
+/// stale profile behind after its game process exits.
+pub fn is_process_id_running(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::c_void;
+
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const WAIT_TIMEOUT: u32 = 0x0000_0102;
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
+            fn WaitForSingleObject(object: *mut c_void, milliseconds: u32) -> u32;
+            fn CloseHandle(object: *mut c_void) -> i32;
+        }
+
+        // SAFETY: The handle is opened with the synchronisation right required by
+        // `WaitForSingleObject`, checked before use, and closed exactly once.
+        unsafe {
+            let process = OpenProcess(SYNCHRONIZE, 0, pid);
+            if process.is_null() {
+                return false;
+            }
+            let wait_result = WaitForSingleObject(process, 0);
+            CloseHandle(process);
+            return wait_result == WAIT_TIMEOUT;
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        unsafe extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+        }
+
+        let Ok(pid) = i32::try_from(pid) else { return false };
+        // SAFETY: Signal zero performs an existence check without sending a signal.
+        unsafe { kill(pid, 0) == 0 }
+    }
+}
+
 /// Two-stage process check: quick `tasklist` filter, then PowerShell path verification.
 ///
 /// Returns `true` only if a process with the given image name is running AND its executable path matches
@@ -394,5 +442,15 @@ LANGUAGE=de";
 REGION_INFO=\"@Variant(\\0\\0\\0\\b\\0\\0)\"
 LANGUAGE=de";
         assert_eq!(read_game_path(ini), Some("C:/Games/STFC/"));
+    }
+
+    #[test]
+    fn zero_process_id_is_not_running() {
+        assert!(!is_process_id_running(0));
+    }
+
+    #[test]
+    fn current_process_id_is_running() {
+        assert!(is_process_id_running(std::process::id()));
     }
 }

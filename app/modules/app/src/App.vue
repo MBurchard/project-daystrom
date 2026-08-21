@@ -15,6 +15,7 @@ import UpdateDialog from '@app/components/UpdateDialog.vue';
 import ZoomOverlay from '@app/components/ZoomOverlay.vue';
 import {useDaystromRollback} from '@app/composables/useDaystromRollback';
 import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
+import {DIALOG_PRIORITY, useDialogQueue} from '@app/composables/useDialogQueue';
 import {useGameState} from '@app/composables/useGameState';
 import {useProfileState} from '@app/composables/useProfileState';
 import {useSettings} from '@app/composables/useSettings';
@@ -22,16 +23,17 @@ import {normalizeUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
 import shellDefaults from '@app/locales/en/shell.json';
 import {getLogger} from '@app/log';
-import {computed, onMounted, onUnmounted, ref} from 'vue';
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
 
 /** Main application views shown below the persistent status bar. */
 type ActiveView = 'accounts' | 'settings';
 
 /** Dialogues that can temporarily cover the main interaction layer. */
-type ActiveDialog = 'update' | 'rollback' | 'new-account' | 'delete-account' | null;
+type ActiveDialog = 'update' | 'rollback' | 'new-account' | 'delete-account' | 'mod-connection';
 
 const activeView = ref<ActiveView>('accounts');
-const activeDialog = ref<ActiveDialog>(null);
+const dialogQueue = useDialogQueue<ActiveDialog>();
+const {activeDialog} = dialogQueue;
 const accountToDelete = ref<ProfileInfo | null>(null);
 const accountDeletionPending = ref(false);
 const accountDeletionError = ref<UiErrorCode | null>(null);
@@ -84,14 +86,45 @@ const rollbackBusy = computed(() => daystromRollback.value.busy);
 
 const updateCheckBusy = computed(() => updateBusy.value || rollbackBusy.value);
 
-/** Open one application-level dialogue. */
-function openDialog(dialog: Exclude<ActiveDialog, null>): void {
-  activeDialog.value = dialog;
+watch(
+  () => profiles.value.mod_connection_missing,
+  (missing) => {
+    if (missing) {
+      openDialog('mod-connection');
+    } else {
+      dialogQueue.cancel('mod-connection');
+    }
+  },
+);
+
+/** Build the live interruption rule for a dialogue whose state may change after opening. */
+function dialogInterruptibility(dialog: ActiveDialog): (() => boolean) | undefined {
+  switch (dialog) {
+    case 'delete-account':
+      return () => false;
+    case 'update':
+      return () => !updateBusy.value;
+    case 'rollback':
+      return () => !rollbackBusy.value;
+    default:
+      return undefined;
+  }
 }
 
-/** Close the active application-level dialogue. */
-function closeDialog(): void {
-  activeDialog.value = null;
+/** Queue one application-level dialogue without displacing the current user flow. */
+function openDialog(dialog: ActiveDialog): void {
+  dialogQueue.request({
+    id: dialog,
+    priority: dialog === 'mod-connection' ? DIALOG_PRIORITY.high : DIALOG_PRIORITY.normal,
+    canInterrupt: dialog === 'mod-connection',
+    isInterruptible: dialogInterruptibility(dialog),
+    isValid: dialog === 'mod-connection' ? () => profiles.value.mod_connection_missing : undefined,
+  });
+}
+
+/** Close only the named application-level dialogue. */
+function closeDialog(dialog: ActiveDialog): void {
+  dialogQueue.close(dialog);
 }
 
 /** Toggle between the accounts and application settings views. */
@@ -112,12 +145,12 @@ function handleLaunch(profile: string): void {
 /** Dismiss the offered update and close its details. */
 function handleUpdateLater(): void {
   dismissDaystromUpdate();
-  closeDialog();
+  closeDialog('update');
 }
 
 /** Confirm a new account launch and close its confirmation dialogue. */
 function confirmNewAccount(): void {
-  closeDialog();
+  closeDialog('new-account');
   handleLaunch('new_account');
 }
 
@@ -135,7 +168,7 @@ function closeDeleteAccount(): void {
   }
   accountToDelete.value = null;
   accountDeletionError.value = null;
-  closeDialog();
+  closeDialog('delete-account');
 }
 
 /** Delete the confirmed local account data and leave Scopely's remote account untouched. */
@@ -151,7 +184,7 @@ function confirmDeleteAccount(): void {
     .then(() => {
       accountDeletionPending.value = false;
       accountToDelete.value = null;
-      closeDialog();
+      closeDialog('delete-account');
     })
     .catch((reason) => {
       accountDeletionPending.value = false;
@@ -193,12 +226,14 @@ onUnmounted(() => {
           :update-check-busy="updateCheckBusy"
           :update="daystromUpdate"
           :rollback="daystromRollback"
+          :mod-connection-missing="profiles.mod_connection_missing"
           @open-update="openDialog('update')"
           @open-rollback="openDialog('rollback')"
           @check-update="checkDaystromUpdate"
           @install-mod="installMod"
           @remove-mod="removeMod"
-          @open-game-updater="openUpdater" />
+          @open-game-updater="openUpdater"
+          @open-mod-warning="openDialog('mod-connection')" />
 
       <SettingsView v-if="activeView === 'settings'"
           :rollback-version="daystromRollback.version"
@@ -219,8 +254,10 @@ onUnmounted(() => {
           @delete-account="openDeleteAccount" />
     </div>
 
-    <AppDialog v-if="activeDialog === 'new-account'" :title="t('addAccount')" @close="closeDialog">
-      <NewAccountDialog @confirm="confirmNewAccount" @cancel="closeDialog" />
+    <AppDialog v-if="activeDialog === 'new-account'"
+        :title="t('addAccount')"
+        @close="closeDialog('new-account')">
+      <NewAccountDialog @confirm="confirmNewAccount" @cancel="closeDialog('new-account')" />
     </AppDialog>
 
     <AppDialog v-if="activeDialog === 'delete-account' && accountToDelete"
@@ -237,18 +274,26 @@ onUnmounted(() => {
         :title="daystromUpdate.version
           ? t('updateAvailable', { version: daystromUpdate.version })
           : t('update')"
-        @close="closeDialog">
+        @close="closeDialog('update')">
       <UpdateDialog :status="daystromUpdate"
           :rollback-busy="rollbackBusy"
           @install="installDaystromUpdate"
           @later="handleUpdateLater" />
     </AppDialog>
 
-    <AppDialog v-if="activeDialog === 'rollback'" :title="t('recovery')" @close="closeDialog">
+    <AppDialog v-if="activeDialog === 'rollback'"
+        :title="t('recovery')"
+        @close="closeDialog('rollback')">
       <RollbackDialog :status="daystromRollback"
           :game-running="status.game_running"
           :update-busy="updateBusy"
           @restore="restoreDaystrom" />
+    </AppDialog>
+
+    <AppDialog v-if="activeDialog === 'mod-connection'"
+        :title="t('modConnectionTitle')"
+        @close="closeDialog('mod-connection')">
+      <p>{{ t('modConnectionBody') }}</p>
     </AppDialog>
 
     <ZoomOverlay />

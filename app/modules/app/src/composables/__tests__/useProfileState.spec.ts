@@ -37,6 +37,7 @@ function makeProfileState(name: string): ProfileState {
     running_profiles: [],
     external_game_running: false,
     game_origin_pending: false,
+    mod_connection_missing: false,
   };
 }
 
@@ -123,6 +124,7 @@ describe('useProfileState', () => {
     current.running_profiles = ['411_Current'];
     current.external_game_running = true;
     current.game_origin_pending = true;
+    current.mod_connection_missing = true;
     mockInvoke.mockResolvedValue(current);
     const state = useProfileState();
 
