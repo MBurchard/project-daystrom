@@ -24,6 +24,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   openRollback: [];
+  openSafetyNotice: [];
 }>();
 const log = getLogger('Settings');
 const {language, setLanguage, t} = useI18n('settings', settingsDefaults);
@@ -113,9 +114,14 @@ onBeforeUnmount(() => {
       <h2 id="settings-heading">
         {{ t('heading') }}
       </h2>
-      <button class="settings-back" @click="emit('close')">
-        {{ t('backToAccounts') }}
-      </button>
+      <div class="settings-actions">
+        <button class="settings-safety" @click="emit('openSafetyNotice')">
+          {{ t('showSafetyNotice') }}
+        </button>
+        <button class="settings-back" @click="emit('close')">
+          {{ t('backToAccounts') }}
+        </button>
+      </div>
     </header>
 
     <section class="settings-category">
@@ -402,7 +408,13 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-.settings-back {
+.settings-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.settings-back,
+.settings-safety {
   cursor: pointer;
 }
 

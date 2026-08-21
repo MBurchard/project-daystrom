@@ -17,6 +17,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tokio::sync::broadcast;
 use ts_rs::TS;
 
+#[cfg(target_os = "windows")]
+use crate::game;
 use crate::use_log;
 
 use_log!("Settings");
@@ -198,6 +200,9 @@ pub struct UiSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub zoom: Option<f64>,
+    /// Revision of the application safety notice last acknowledged by the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety_notice_revision: Option<u32>,
     /// Progressive hint counters.
     #[serde(default)]
     pub hints: HintSettings,
@@ -460,6 +465,7 @@ static SETTINGS: Mutex<AppSettings> = Mutex::new(AppSettings {
         language: None,
         theme: None,
         zoom: None,
+        safety_notice_revision: None,
         hints: HintSettings { minimize_to_tray: 0 },
         window: None,
     },
@@ -645,6 +651,114 @@ fn update(f: impl FnOnce(&mut AppSettings) -> bool) -> bool {
         save();
     }
     changed
+}
+
+// ---- Safety notice API ---------------------------------------------------------
+
+/// Current revision of the mandatory application safety notice.
+const SAFETY_NOTICE_REVISION: u32 = 1;
+
+/// Platform-specific paths referenced by the mandatory safety notice.
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SafetyNoticeContext {
+    /// Operating-system variant whose removal instructions apply.
+    platform: SafetyNoticePlatform,
+    /// Absolute application directories that may be removed after uninstalling Daystrom.
+    cleanup_paths: Vec<String>,
+    /// Absolute path to the deployed Windows mod library, when the game installation is known.
+    mod_library_path: Option<String>,
+}
+
+/// Operating-system variants supported by the safety-notice removal instructions.
+#[derive(Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+#[allow(dead_code)] // The serialized contract includes platform-specific variants.
+pub enum SafetyNoticePlatform {
+    /// Windows removal instructions and paths.
+    Windows,
+    /// macOS removal instructions and paths.
+    Macos,
+    /// Unsupported platform without removal instructions.
+    Other,
+}
+
+/// Convert an optional path into its user-facing absolute representation.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn display_path(path: Option<PathBuf>) -> Option<String> {
+    path.map(|value| value.display().to_string())
+}
+
+/// Return the platform-specific paths needed by the safety notice.
+#[tauri::command]
+pub fn get_safety_notice_context() -> SafetyNoticeContext {
+    #[cfg(target_os = "windows")]
+    {
+        let identifier = env!("TAURI_IDENTIFIER");
+        let cleanup_paths = [
+            display_path(dirs::data_dir().map(|path| path.join(identifier))),
+            display_path(dirs::data_local_dir().map(|path| path.join(identifier))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let mod_library_path = display_path(game::detect().map(|info| info.install_dir.join("version.dll")));
+        SafetyNoticeContext {
+            platform: SafetyNoticePlatform::Windows,
+            cleanup_paths,
+            mod_library_path,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let identifier = env!("TAURI_IDENTIFIER");
+        let cleanup_paths = [
+            display_path(dirs::data_dir().map(|path| path.join(identifier))),
+            display_path(dirs::home_dir().map(|path| path.join("Library/Logs").join(identifier))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        SafetyNoticeContext {
+            platform: SafetyNoticePlatform::Macos,
+            cleanup_paths,
+            mod_library_path: None,
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    SafetyNoticeContext {
+        platform: SafetyNoticePlatform::Other,
+        cleanup_paths: Vec::new(),
+        mod_library_path: None,
+    }
+}
+
+/// Return whether a safety-notice revision still needs acknowledgement.
+fn safety_notice_required_for(acknowledged_revision: Option<u32>) -> bool {
+    acknowledged_revision.unwrap_or_default() < SAFETY_NOTICE_REVISION
+}
+
+/// Return whether the current safety notice must be shown before using Daystrom.
+#[tauri::command]
+pub fn is_safety_notice_required() -> bool {
+    let acknowledged_revision = SETTINGS.lock().unwrap().ui.safety_notice_revision;
+    safety_notice_required_for(acknowledged_revision)
+}
+
+/// Acknowledge the current safety notice.
+#[tauri::command]
+pub fn acknowledge_safety_notice() {
+    update(|settings| {
+        if settings.ui.safety_notice_revision == Some(SAFETY_NOTICE_REVISION) {
+            return false;
+        }
+        settings.ui.safety_notice_revision = Some(SAFETY_NOTICE_REVISION);
+        true
+    });
 }
 
 // ---- Hint settings API ----------------------------------------------------------
@@ -934,6 +1048,15 @@ mod tests {
         assert_eq!(settings.ui.language, None);
         assert_eq!(settings.ui.theme, None);
         assert_eq!(settings.ui.zoom, None);
+        assert_eq!(settings.ui.safety_notice_revision, None);
+    }
+
+    #[test]
+    fn safety_notice_requires_the_current_revision() {
+        assert!(safety_notice_required_for(None));
+        assert!(safety_notice_required_for(Some(SAFETY_NOTICE_REVISION - 1)));
+        assert!(!safety_notice_required_for(Some(SAFETY_NOTICE_REVISION)));
+        assert!(!safety_notice_required_for(Some(SAFETY_NOTICE_REVISION + 1)));
     }
 
     #[test]
@@ -971,6 +1094,7 @@ mod tests {
                 language: None,
                 theme: None,
                 zoom: None,
+                safety_notice_revision: Some(SAFETY_NOTICE_REVISION),
                 hints: HintSettings { minimize_to_tray: 42 },
                 window: None,
             },
@@ -979,6 +1103,7 @@ mod tests {
         let toml_str = toml::to_string_pretty(&settings).unwrap();
         let parsed: AppSettings = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.ui.hints.minimize_to_tray, 42);
+        assert_eq!(parsed.ui.safety_notice_revision, Some(SAFETY_NOTICE_REVISION));
     }
 
     #[test]
@@ -1151,6 +1276,7 @@ mod tests {
                 language: Some(AppLanguage::De),
                 theme: Some(AppTheme::Omega),
                 zoom: Some(1.2),
+                safety_notice_revision: Some(SAFETY_NOTICE_REVISION),
                 hints: HintSettings { minimize_to_tray: 99 },
                 window: None,
             },

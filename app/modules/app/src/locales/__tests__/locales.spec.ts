@@ -4,6 +4,7 @@ import deAccounts from '../de/accounts.json';
 import deErrors from '../de/errors.json';
 import deGlobal from '../de/global.json';
 import deRollback from '../de/rollback.json';
+import deSafety from '../de/safety.json';
 import deSettings from '../de/settings.json';
 import deShell from '../de/shell.json';
 import deStatus from '../de/status.json';
@@ -13,6 +14,7 @@ import enAccounts from '../en/accounts.json';
 import enErrors from '../en/errors.json';
 import enGlobal from '../en/global.json';
 import enRollback from '../en/rollback.json';
+import enSafety from '../en/safety.json';
 import enSettings from '../en/settings.json';
 import enShell from '../en/shell.json';
 import enStatus from '../en/status.json';
@@ -22,6 +24,7 @@ import tlhAccounts from '../tlh/accounts.json';
 import tlhErrors from '../tlh/errors.json';
 import tlhGlobal from '../tlh/global.json';
 import tlhRollback from '../tlh/rollback.json';
+import tlhSafety from '../tlh/safety.json';
 import tlhSettings from '../tlh/settings.json';
 import tlhShell from '../tlh/shell.json';
 import tlhStatus from '../tlh/status.json';
@@ -34,6 +37,7 @@ const locales = {
     errors: deErrors,
     global: deGlobal,
     rollback: deRollback,
+    safety: deSafety,
     settings: deSettings,
     shell: deShell,
     status: deStatus,
@@ -45,6 +49,7 @@ const locales = {
     errors: enErrors,
     global: enGlobal,
     rollback: enRollback,
+    safety: enSafety,
     settings: enSettings,
     shell: enShell,
     status: enStatus,
@@ -56,6 +61,7 @@ const locales = {
     errors: tlhErrors,
     global: tlhGlobal,
     rollback: tlhRollback,
+    safety: tlhSafety,
     settings: tlhSettings,
     shell: tlhShell,
     status: tlhStatus,

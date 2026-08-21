@@ -1,0 +1,14 @@
+{
+  "title": "Bevor Du Project Daystrom verwendest",
+  "independence": "Project Daystrom ist ein inoffizielles Community-Projekt. Es wird weder von Scopely entwickelt noch unterstützt.",
+  "operationAndRisk": "Daystrom verändert das Spiel und lädt eigenen Code in den laufenden Spielprozess. Spielupdates können Daystrom deshalb vorübergehend inkompatibel machen. Obwohl Daystrom so entwickelt wird, dass Fehler möglichst sicher abgefangen werden, können wir weder einen fehlerfreien Betrieb noch den Schutz vor dem Verlust lokaler Daten garantieren. Die Nutzung erfolgt auf eigene Verantwortung.",
+  "accountProtection": "Verknüpfe Deinen Spielaccount vor der Nutzung von Daystrom mit einer Scopely ID. So kannst Du den Zugang unabhängig von lokal gespeicherten Profilen und Anmeldedaten wiederherstellen.",
+  "windowsRemoval": "Wenn Du Daystrom entfernen möchtest, beende zuerst das Spiel. Nutze anschließend in Daystrom „Mod entfernen“, bevor Du Project Daystrom über die Windows-Einstellungen deinstallierst.",
+  "windowsManualRemoval": "Falls „Mod entfernen“ nicht funktioniert, kannst Du die Mod-Bibliothek manuell löschen:",
+  "macosRemoval": "Wenn Du Daystrom entfernen möchtest, beende zuerst das Spiel und verschiebe Project Daystrom anschließend in den Papierkorb. Daystrom hinterlässt unter macOS keine Mod-Bibliothek im Spielverzeichnis.",
+  "cleanup": "Um auch gespeicherte Einstellungen, Zwischenspeicher und Logs zu entfernen, lösche diese Ordner:",
+  "understood": "Ich habe diese Hinweise gelesen und verstanden.",
+  "continue": "Daystrom verwenden",
+  "saving": "Wird gespeichert…",
+  "acknowledgementFailed": "Die Bestätigung konnte nicht gespeichert werden. Bitte versuche es erneut."
+}

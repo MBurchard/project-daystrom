@@ -33,7 +33,8 @@ use daystrom_update::{
 };
 use profile_state::{delete_local_profile, get_cached_profile_state};
 use settings::{
-    get_app_language, get_app_theme, get_game_settings, set_app_language, set_app_theme, set_game_settings,
+    acknowledge_safety_notice, get_app_language, get_app_theme, get_game_settings, get_safety_notice_context,
+    is_safety_notice_required, set_app_language, set_app_theme, set_game_settings,
 };
 use ui_zoom::change_ui_zoom;
 
@@ -443,6 +444,9 @@ pub fn run() {
             get_cached_daystrom_update_status,
             get_app_language,
             get_app_theme,
+            get_safety_notice_context,
+            is_safety_notice_required,
+            acknowledge_safety_notice,
             get_game_settings,
             set_app_language,
             set_app_theme,

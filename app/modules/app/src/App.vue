@@ -9,6 +9,7 @@ import AppHeader from '@app/components/AppHeader.vue';
 import DeleteAccountDialog from '@app/components/DeleteAccountDialog.vue';
 import NewAccountDialog from '@app/components/NewAccountDialog.vue';
 import RollbackDialog from '@app/components/RollbackDialog.vue';
+import SafetyNoticeDialog from '@app/components/SafetyNoticeDialog.vue';
 import SettingsView from '@app/components/SettingsView.vue';
 import StatusBar from '@app/components/StatusBar.vue';
 import UpdateDialog from '@app/components/UpdateDialog.vue';
@@ -18,9 +19,11 @@ import {useDaystromUpdate} from '@app/composables/useDaystromUpdate';
 import {DIALOG_PRIORITY, useDialogQueue} from '@app/composables/useDialogQueue';
 import {useGameState} from '@app/composables/useGameState';
 import {useProfileState} from '@app/composables/useProfileState';
+import {useSafetyNotice} from '@app/composables/useSafetyNotice';
 import {useSettings} from '@app/composables/useSettings';
 import {normalizeUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
+import safetyDefaults from '@app/locales/en/safety.json';
 import shellDefaults from '@app/locales/en/shell.json';
 import {getLogger} from '@app/log';
 import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
@@ -29,15 +32,17 @@ import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
 type ActiveView = 'accounts' | 'settings';
 
 /** Dialogues that can temporarily cover the main interaction layer. */
-type ActiveDialog = 'update' | 'rollback' | 'new-account' | 'delete-account' | 'mod-connection';
+type ActiveDialog = 'update' | 'rollback' | 'new-account' | 'delete-account' | 'mod-connection' | 'safety-notice';
 
 const activeView = ref<ActiveView>('accounts');
 const dialogQueue = useDialogQueue<ActiveDialog>();
 const {activeDialog} = dialogQueue;
+const safetyNoticeReview = ref(false);
 const accountToDelete = ref<ProfileInfo | null>(null);
 const accountDeletionPending = ref(false);
 const accountDeletionError = ref<UiErrorCode | null>(null);
 const {t} = useI18n('shell', shellDefaults);
+const {t: safetyText} = useI18n('safety', safetyDefaults);
 const log = getLogger('Window');
 
 const {
@@ -80,6 +85,15 @@ const {
   destroy: destroyDaystromRollback,
 } = useDaystromRollback();
 
+const {
+  required: safetyNoticeRequired,
+  pending: safetyNoticePending,
+  failed: safetyNoticeFailed,
+  context: safetyNoticeContext,
+  init: initSafetyNotice,
+  acknowledge: acknowledgeSafetyNotice,
+} = useSafetyNotice();
+
 const updateBusy = computed(() => daystromUpdate.value.busy);
 
 const rollbackBusy = computed(() => daystromRollback.value.busy);
@@ -97,11 +111,21 @@ watch(
   },
 );
 
+watch(safetyNoticeRequired, (required) => {
+  if (required) {
+    openDialog('safety-notice');
+  } else if (!safetyNoticeReview.value) {
+    dialogQueue.cancel('safety-notice');
+  }
+});
+
 /** Build the live interruption rule for a dialogue whose state may change after opening. */
 function dialogInterruptibility(dialog: ActiveDialog): (() => boolean) | undefined {
   switch (dialog) {
     case 'delete-account':
       return () => false;
+    case 'safety-notice':
+      return () => !safetyNoticeRequired.value;
     case 'update':
       return () => !updateBusy.value;
     case 'rollback':
@@ -113,18 +137,40 @@ function dialogInterruptibility(dialog: ActiveDialog): (() => boolean) | undefin
 
 /** Queue one application-level dialogue without displacing the current user flow. */
 function openDialog(dialog: ActiveDialog): void {
+  const mandatorySafetyNotice = dialog === 'safety-notice' && safetyNoticeRequired.value;
   dialogQueue.request({
     id: dialog,
-    priority: dialog === 'mod-connection' ? DIALOG_PRIORITY.high : DIALOG_PRIORITY.normal,
-    canInterrupt: dialog === 'mod-connection',
+    priority: mandatorySafetyNotice ?
+      DIALOG_PRIORITY.critical :
+      dialog === 'mod-connection' ? DIALOG_PRIORITY.high : DIALOG_PRIORITY.normal,
+    canInterrupt: dialog === 'mod-connection' || mandatorySafetyNotice,
     isInterruptible: dialogInterruptibility(dialog),
-    isValid: dialog === 'mod-connection' ? () => profiles.value.mod_connection_missing : undefined,
+    isValid: dialog === 'mod-connection' ?
+        () => profiles.value.mod_connection_missing :
+      dialog === 'safety-notice' ?
+          () => safetyNoticeRequired.value || safetyNoticeReview.value :
+        undefined,
   });
 }
 
 /** Close only the named application-level dialogue. */
 function closeDialog(dialog: ActiveDialog): void {
   dialogQueue.close(dialog);
+}
+
+/** Open the safety notice for voluntary review without changing acknowledgement state. */
+function openSafetyNoticeReview(): void {
+  safetyNoticeReview.value = true;
+  openDialog('safety-notice');
+}
+
+/** Close a voluntary safety-notice review while keeping mandatory notices locked. */
+function closeSafetyNotice(): void {
+  if (safetyNoticeRequired.value) {
+    return;
+  }
+  safetyNoticeReview.value = false;
+  closeDialog('safety-notice');
 }
 
 /** Toggle between the accounts and application settings views. */
@@ -203,6 +249,7 @@ onMounted(() => {
   initSettings();
   initDaystromUpdate();
   initDaystromRollback();
+  initSafetyNotice();
 });
 
 onUnmounted(() => {
@@ -238,6 +285,7 @@ onUnmounted(() => {
       <SettingsView v-if="activeView === 'settings'"
           :rollback-version="daystromRollback.version"
           @close="showAccounts"
+          @open-safety-notice="openSafetyNoticeReview"
           @open-rollback="openDialog('rollback')" />
 
       <AccountTabs v-else-if="!error"
@@ -294,6 +342,17 @@ onUnmounted(() => {
         :title="t('modConnectionTitle')"
         @close="closeDialog('mod-connection')">
       <p>{{ t('modConnectionBody') }}</p>
+    </AppDialog>
+
+    <AppDialog v-if="activeDialog === 'safety-notice'"
+        :title="safetyText('title')"
+        :dismissible="!safetyNoticeRequired"
+        @close="closeSafetyNotice">
+      <SafetyNoticeDialog :pending="safetyNoticePending"
+          :failed="safetyNoticeFailed"
+          :context="safetyNoticeContext"
+          :acknowledgement-required="safetyNoticeRequired"
+          @acknowledge="acknowledgeSafetyNotice" />
     </AppDialog>
 
     <ZoomOverlay />

@@ -3,10 +3,12 @@ import {useI18n} from '@app/i18n';
 import globalDefaults from '@app/locales/en/global.json';
 import {onBeforeUnmount, onMounted, ref} from 'vue';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** Accessible title shown at the top of the dialogue. */
   title: string;
-}>();
+  /** Whether Escape, the backdrop, and the close button may dismiss the dialogue. */
+  dismissible?: boolean;
+}>(), {dismissible: true});
 
 const emit = defineEmits<{
   close: [];
@@ -20,7 +22,16 @@ let previouslyFocused: HTMLElement | null = null;
 /** Keep native Escape handling under Vue's control so the parent owns the dialogue lifecycle. */
 function handleCancel(event: Event): void {
   event.preventDefault();
-  emit('close');
+  if (props.dismissible) {
+    emit('close');
+  }
+}
+
+/** Close after a backdrop click only when the dialogue is dismissible. */
+function handleBackdropClick(): void {
+  if (props.dismissible) {
+    emit('close');
+  }
 }
 
 onMounted(() => {
@@ -44,11 +55,12 @@ onBeforeUnmount(() => {
         :aria-label="props.title"
         tabindex="-1"
         @cancel="handleCancel"
-        @click.self="emit('close')">
+        @click.self="handleBackdropClick">
       <section class="dialog">
         <header class="dialog-header">
           <h2>{{ props.title }}</h2>
-          <button class="dialog-close"
+          <button v-if="props.dismissible"
+              class="dialog-close"
               :title="t('close')"
               :aria-label="t('close')"
               @click="emit('close')">
