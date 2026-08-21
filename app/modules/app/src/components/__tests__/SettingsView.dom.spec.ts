@@ -49,6 +49,7 @@ vi.mock('@app/i18n', () => ({
   }),
 }));
 vi.mock('@app/log', () => ({getLogger: () => ({error: mocks.languageError})}));
+// noinspection JSUnusedGlobalSymbols
 vi.mock('@app/theme', () => ({
   useTheme: () => ({theme: mocks.theme, setTheme: mocks.setTheme}),
 }));
@@ -109,6 +110,8 @@ describe('settingsView', () => {
 
   it('persists language selections and reports unexpected change failures', async () => {
     const wrapper = mount(SettingsView, {props: {rollbackVersion: null}});
+    await wrapper.get('.settings-safety').trigger('click');
+    expect(wrapper.emitted('openSafetyNotice')).toHaveLength(1);
     await wrapper.get('.settings-back').trigger('click');
     expect(wrapper.emitted('close')).toHaveLength(1);
 

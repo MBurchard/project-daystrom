@@ -12,6 +12,7 @@ import AppHeader from '../components/AppHeader.vue';
 import DeleteAccountDialog from '../components/DeleteAccountDialog.vue';
 import NewAccountDialog from '../components/NewAccountDialog.vue';
 import RollbackDialog from '../components/RollbackDialog.vue';
+import SafetyNoticeDialog from '../components/SafetyNoticeDialog.vue';
 import SettingsView from '../components/SettingsView.vue';
 import StatusBar from '../components/StatusBar.vue';
 import UpdateDialog from '../components/UpdateDialog.vue';
@@ -21,6 +22,7 @@ const mockUseProfileState = vi.hoisted(() => vi.fn());
 const mockUseSettings = vi.hoisted(() => vi.fn());
 const mockUseDaystromUpdate = vi.hoisted(() => vi.fn());
 const mockUseDaystromRollback = vi.hoisted(() => vi.fn());
+const mockUseSafetyNotice = vi.hoisted(() => vi.fn());
 const mockDeleteLocalProfile = vi.hoisted(() => vi.fn());
 const mockCloseMainWindow = vi.hoisted(() => vi.fn());
 
@@ -29,6 +31,7 @@ vi.mock('@app/composables/useProfileState', () => ({useProfileState: mockUseProf
 vi.mock('@app/composables/useSettings', () => ({useSettings: mockUseSettings}));
 vi.mock('@app/composables/useDaystromUpdate', () => ({useDaystromUpdate: mockUseDaystromUpdate}));
 vi.mock('@app/composables/useDaystromRollback', () => ({useDaystromRollback: mockUseDaystromRollback}));
+vi.mock('@app/composables/useSafetyNotice', () => ({useSafetyNotice: mockUseSafetyNotice}));
 vi.mock('@app/commands/profiles', () => ({deleteLocalProfile: mockDeleteLocalProfile}));
 vi.mock('@app/commands/window', () => ({closeMainWindow: mockCloseMainWindow}));
 
@@ -115,12 +118,22 @@ describe('app', () => {
     restoreDaystrom: vi.fn(),
     initDaystromRollback: vi.fn(),
     destroyDaystromRollback: vi.fn(),
+    initSafetyNotice: vi.fn(),
+    acknowledgeSafetyNotice: vi.fn(),
   };
   const status = ref(gameStatus());
   const error = ref<string | null>(null);
   const update = ref(updateStatus());
   const rollback = ref(rollbackStatus());
   const profiles = ref(profileState());
+  const safetyRequired = ref(false);
+  const safetyPending = ref(false);
+  const safetyFailed = ref(false);
+  const safetyContext = ref({
+    platform: 'macos' as const,
+    cleanupPaths: ['/Users/Test/Library/Application Support/mbur.project-daystrom'],
+    modLibraryPath: null,
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -129,6 +142,9 @@ describe('app', () => {
     update.value = updateStatus();
     rollback.value = rollbackStatus();
     profiles.value = profileState();
+    safetyRequired.value = false;
+    safetyPending.value = false;
+    safetyFailed.value = false;
     mockDeleteLocalProfile.mockResolvedValue(undefined);
     mockCloseMainWindow.mockResolvedValue(undefined);
     mockUseGameState.mockReturnValue({
@@ -166,6 +182,14 @@ describe('app', () => {
       init: actions.initDaystromRollback,
       destroy: actions.destroyDaystromRollback,
     });
+    mockUseSafetyNotice.mockReturnValue({
+      required: safetyRequired,
+      pending: safetyPending,
+      failed: safetyFailed,
+      context: safetyContext,
+      init: actions.initSafetyNotice,
+      acknowledge: actions.acknowledgeSafetyNotice,
+    });
   });
 
   it('initializes and destroys every application state owner', () => {
@@ -176,6 +200,7 @@ describe('app', () => {
     expect(actions.initSettings).toHaveBeenCalledOnce();
     expect(actions.initDaystromUpdate).toHaveBeenCalledOnce();
     expect(actions.initDaystromRollback).toHaveBeenCalledOnce();
+    expect(actions.initSafetyNotice).toHaveBeenCalledOnce();
 
     wrapper.unmount();
 
@@ -183,6 +208,52 @@ describe('app', () => {
     expect(actions.destroyProfileState).toHaveBeenCalledOnce();
     expect(actions.destroyDaystromUpdate).toHaveBeenCalledOnce();
     expect(actions.destroyDaystromRollback).toHaveBeenCalledOnce();
+  });
+
+  it('blocks interaction with the required safety notice until backend acknowledgement', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    safetyRequired.value = true;
+    await nextTick();
+
+    expect(wrapper.findComponent(AppDialog).props()).toMatchObject({
+      title: 'Before you use Project Daystrom',
+      dismissible: false,
+    });
+    expect(wrapper.findComponent(SafetyNoticeDialog).props()).toEqual({
+      pending: false,
+      failed: false,
+      context: safetyContext.value,
+      acknowledgementRequired: true,
+    });
+    wrapper.findComponent(SafetyNoticeDialog).vm.$emit('acknowledge');
+    expect(actions.acknowledgeSafetyNotice).toHaveBeenCalledOnce();
+
+    safetyRequired.value = false;
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+  });
+
+  it('prioritizes the safety notice without interrupting protected operations', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    wrapper.findComponent(StatusBar).vm.$emit('openUpdate');
+    await nextTick();
+    safetyRequired.value = true;
+    await nextTick();
+    expect(wrapper.findComponent(SafetyNoticeDialog).exists()).toBe(true);
+
+    safetyRequired.value = false;
+    await nextTick();
+    expect(wrapper.findComponent(UpdateDialog).exists()).toBe(true);
+
+    update.value.busy = true;
+    safetyRequired.value = true;
+    await nextTick();
+    expect(wrapper.findComponent(UpdateDialog).exists()).toBe(true);
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(SafetyNoticeDialog).exists()).toBe(true);
   });
 
   it('forwards status actions to their backend-owned composables', () => {
@@ -233,6 +304,18 @@ describe('app', () => {
     expect(wrapper.findComponent(AccountTabs).exists()).toBe(false);
     expect(wrapper.findComponent(SettingsView).exists()).toBe(true);
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(SettingsView).vm.$emit('openSafetyNotice');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props()).toMatchObject({
+      title: 'Before you use Project Daystrom',
+      dismissible: true,
+    });
+    expect(wrapper.findComponent(SafetyNoticeDialog).props('acknowledgementRequired')).toBe(false);
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
     wrapper.findComponent(AppHeader).vm.$emit('openSettings');
     await nextTick();
     expect(wrapper.findComponent(SettingsView).exists()).toBe(false);

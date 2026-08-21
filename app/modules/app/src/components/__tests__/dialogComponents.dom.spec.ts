@@ -7,6 +7,7 @@ import AppHeader from '../AppHeader.vue';
 import DeleteAccountDialog from '../DeleteAccountDialog.vue';
 import NewAccountDialog from '../NewAccountDialog.vue';
 import RollbackDialog from '../RollbackDialog.vue';
+import SafetyNoticeDialog from '../SafetyNoticeDialog.vue';
 import UpdateDialog from '../UpdateDialog.vue';
 
 /** Build a complete update status for rendering tests. */
@@ -114,6 +115,23 @@ describe('appDialog', () => {
     wrapper.unmount();
   });
 
+  it('blocks every implicit close gesture when dismissal is disabled', async () => {
+    const wrapper = mount(AppDialog, {
+      props: {title: 'Required dialogue', dismissible: false},
+      attachTo: document.body,
+      global: {stubs: {Teleport: true}},
+    });
+
+    expect(wrapper.find('.dialog-close').exists()).toBe(false);
+    await wrapper.get('.dialog-shell').trigger('click');
+    const cancel = new Event('cancel', {cancelable: true});
+    wrapper.get('.dialog-shell').element.dispatchEvent(cancel);
+
+    expect(wrapper.emitted('close')).toBeUndefined();
+    expect(cancel.defaultPrevented).toBe(true);
+    wrapper.unmount();
+  });
+
   it('leaves Escape to nested keyboard handling when consumed', async () => {
     const wrapper = mount(AppDialog, {
       props: {title: 'Test dialogue'},
@@ -174,6 +192,60 @@ describe('appDialog', () => {
     wrapper.unmount();
 
     expect(close).not.toHaveBeenCalled();
+  });
+});
+
+describe('safetyNoticeDialog', () => {
+  it('requires explicit understanding before acknowledgement', async () => {
+    const wrapper = mount(SafetyNoticeDialog, {
+      props: {
+        pending: false,
+        failed: false,
+        acknowledgementRequired: true,
+        context: {
+          platform: 'windows',
+          cleanupPaths: [
+            'C:\\Users\\Test\\AppData\\Roaming\\mbur.project-daystrom',
+            'C:\\Users\\Test\\AppData\\Local\\mbur.project-daystrom',
+          ],
+          modLibraryPath: 'C:\\Games\\STFC\\version.dll',
+        },
+      },
+    });
+    const button = wrapper.get('.continue-button');
+
+    expect(wrapper.text()).toContain('neither developed nor supported by Scopely');
+    expect(wrapper.text()).toContain('C:\\Games\\STFC\\version.dll');
+    expect(wrapper.text()).not.toContain('does not leave a mod library');
+    expect(button.attributes('disabled')).toBeDefined();
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    expect(button.attributes('disabled')).toBeUndefined();
+    await button.trigger('click');
+
+    expect(wrapper.emitted('acknowledge')).toHaveLength(1);
+  });
+
+  it('renders pending and failed acknowledgement states', async () => {
+    const wrapper = mount(SafetyNoticeDialog, {
+      props: {
+        pending: true,
+        failed: true,
+        acknowledgementRequired: true,
+        context: {
+          platform: 'macos',
+          cleanupPaths: ['/Users/Test/Library/Logs/mbur.project-daystrom'],
+          modLibraryPath: null,
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('Saving…');
+    expect(wrapper.get('[role="alert"]').text()).toContain('could not be saved');
+    expect(wrapper.text()).toContain('/Users/Test/Library/Logs/mbur.project-daystrom');
+    expect(wrapper.text()).not.toContain('Remove mod');
+    expect(wrapper.get('input').attributes('disabled')).toBeDefined();
+    await wrapper.get('.continue-button').trigger('click');
+    expect(wrapper.emitted('acknowledge')).toBeUndefined();
   });
 });
 
