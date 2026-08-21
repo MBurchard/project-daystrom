@@ -1183,9 +1183,20 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         ASSEMBLY_CSHARP,
         "Digit.Prime.Shop",
         "BundleDataWidget",
-        &["OnActionButtonPressedCallback", "AuxViewButtonPressedHandler"],
+        &["OnActionButtonPressedCallback", "AuxViewButtonPressedHandler", "SetButtonState", "SetViewButton"],
         "void",
         &[],
+        false,
+        Requirement::Required,
+    ),
+    method(
+        SHOP_INSPECTION,
+        ASSEMBLY_CSHARP,
+        "Digit.Client.UI",
+        "GenericButtonWidget",
+        &["OverrideInteractable"],
+        "void",
+        &["bool"],
         false,
         Requirement::Required,
     ),
@@ -1196,6 +1207,15 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         "BundleDataWidget",
         &["_currentState"],
         "BundleDataWidget.ItemState",
+        Requirement::Required,
+    ),
+    field(
+        SHOP_INSPECTION,
+        ASSEMBLY_CSHARP,
+        "Digit.Prime.Shop",
+        "BundleDataWidget",
+        &["_auxiliaryViewButton"],
+        "GenericButtonWidget",
         Requirement::Required,
     ),
     method(
@@ -1719,3 +1739,49 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         Requirement::Required,
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REQUIRED_SHOP_INSPECTION_METHODS: &[&str] =
+        &["OnActionButtonPressedCallback", "AuxViewButtonPressedHandler", "SetButtonState", "SetViewButton"];
+
+    #[test]
+    fn shop_inspection_requires_every_bundle_widget_method() {
+        let spec = SYMBOLS
+            .iter()
+            .find(|symbol| {
+                symbol.feature == SHOP_INSPECTION
+                    && symbol.class_name == "BundleDataWidget"
+                    && matches!(
+                        symbol.member,
+                        MemberSpec::Method { names, .. } if names == REQUIRED_SHOP_INSPECTION_METHODS
+                    )
+            })
+            .expect("shop inspection method group should exist");
+        let MemberSpec::Method { names, match_all, .. } = spec.member else {
+            panic!("shop inspection requirements should be methods");
+        };
+
+        assert!(match_all);
+        for missing in REQUIRED_SHOP_INSPECTION_METHODS {
+            let results = assess(|symbol| {
+                let is_bundle_widget_method_group = symbol.feature == SHOP_INSPECTION
+                    && symbol.class_name == "BundleDataWidget"
+                    && matches!(
+                        symbol.member,
+                        MemberSpec::Method { names, .. } if names == REQUIRED_SHOP_INSPECTION_METHODS
+                    );
+
+                !is_bundle_widget_method_group || matches_names(names, match_all, |name| name != *missing)
+            });
+
+            assert_eq!(
+                results[SHOP_INSPECTION].status(),
+                FeatureStatus::Disabled,
+                "shop inspection remained enabled without {missing}"
+            );
+        }
+    }
+}
