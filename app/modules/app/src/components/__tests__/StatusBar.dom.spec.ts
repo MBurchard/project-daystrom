@@ -95,7 +95,7 @@ describe('statusBar', () => {
       props: props({status: gameStatus({update_available: true, remote_version: 189})}),
     });
     const updateButton = wrapper.findAll('button').find(button => button.text().includes('STFC v189'))!;
-    expect(updateButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
+    expect(updateButton.get('.status-segment').attributes('aria-hidden')).toBe('true');
     await updateButton.trigger('click');
     expect(wrapper.emitted('openGameUpdater')).toHaveLength(1);
 
@@ -121,7 +121,9 @@ describe('statusBar', () => {
     expect(reinstallButton.attributes('aria-label')).toBe('Reinstall mod');
     expect(reinstallButton.attributes('data-tooltip')).toBe('Reinstall mod');
     await reinstallButton.trigger('click');
-    await wrapper.findAll('button').find(button => button.text() === 'Remove mod')!.trigger('click');
+    const removeButton = wrapper.findAll('button').find(button => button.text().includes('Remove mod'))!;
+    expect(removeButton.get('.status-segment').attributes('aria-hidden')).toBe('true');
+    await removeButton.trigger('click');
     expect(wrapper.emitted('installMod')).toHaveLength(1);
     expect(wrapper.emitted('removeMod')).toHaveLength(1);
 
@@ -133,7 +135,7 @@ describe('statusBar', () => {
     });
     expect(wrapper.text()).toContain('Install mod');
     const installButton = wrapper.findAll('button').find(button => button.text().includes('Install mod'))!;
-    expect(installButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
+    expect(installButton.get('.status-segment').attributes('aria-hidden')).toBe('true');
     await installButton.trigger('click');
     expect(wrapper.emitted('installMod')).toHaveLength(2);
     await wrapper.setProps({
@@ -152,7 +154,7 @@ describe('statusBar', () => {
       }),
     });
     const disabledActions = wrapper.findAll('button')
-      .filter(button => button.text().includes('Update mod') || button.text() === 'Remove mod');
+      .filter(button => button.text().includes('Update mod') || button.text().includes('Remove mod'));
     expect(disabledActions).toHaveLength(2);
     expect(disabledActions.every(button => button.attributes('disabled') !== undefined)).toBe(true);
     await wrapper.setProps({status: gameStatus({mod_deployed: false, mod_available: false})});
@@ -163,7 +165,7 @@ describe('statusBar', () => {
     const wrapper = mount(StatusBar, {props: props({modConnectionMissing: true})});
 
     const warning = wrapper.findAll('button').find(button => button.text().includes('Mod not active'))!;
-    expect(warning.get('.forward-action').attributes('aria-hidden')).toBe('true');
+    expect(warning.get('.status-segment').attributes('aria-hidden')).toBe('true');
     expect(wrapper.find('.mod-reinstall').exists()).toBe(false);
     await warning.trigger('click');
 
@@ -191,7 +193,7 @@ describe('statusBar', () => {
 
     await wrapper.setProps({update: updateStatus({phase: 'available', version: '0.10.1'})});
     const updateButton = wrapper.findAll('button').find(button => button.text().includes('Daystrom 0.10.1'))!;
-    expect(updateButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
+    expect(updateButton.get('.status-segment').attributes('aria-hidden')).toBe('true');
     await updateButton.trigger('click');
     expect(wrapper.emitted('openUpdate')).toHaveLength(1);
 
@@ -219,7 +221,7 @@ describe('statusBar', () => {
 
     expect(wrapper.text()).toContain('STFC could not be started');
     const rollbackButton = wrapper.findAll('button').find(button => button.text().includes('Previous mod'))!;
-    expect(rollbackButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
+    expect(rollbackButton.get('.status-segment').attributes('aria-hidden')).toBe('true');
     await rollbackButton.trigger('click');
     expect(wrapper.emitted('openRollback')).toHaveLength(1);
   });

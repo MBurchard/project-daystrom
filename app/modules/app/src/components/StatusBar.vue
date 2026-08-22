@@ -57,7 +57,7 @@ const {errorText} = useUiError();
       <span class="segmented-status-label">
         {{ t('daystromAvailable', { version: props.update.version }) }}
       </span>
-      <span class="forward-action" aria-hidden="true">›</span>
+      <span class="status-segment" aria-hidden="true">›</span>
     </button>
     <span v-else-if="props.update.phase === 'checking'" class="status-item neutral">
       {{ t('checkingDaystrom') }}
@@ -66,7 +66,7 @@ const {errorText} = useUiError();
       <span class="segmented-status-label" :title="errorText(props.update.error)">
         {{ t('daystromCheckFailed') }}
       </span>
-      <button class="status-refresh"
+      <button class="status-segment has-tooltip"
           :data-tooltip="t('checkDaystromUpdates')"
           :aria-label="t('checkDaystromUpdates')"
           :disabled="props.updateCheckBusy"
@@ -80,7 +80,7 @@ const {errorText} = useUiError();
       <span class="segmented-status-label">
         {{ props.update.dismissed ? t('daystromDeferred') : t('daystromCurrent') }}
       </span>
-      <button class="status-refresh"
+      <button class="status-segment has-tooltip"
           :data-tooltip="t('checkDaystromUpdates')"
           :aria-label="t('checkDaystromUpdates')"
           :disabled="props.updateCheckBusy"
@@ -96,7 +96,7 @@ const {errorText} = useUiError();
       <span class="segmented-status-label">
         {{ t('gameUpdateAvailable', { version: props.status.remote_version ?? '' }) }}
       </span>
-      <span class="forward-action" aria-hidden="true">›</span>
+      <span class="status-segment" aria-hidden="true">›</span>
     </button>
     <span v-else-if="props.status.installed && props.status.update_check_failed" class="status-item warn">
       {{ t('gameUpdateFailed') }}
@@ -106,13 +106,13 @@ const {errorText} = useUiError();
         class="status-item warn interactive segmented-status segmented-action"
         @click="emit('openModWarning')">
       <span class="segmented-status-label">{{ t('modNotActive') }}</span>
-      <span class="forward-action" aria-hidden="true">›</span>
+      <span class="status-segment" aria-hidden="true">›</span>
     </button>
     <div v-else-if="props.status.installed && props.status.mod_deployed"
         class="status-item ok segmented-status">
       <span class="segmented-status-label">{{ t('modReady') }}</span>
       <button v-if="props.status.mod_available"
-          class="status-refresh mod-reinstall"
+          class="status-segment has-tooltip mod-reinstall"
           :data-tooltip="t('reinstallMod')"
           :aria-label="t('reinstallMod')"
           :disabled="!props.status.can_install_mod || props.actionPending"
@@ -130,13 +130,14 @@ const {errorText} = useUiError();
       <span class="segmented-status-label">
         {{ props.status.mod_outdated ? t('updateMod') : t('installMod') }}
       </span>
-      <span class="forward-action" aria-hidden="true">›</span>
+      <span class="status-segment" aria-hidden="true">›</span>
     </button>
     <button v-if="props.status.mod_removable"
-        class="status-action"
+        class="status-item neutral interactive segmented-status segmented-action"
         :disabled="!props.status.can_remove_mod || props.actionPending"
         @click="emit('removeMod')">
-      {{ t('removeMod') }}
+      <span class="segmented-status-label">{{ t('removeMod') }}</span>
+      <span class="status-segment" aria-hidden="true">✗</span>
     </button>
 
     <span v-if="props.status.game_running" class="status-item ok">{{ t('gameRunning') }}</span>
@@ -148,7 +149,7 @@ const {errorText} = useUiError();
         class="status-item warn interactive segmented-status segmented-action"
         @click="emit('openRollback')">
       <span class="segmented-status-label">{{ t('modRestorePending') }}</span>
-      <span class="forward-action" aria-hidden="true">›</span>
+      <span class="status-segment" aria-hidden="true">›</span>
     </button>
   </section>
 
@@ -215,32 +216,39 @@ const {errorText} = useUiError();
   padding-left: 0.5rem;
 }
 
-.forward-action {
+.status-segment {
   display: grid;
-  min-width: 1.9rem;
-  border-left: 1px solid currentcolor;
-  background: color-mix(in srgb, currentcolor 8%, transparent);
-  font-size: 1rem;
-  place-items: center;
-}
-
-.segmented-action:hover:not(:disabled) .forward-action {
-  background: color-mix(in srgb, currentcolor 22%, transparent);
-}
-
-.status-refresh {
-  position: relative;
+  box-sizing: border-box;
   min-width: 1.9rem;
   padding: 0 0.45rem;
   border: 0;
   border-left: 1px solid currentcolor;
-  border-radius: 0 999px 999px 0;
   background: color-mix(in srgb, currentcolor 8%, transparent);
   color: inherit;
   font: inherit;
+  font-size: 1rem;
+  place-items: center;
 }
 
-.status-refresh::after {
+/* The pill cannot clip its children without cutting off tooltips, so the trailing segment rounds itself. */
+.status-segment:last-child {
+  border-radius: 0 999px 999px 0;
+}
+
+button.status-segment:disabled {
+  opacity: 0.45;
+}
+
+.segmented-action:hover:not(:disabled) .status-segment,
+button.status-segment:hover:not(:disabled) {
+  background: color-mix(in srgb, currentcolor 22%, transparent);
+}
+
+.has-tooltip {
+  position: relative;
+}
+
+.has-tooltip::after {
   position: absolute;
   z-index: 1;
   top: calc(100% + 0.45rem);
@@ -259,16 +267,8 @@ const {errorText} = useUiError();
   white-space: nowrap;
 }
 
-.status-refresh:disabled {
-  opacity: 0.45;
-}
-
-.status-refresh:hover:not(:disabled) {
-  background: color-mix(in srgb, currentcolor 22%, transparent);
-}
-
-.status-refresh:focus-visible::after,
-.status-refresh:hover:not(:disabled)::after {
+.has-tooltip:focus-visible::after,
+.has-tooltip:hover:not(:disabled)::after {
   opacity: 1;
   transform: translateY(0);
 }
@@ -286,7 +286,7 @@ const {errorText} = useUiError();
 }
 
 .status-item.fail::before {
-  content: "✕";
+  content: "✗";
 }
 
 .status-item.neutral {
@@ -303,10 +303,6 @@ const {errorText} = useUiError();
 
 .interactive:disabled {
   opacity: 0.5;
-}
-
-.status-action {
-  font-size: 0.8rem;
 }
 
 .message {
