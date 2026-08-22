@@ -1,4 +1,5 @@
 import type {ProfileInfo} from '@generated/ProfileInfo';
+import {INITIAL_PROFILE_STEM} from '@app/profileProtocol';
 import {mount} from '@vue/test-utils';
 import {describe, expect, it, vi} from 'vitest';
 import AccountTabs from '../AccountTabs.vue';
@@ -19,6 +20,7 @@ function props(overrides: Partial<InstanceType<typeof AccountTabs>['$props']> = 
     gameOriginPending: false,
     profiles: PROFILES,
     isProfileRunning: () => false,
+    isProfileStarting: () => false,
     ...overrides,
   };
 }
@@ -66,6 +68,20 @@ describe('accountTabs', () => {
     expect(wrapper.findAll('.account-start')[0]!.text()).toBe('Start');
     expect(wrapper.findAll('.account-start')[1]!.text()).toBe('Running');
     expect(wrapper.findAll('.account-start')[1]!.classes()).toContain('running');
+  });
+
+  it('shows the intermediate state until the mod handshake is confirmed', () => {
+    const wrapper = mount(AccountTabs, {
+      props: props({
+        isProfileRunning: stem => stem === '1_TestAlpha',
+        isProfileStarting: stem => stem === '1_TestAlpha',
+      }),
+    });
+
+    expect(wrapper.findAll('.account-start')[0]!.text()).toBe('Starting…');
+    expect(wrapper.findAll('.account-start')[0]!.classes()).toContain('starting');
+    expect(wrapper.find('.running-indicator.starting').exists()).toBe(true);
+    expect(wrapper.findAll('.account-start')[0]!.attributes('disabled')).toBeDefined();
   });
 
   it.each([
@@ -122,7 +138,31 @@ describe('accountTabs', () => {
 
     expect(wrapper.text()).toContain('No account detected');
     await wrapper.get('.empty-account button').trigger('click');
-    expect(wrapper.emitted('launch')).toEqual([['initial']]);
+    expect(wrapper.emitted('launch')).toEqual([[INITIAL_PROFILE_STEM]]);
+  });
+
+  it('labels the initial account launch as starting during its grace period', () => {
+    const wrapper = mount(AccountTabs, {
+      props: props({
+        profiles: [],
+        isProfileRunning: stem => stem === INITIAL_PROFILE_STEM,
+        isProfileStarting: stem => stem === INITIAL_PROFILE_STEM,
+      }),
+    });
+
+    expect(wrapper.get('.empty-account button').text()).toBe('Starting…');
+  });
+
+  it('stops labelling an unconfirmed initial launch as starting after its grace period', () => {
+    const wrapper = mount(AccountTabs, {
+      props: props({
+        profiles: [],
+        isProfileRunning: stem => stem === INITIAL_PROFILE_STEM,
+      }),
+    });
+
+    expect(wrapper.get('.empty-account button').text()).toBe('Running');
+    expect(wrapper.get('.empty-account button').attributes('disabled')).toBeDefined();
   });
 
   it.each([

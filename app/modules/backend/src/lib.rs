@@ -19,6 +19,7 @@ mod macos_hooks;
 mod monitor;
 mod notifications;
 mod process_origin;
+mod profile_protocol;
 mod profile_state;
 mod settings;
 mod state_update;

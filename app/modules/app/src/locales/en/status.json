@@ -12,6 +12,7 @@
   "updateMod": "Update mod",
   "installMod": "Install mod",
   "removeMod": "Remove mod",
+  "gameStarting": "Game starting…",
   "gameRunning": "Game running",
   "gameNotRunning": "Game not running",
   "launcherRunning": "Scopely Launcher running",

@@ -26,6 +26,12 @@ const props = defineProps<{
   rollback: DaystromRollbackStatus;
   /** Whether a running game has no active Daystrom mod connection. */
   modConnectionMissing: boolean;
+  /** Whether a Daystrom-tracked game is completing its first mod handshake. */
+  trackedGameStarting: boolean;
+  /** Whether any Daystrom-tracked game process is running. */
+  trackedGameRunning: boolean;
+  /** Whether any tracked game is running outside its initial handshake grace period. */
+  trackedGameEstablished: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -140,8 +146,14 @@ const {errorText} = useUiError();
       <span class="status-segment" aria-hidden="true">✗</span>
     </button>
 
-    <span v-if="props.status.game_running" class="status-item ok">{{ t('gameRunning') }}</span>
-    <span v-else-if="props.status.installed" class="status-item neutral">{{ t('gameNotRunning') }}</span>
+    <span v-if="props.trackedGameEstablished || (props.status.game_running && !props.trackedGameRunning)"
+        class="status-item ok">
+      {{ t('gameRunning') }}
+    </span>
+    <span v-else-if="props.trackedGameStarting" class="status-item warn">{{ t('gameStarting') }}</span>
+    <span v-else-if="props.status.installed" class="status-item neutral">
+      {{ t('gameNotRunning') }}
+    </span>
 
     <span v-if="props.status.launcher_running" class="status-item warn">{{ t('launcherRunning') }}</span>
 

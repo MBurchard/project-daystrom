@@ -29,6 +29,9 @@ const GAME_ORIGIN_RECONNECT_GRACE: Duration = Duration::from_secs(10);
 /// Maximum time to wait for a running game mod to restore its WebSocket connection.
 const MOD_CONNECTION_RECONNECT_GRACE: Duration = Duration::from_secs(10);
 
+/// Maximum attempts to commit one process snapshot before deferring to the next monitor tick.
+const PROCESS_UPDATE_ATTEMPTS: usize = 2;
+
 /// Flag indicating whether a monitor thread is currently active.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -83,6 +86,16 @@ enum GameOrigin {
     Daystrom,
     /// The running game did not provide a Daystrom launch identity in time.
     External,
+}
+
+/// Inputs used to evaluate whether an expected mod connection is missing.
+#[derive(Clone, Copy, Debug, Default)]
+struct ModConnectionSnapshot {
+    game_running: bool,
+    mod_expected: bool,
+    tracked_game: bool,
+    expired_unconfirmed_tracked_game: bool,
+    disconnected_confirmed_game: bool,
 }
 
 /// Encapsulates the monitor's mutable state between ticks.
@@ -150,25 +163,24 @@ impl MonitorState {
         GameOrigin::External
     }
 
-    /// Report a missing runtime mod connection only after its reconnect grace period expires.
-    fn is_mod_connection_missing(
-        &mut self,
-        game_running: bool,
-        mod_expected: bool,
-        active_connection: bool,
-        unconnected_tracked_game: bool,
-        now: Instant,
-    ) -> bool {
-        let connection_missing = game_running && mod_expected && (unconnected_tracked_game || !active_connection);
-        if !connection_missing {
+    /// Report a missing runtime mod connection after the applicable grace period expires.
+    fn is_mod_connection_missing(&mut self, snapshot: ModConnectionSnapshot, now: Instant) -> bool {
+        let startup_missing =
+            snapshot.game_running && snapshot.mod_expected && snapshot.expired_unconfirmed_tracked_game;
+
+        let reconnect_missing = snapshot.game_running
+            && snapshot.mod_expected
+            && (snapshot.disconnected_confirmed_game || !snapshot.tracked_game);
+        if !reconnect_missing {
             self.mod_connection_reconnect_deadline = None;
-            return false;
         }
 
-        let deadline = self
-            .mod_connection_reconnect_deadline
-            .get_or_insert(now + MOD_CONNECTION_RECONNECT_GRACE);
-        now >= *deadline
+        let reconnect_expired = reconnect_missing
+            && now
+                >= *self
+                    .mod_connection_reconnect_deadline
+                    .get_or_insert(now + MOD_CONNECTION_RECONNECT_GRACE);
+        startup_missing || reconnect_expired
     }
 
     /// Evaluate one monitoring cycle and return the actions to execute.
@@ -176,6 +188,7 @@ impl MonitorState {
     /// Compares the current process status against the previous tick, determines which special
     /// actions are needed, and updates internal state. Pure logic: no I/O, no side effects
     /// beyond `self`.
+    #[cfg(test)]
     fn tick(&mut self, game: bool, launcher: bool, installed: bool) -> Vec<MonitorAction> {
         self.tick_at(game, launcher, installed, Instant::now())
     }
@@ -296,10 +309,11 @@ fn run_loop(app: tauri::AppHandle) {
         let game_status = crate::game_state::get();
         let installed = game_status.installed;
         let mod_expected = game_status.mod_deployed;
+        let now = Instant::now();
 
         // Process tick actions first: origin flags must be cleared before the store emits,
         // so that listeners (e.g. tray quit item) see the correct should_block_quit() state.
-        for action in state.tick(game, launcher, installed) {
+        for action in state.tick_at(game, launcher, installed, now) {
             match action {
                 MonitorAction::ClearGameStarted => {
                     crate::process_origin::clear_game_started();
@@ -356,7 +370,7 @@ fn run_loop(app: tauri::AppHandle) {
         // Track which of our launched profiles are still running.
         // Reconcile stale stems after in-game renames: if a running stem no longer matches any profile file, find the
         // profile with the same server ID and update the mapping so the frontend keeps the correct running state.
-        let running = crate::process_origin::running_profiles();
+        let running = crate::process_origin::tracked_games_snapshot_at(now).running_profiles;
         let profiles = crate::profile_state::get().profiles;
         for stem in &running {
             if !profiles.iter().any(|p| p.stem == *stem)
@@ -367,23 +381,37 @@ fn run_loop(app: tauri::AppHandle) {
                 crate::process_origin::update_stem(stem, &p.stem);
             }
         }
-        let running = crate::process_origin::running_profiles();
-        let origin = state.classify_game_origin(game, crate::process_origin::is_game_started(), Instant::now());
-        let previous_mod_connection_missing = crate::profile_state::get().mod_connection_missing;
-        let mod_connection_missing = state.is_mod_connection_missing(
-            game,
-            mod_expected,
-            crate::process_origin::has_active_mod_connection(),
-            crate::process_origin::has_unconnected_tracked_game(),
-            Instant::now(),
-        );
-        crate::profile_state::update(&app, |s| {
-            s.running_profiles = running;
-            s.external_game_running = origin == GameOrigin::External;
-            s.game_origin_pending = origin == GameOrigin::Pending;
-            s.mod_connection_missing = mod_connection_missing;
-        });
-        if mod_connection_missing && !previous_mod_connection_missing {
+        let mut mod_connection_became_missing = false;
+        let mut process_update_applied = false;
+        for _ in 0..PROCESS_UPDATE_ATTEMPTS {
+            let process = crate::process_origin::tracked_games_snapshot_at(now);
+            let origin = state.classify_game_origin(game, crate::process_origin::is_game_started(), now);
+            let mod_connection_missing = state.is_mod_connection_missing(
+                ModConnectionSnapshot {
+                    game_running: game,
+                    mod_expected,
+                    tracked_game: process.tracked_game,
+                    expired_unconfirmed_tracked_game: process.expired_unconfirmed_game,
+                    disconnected_confirmed_game: process.disconnected_confirmed_game,
+                },
+                now,
+            );
+            if crate::profile_state::update_from_process(&app, process.revision, |s| {
+                mod_connection_became_missing = mod_connection_missing && !s.mod_connection_missing;
+                s.running_profiles = process.running_profiles;
+                s.starting_profiles = process.starting_profiles;
+                s.external_game_running = origin == GameOrigin::External;
+                s.game_origin_pending = origin == GameOrigin::Pending;
+                s.mod_connection_missing = mod_connection_missing;
+            }) {
+                process_update_applied = true;
+                break;
+            }
+        }
+        if !process_update_applied {
+            log_warn!("Deferring a contested profile-state update to the next monitor tick");
+        }
+        if mod_connection_became_missing {
             log_warn!("Running STFC process did not restore its Daystrom mod connection");
             crate::show_main_window(&app);
         }
@@ -640,48 +668,58 @@ mod tests {
     }
 
     #[test]
-    fn missing_mod_connection_is_reported_after_reconnect_grace() {
+    fn expired_initial_mod_connection_is_reported_immediately() {
         let now = Instant::now();
         let mut state = MonitorState::new(None);
+        let waiting = ModConnectionSnapshot {
+            game_running: true,
+            mod_expected: true,
+            tracked_game: true,
+            ..ModConnectionSnapshot::default()
+        };
+        let expired = ModConnectionSnapshot {
+            expired_unconfirmed_tracked_game: true,
+            ..waiting
+        };
 
-        assert!(!state.is_mod_connection_missing(true, true, false, true, now));
-        assert!(!state.is_mod_connection_missing(
-            true,
-            true,
-            false,
-            true,
-            now + MOD_CONNECTION_RECONNECT_GRACE - Duration::from_millis(1),
-        ));
-        assert!(state.is_mod_connection_missing(true, true, false, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
+        assert!(!state.is_mod_connection_missing(waiting, now));
+        assert!(state.is_mod_connection_missing(expired, now));
     }
 
     #[test]
     fn external_game_without_mod_connection_is_reported_after_reconnect_grace() {
         let now = Instant::now();
         let mut state = MonitorState::new(None);
+        let snapshot = ModConnectionSnapshot {
+            game_running: true,
+            mod_expected: true,
+            ..ModConnectionSnapshot::default()
+        };
 
-        assert!(!state.is_mod_connection_missing(true, true, false, false, now));
-        assert!(state.is_mod_connection_missing(true, true, false, false, now + MOD_CONNECTION_RECONNECT_GRACE,));
+        assert!(!state.is_mod_connection_missing(snapshot, now));
+        assert!(state.is_mod_connection_missing(snapshot, now + MOD_CONNECTION_RECONNECT_GRACE));
     }
 
     #[test]
     fn restored_mod_connection_clears_warning_and_rearms_grace() {
         let now = Instant::now();
         let mut state = MonitorState::new(None);
+        let disconnected = ModConnectionSnapshot {
+            game_running: true,
+            mod_expected: true,
+            tracked_game: true,
+            disconnected_confirmed_game: true,
+            ..ModConnectionSnapshot::default()
+        };
+        let connected = ModConnectionSnapshot {
+            disconnected_confirmed_game: false,
+            ..disconnected
+        };
 
-        assert!(!state.is_mod_connection_missing(true, true, false, true, now));
-        assert!(state.is_mod_connection_missing(true, true, false, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
-        assert!(!state.is_mod_connection_missing(true, true, true, false, now + MOD_CONNECTION_RECONNECT_GRACE,));
-        assert!(!state.is_mod_connection_missing(true, true, false, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
-    }
-
-    #[test]
-    fn one_unconnected_game_is_detected_among_connected_instances() {
-        let now = Instant::now();
-        let mut state = MonitorState::new(None);
-
-        assert!(!state.is_mod_connection_missing(true, true, true, true, now));
-        assert!(state.is_mod_connection_missing(true, true, true, true, now + MOD_CONNECTION_RECONNECT_GRACE,));
+        assert!(!state.is_mod_connection_missing(disconnected, now));
+        assert!(state.is_mod_connection_missing(disconnected, now + MOD_CONNECTION_RECONNECT_GRACE));
+        assert!(!state.is_mod_connection_missing(connected, now + MOD_CONNECTION_RECONNECT_GRACE));
+        assert!(!state.is_mod_connection_missing(disconnected, now + MOD_CONNECTION_RECONNECT_GRACE));
     }
 
     #[test]
@@ -689,8 +727,22 @@ mod tests {
         let now = Instant::now();
         let mut state = MonitorState::new(None);
 
-        assert!(!state.is_mod_connection_missing(true, false, false, false, now));
-        assert!(!state.is_mod_connection_missing(false, true, false, true, now));
+        assert!(!state.is_mod_connection_missing(
+            ModConnectionSnapshot {
+                game_running: true,
+                ..ModConnectionSnapshot::default()
+            },
+            now,
+        ));
+        assert!(!state.is_mod_connection_missing(
+            ModConnectionSnapshot {
+                mod_expected: true,
+                tracked_game: true,
+                expired_unconfirmed_tracked_game: true,
+                ..ModConnectionSnapshot::default()
+            },
+            now,
+        ));
     }
 
     #[test]

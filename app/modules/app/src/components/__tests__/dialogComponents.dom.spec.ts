@@ -248,6 +248,34 @@ describe('safetyNoticeDialog', () => {
     await wrapper.get('.continue-button').trigger('click');
     expect(wrapper.emitted('acknowledge')).toBeUndefined();
   });
+
+  it('omits optional removal details and acknowledgement actions', async () => {
+    const wrapper = mount(SafetyNoticeDialog, {
+      props: {
+        pending: false,
+        failed: false,
+        acknowledgementRequired: false,
+        context: {
+          platform: 'windows',
+          cleanupPaths: [],
+          modLibraryPath: null,
+        },
+      },
+    });
+
+    expect(wrapper.find('.path-list').text()).toBe('');
+    expect(wrapper.find('.safety-actions').exists()).toBe(false);
+
+    await wrapper.setProps({
+      context: {
+        platform: 'macos',
+        cleanupPaths: [],
+        modLibraryPath: null,
+      },
+    });
+
+    expect(wrapper.find('.path-list').text()).toBe('');
+  });
 });
 
 describe('newAccountDialog', () => {

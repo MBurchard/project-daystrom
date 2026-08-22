@@ -19,6 +19,7 @@ use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::TAURI_IDENTIFIER;
+use crate::profile_protocol::{INITIAL_PROFILE_STEM, NEW_ACCOUNT_PROFILE_STEM, PROFILE_ENV_VAR};
 
 /// How often the store flushes to disk (when dirty).
 const FLUSH_INTERVAL: Duration = Duration::from_secs(10);
@@ -844,9 +845,9 @@ where
 {
     let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
     let state = guard.get_or_insert_with(|| {
-        let mode = match std::env::var(crate::logging::PROFILE_ENV) {
-            Ok(val) if val == "new_account" => ProfileMode::NewAccount,
-            Ok(val) if val == "initial" => ProfileMode::Import,
+        let mode = match std::env::var(PROFILE_ENV_VAR) {
+            Ok(val) if val == NEW_ACCOUNT_PROFILE_STEM => ProfileMode::NewAccount,
+            Ok(val) if val == INITIAL_PROFILE_STEM => ProfileMode::Import,
             Ok(val) if !val.is_empty() => ProfileMode::Known(val),
             _ => ProfileMode::Import,
         };

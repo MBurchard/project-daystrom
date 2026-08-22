@@ -35,6 +35,7 @@ function makeProfileState(name: string): ProfileState {
       primary: true,
     }],
     running_profiles: [],
+    starting_profiles: [],
     external_game_running: false,
     game_origin_pending: false,
     mod_connection_missing: false,
@@ -122,6 +123,7 @@ describe('useProfileState', () => {
   it('exposes profile, origin, and running state', async () => {
     const current = makeProfileState('Current');
     current.running_profiles = ['411_Current'];
+    current.starting_profiles = ['411_Current'];
     current.external_game_running = true;
     current.game_origin_pending = true;
     current.mod_connection_missing = true;
@@ -136,6 +138,8 @@ describe('useProfileState', () => {
     expect(state.gameOriginPending.value).toBe(true);
     expect(state.isProfileRunning('411_Current')).toBe(true);
     expect(state.isProfileRunning('411_Other')).toBe(false);
+    expect(state.isProfileStarting('411_Current')).toBe(true);
+    expect(state.isProfileStarting('411_Other')).toBe(false);
   });
 
   it('logs listener and snapshot failures', async () => {

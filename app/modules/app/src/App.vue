@@ -26,6 +26,7 @@ import {useI18n} from '@app/i18n';
 import safetyDefaults from '@app/locales/en/safety.json';
 import shellDefaults from '@app/locales/en/shell.json';
 import {getLogger} from '@app/log';
+import {NEW_ACCOUNT_PROFILE_STEM} from '@app/profileProtocol';
 import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
 
 /** Main application views shown below the persistent status bar. */
@@ -63,9 +64,20 @@ const {
 const {
   profiles,
   isProfileRunning,
+  isProfileStarting,
   init: initProfileState,
   destroy: destroyProfileState,
 } = useProfileState();
+
+/** Whether at least one Daystrom-tracked game is still completing its first mod handshake. */
+const trackedGameStarting = computed(() => profiles.value.starting_profiles.length > 0);
+
+/** Whether at least one Daystrom-tracked game process is running. */
+const trackedGameRunning = computed(() => profiles.value.running_profiles.length > 0);
+
+/** Whether at least one tracked game is running outside its initial handshake grace period. */
+const trackedGameEstablished = computed(() => profiles.value.running_profiles
+  .some(stem => !profiles.value.starting_profiles.includes(stem)));
 
 const {init: initSettings} = useSettings();
 
@@ -197,7 +209,7 @@ function handleUpdateLater(): void {
 /** Confirm a new account launch and close its confirmation dialogue. */
 function confirmNewAccount(): void {
   closeDialog('new-account');
-  handleLaunch('new_account');
+  handleLaunch(NEW_ACCOUNT_PROFILE_STEM);
 }
 
 /** Open the destructive confirmation flow for one known local account profile. */
@@ -274,6 +286,9 @@ onUnmounted(() => {
           :update="daystromUpdate"
           :rollback="daystromRollback"
           :mod-connection-missing="profiles.mod_connection_missing"
+          :tracked-game-starting="trackedGameStarting"
+          :tracked-game-running="trackedGameRunning"
+          :tracked-game-established="trackedGameEstablished"
           @open-update="openDialog('update')"
           @open-rollback="openDialog('rollback')"
           @check-update="checkDaystromUpdate"
@@ -297,6 +312,7 @@ onUnmounted(() => {
           :game-origin-pending="profiles.game_origin_pending"
           :profiles="profiles.profiles"
           :is-profile-running="isProfileRunning"
+          :is-profile-starting="isProfileStarting"
           @launch="handleLaunch"
           @add-account="openDialog('new-account')"
           @delete-account="openDeleteAccount" />
