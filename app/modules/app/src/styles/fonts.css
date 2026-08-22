@@ -1,9 +1,18 @@
 @font-face {
   font-family: Inter;
   font-style: normal;
-  font-weight: 400 500;
+  font-weight: 400 700;
   font-display: swap;
   src: url("../assets/fonts/Inter-Latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("../assets/fonts/Inter-Symbols.woff2") format("woff2");
+  unicode-range: U+D7, U+21BB, U+2713, U+2717;
 }
 
 @font-face {
