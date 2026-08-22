@@ -24,9 +24,18 @@ interface RollbackEnvelope {
   signature: string;
 }
 
+/** Localized notes consumed only by Daystrom 0.10.0 and newer. */
+interface LocalizedUpdateNotes {
+  schema: 1;
+  de: string;
+  en: string;
+}
+
 /** Static Tauri update manifest generated for a GitHub release. */
 export interface UpdateManifest {
   version: string;
+  notes?: string;
+  localized_notes?: LocalizedUpdateNotes;
   pub_date?: string;
   platforms: {
     'darwin-aarch64': UpdatePlatform;
@@ -42,11 +51,216 @@ export interface GenerateUpdateManifestOptions {
   version: string;
   repository: string;
   tag: string;
+  releaseNotes: ReleaseNotes;
   previousManifest?: UpdateManifest;
+}
+
+/** One localized release title and its corresponding user-visible changes. */
+export interface ReleaseNotesLocale {
+  title: string;
+  changes: string[];
+}
+
+/** Versioned, human-reviewed release notes used by every release surface. */
+export interface ReleaseNotes {
+  version: string;
+  locales: {
+    de: ReleaseNotesLocale;
+    en: ReleaseNotesLocale;
+  };
 }
 
 /** File containing canonical rollback metadata before its signature is embedded. */
 const ROLLBACK_METADATA_FILE = 'rollback-metadata.json';
+
+/** Mirrors the published clients' Rust `MAX_RELEASE_NOTES_LINES` limit. */
+const MAX_RELEASE_NOTE_CHANGES = 20;
+
+/** Maximum number of Unicode characters accepted for one release-note entry. */
+const MAX_RELEASE_NOTE_CHANGE_CHARACTERS = 180;
+
+/** Mirrors the published clients' Rust `MAX_RELEASE_NOTES_CHARACTERS` limit. */
+const MAX_RELEASE_NOTE_CHARACTERS = 2_000;
+
+/** Maximum number of Unicode characters accepted for the release-note title. */
+const MAX_RELEASE_NOTE_TITLE_CHARACTERS = 80;
+
+/** Required keys in a versioned release-notes document. */
+const RELEASE_NOTES_KEYS = ['locales', 'version'];
+
+/** Required locale keys in a versioned release-notes document. */
+const RELEASE_NOTES_LOCALE_KEYS = ['de', 'en'];
+
+/** Required keys in each localized release-notes entry. */
+const RELEASE_NOTES_LOCALE_VALUE_KEYS = ['changes', 'title'];
+
+/** Semantic versions accepted by release automation. */
+const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?$/i;
+
+/**
+ * Require a semantic release version before using it in paths or release metadata.
+ * @param version - Candidate release version.
+ */
+function validateVersion(version: string): void {
+  if (!RELEASE_VERSION_PATTERN.test(version)) {
+    throw new Error(`Invalid release version ${version}`);
+  }
+}
+
+/**
+ * Require a trimmed, single-line release-note string within its size limit.
+ * @param value - Untrusted JSON field value.
+ * @param description - Human-readable field description for errors.
+ * @param maximumCharacters - Maximum permitted Unicode character count.
+ * @returns Validated release-note string.
+ */
+function validateReleaseNoteText(
+  value: unknown,
+  description: string,
+  maximumCharacters: number,
+): string {
+  if (typeof value !== 'string' || value !== value.trim() || !value) {
+    throw new Error(`${description} must be a non-empty trimmed string`);
+  }
+  const containsDisallowedCharacter = [...value].some((character) => {
+    const codePoint = character.codePointAt(0)!;
+    return codePoint <= 31 ||
+      (codePoint >= 127 && codePoint <= 159) ||
+      codePoint === 0x061C ||
+      (codePoint >= 0x200E && codePoint <= 0x200F) ||
+      (codePoint >= 0x202A && codePoint <= 0x202E) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069);
+  });
+  if (containsDisallowedCharacter) {
+    throw new Error(`${description} must contain one line of display text`);
+  }
+  if ([...value].length > maximumCharacters) {
+    throw new Error(`${description} exceeds ${maximumCharacters} characters`);
+  }
+  return value;
+}
+
+/**
+ * Parse and strictly validate one versioned release-notes document.
+ * @param source - JSON source text.
+ * @param expectedVersion - Release version whose notes are required.
+ * @returns Validated structured release notes.
+ */
+export function parseReleaseNotes(source: string, expectedVersion: string): ReleaseNotes {
+  const value: unknown = JSON.parse(source);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Release notes must be a JSON object');
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== RELEASE_NOTES_KEYS.length ||
+    keys.some((key, index) => key !== RELEASE_NOTES_KEYS[index])) {
+    throw new Error(`Release notes must contain exactly ${RELEASE_NOTES_KEYS.join(', ')}`);
+  }
+  if (record.version !== expectedVersion) {
+    throw new Error(`Release notes version ${String(record.version)} does not match ${expectedVersion}`);
+  }
+  if (!record.locales || typeof record.locales !== 'object' || Array.isArray(record.locales)) {
+    throw new Error('Release notes locales must be an object');
+  }
+  const locales = record.locales as Record<string, unknown>;
+  const localeKeys = Object.keys(locales).sort();
+  if (localeKeys.length !== RELEASE_NOTES_LOCALE_KEYS.length ||
+    localeKeys.some((key, index) => key !== RELEASE_NOTES_LOCALE_KEYS[index])) {
+    throw new Error(`Release notes locales must contain exactly ${RELEASE_NOTES_LOCALE_KEYS.join(', ')}`);
+  }
+  const de = parseReleaseNotesLocale(locales.de, 'de');
+  const en = parseReleaseNotesLocale(locales.en, 'en');
+  if (de.changes.length !== en.changes.length) {
+    throw new Error('German and English release notes must contain the same number of changes');
+  }
+  return {version: expectedVersion, locales: {de, en}};
+}
+
+/**
+ * Parse and strictly validate one localized release-notes entry.
+ * @param value - Untrusted locale value.
+ * @param locale - Locale identifier used in validation errors.
+ * @returns Validated localized release notes.
+ */
+function parseReleaseNotesLocale(value: unknown, locale: string): ReleaseNotesLocale {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Release notes locale ${locale} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== RELEASE_NOTES_LOCALE_VALUE_KEYS.length ||
+    keys.some((key, index) => key !== RELEASE_NOTES_LOCALE_VALUE_KEYS[index])) {
+    throw new Error(
+      `Release notes locale ${locale} must contain exactly ${RELEASE_NOTES_LOCALE_VALUE_KEYS.join(', ')}`,
+    );
+  }
+  const title = validateReleaseNoteText(
+    record.title,
+    `Release notes title ${locale}`,
+    MAX_RELEASE_NOTE_TITLE_CHARACTERS,
+  );
+  if (!Array.isArray(record.changes) ||
+    record.changes.length === 0 ||
+    record.changes.length > MAX_RELEASE_NOTE_CHANGES) {
+    throw new Error(`Release notes locale ${locale} must contain 1-${MAX_RELEASE_NOTE_CHANGES} changes`);
+  }
+  const changes = record.changes.map((change, index) => validateReleaseNoteText(
+    change,
+    `Release notes change ${locale}.${index + 1}`,
+    MAX_RELEASE_NOTE_CHANGE_CHARACTERS,
+  ));
+  if (new Set(changes).size !== changes.length) {
+    throw new Error(`Release notes locale ${locale} must not contain duplicate changes`);
+  }
+  const releaseNotes = {title, changes};
+  if ([...renderUpdateNotes(releaseNotes)].length > MAX_RELEASE_NOTE_CHARACTERS) {
+    throw new Error(`Release notes locale ${locale} exceeds ${MAX_RELEASE_NOTE_CHARACTERS} characters`);
+  }
+  return releaseNotes;
+}
+
+/**
+ * Load the required checked-in release-notes document for a version.
+ * @param version - Release version whose notes are required.
+ * @param directory - Directory containing versioned release-notes JSON files.
+ * @returns Validated structured release notes.
+ */
+export function readReleaseNotes(
+  version: string,
+  directory = join(process.cwd(), 'release-notes'),
+): ReleaseNotes {
+  validateVersion(version);
+  const path = join(directory, `${version}.json`);
+  if (!existsSync(path)) {
+    throw new Error(`Missing release notes ${path}`);
+  }
+  return parseReleaseNotes(readFileSync(path, 'utf8'), version);
+}
+
+/**
+ * Render structured changes as safe plain text for Tauri's update manifest.
+ * @param locale - Validated localized release notes.
+ * @returns Plain-text bullet list displayed by the Daystrom client.
+ */
+export function renderUpdateNotes(locale: ReleaseNotesLocale): string {
+  return locale.changes.map(change => `• ${change}`).join('\n');
+}
+
+/**
+ * Render structured changes as the GitHub release body.
+ * @param releaseNotes - Validated structured release notes.
+ * @returns Markdown release body.
+ */
+export function renderReleaseBody(releaseNotes: ReleaseNotes): string {
+  const sections = (['en', 'de'] as const)
+    .map((locale) => {
+      const notes = releaseNotes.locales[locale];
+      return `## ${notes.title}\n\n${notes.changes.map(change => `- ${change}`).join('\n')}`;
+    })
+    .join('\n\n');
+  return `${sections}\n`;
+}
 
 /**
  * Convert a local bundle file name to the canonical GitHub release asset name.
@@ -138,10 +352,7 @@ function releaseAssetUrl(repository: string, tag: string, asset: string): string
  * @param tag - Release tag.
  */
 function validateInputs(version: string, repository: string, tag: string): void {
-  const semverPattern = /^\d+\.\d+\.\d+(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?$/i;
-  if (!semverPattern.test(version)) {
-    throw new Error(`Invalid release version ${version}`);
-  }
+  validateVersion(version);
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) {
     throw new Error(`Invalid GitHub repository ${repository}`);
   }
@@ -257,6 +468,7 @@ function createRollbackMetadata(version: string, previousManifest: UpdateManifes
  * @param options.version - SemVer application version.
  * @param options.repository - GitHub repository in owner/name form.
  * @param options.tag - Release tag.
+ * @param options.releaseNotes - Validated bilingual release notes.
  * @param options.previousManifest - Optional manifest of the latest published predecessor.
  * @returns Generated update manifest.
  */
@@ -265,9 +477,13 @@ export function generateUpdateManifest({
   version,
   repository,
   tag,
+  releaseNotes,
   previousManifest,
 }: GenerateUpdateManifestOptions): UpdateManifest {
   validateInputs(version, repository, tag);
+  if (releaseNotes.version !== version) {
+    throw new Error(`Release notes version ${releaseNotes.version} does not match ${version}`);
+  }
   normalizeAssetNames(assetsDirectory);
   const files = readdirSync(assetsDirectory, {withFileTypes: true})
     .filter(entry => entry.isFile())
@@ -281,6 +497,12 @@ export function generateUpdateManifest({
   const rolloutDate = previousManifest ? inheritedRolloutDate(version, previousManifest) : undefined;
   const manifest: UpdateManifest = {
     version,
+    notes: renderUpdateNotes(releaseNotes.locales.en),
+    localized_notes: {
+      schema: 1,
+      de: renderUpdateNotes(releaseNotes.locales.de),
+      en: renderUpdateNotes(releaseNotes.locales.en),
+    },
     ...(rolloutDate ? {pub_date: rolloutDate} : {}),
     platforms: {
       'darwin-aarch64': macPlatform,
@@ -368,6 +590,14 @@ function readPreviousManifest(path: string | undefined): UpdateManifest | undefi
  */
 function main(): void {
   const [commandOrAssets, ...arguments_] = process.argv.slice(2);
+  if (commandOrAssets === 'notes') {
+    const [version, outputPath, ...unexpected] = arguments_;
+    if (!version || !outputPath || unexpected.length > 0) {
+      throw new Error('Usage: node scripts/update-manifest.ts notes <version> <output-file>');
+    }
+    writeFileSync(outputPath, renderReleaseBody(readReleaseNotes(version)));
+    return;
+  }
   if (commandOrAssets === 'finalize') {
     const [assetsDirectory, ...unexpected] = arguments_;
     if (!assetsDirectory || unexpected.length > 0) {
@@ -397,6 +627,7 @@ function main(): void {
     version,
     repository,
     tag,
+    releaseNotes: readReleaseNotes(version),
     previousManifest: readPreviousManifest(previousManifestPath),
   });
 }

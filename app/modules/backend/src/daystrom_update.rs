@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use semver::Version;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 use time::OffsetDateTime;
@@ -110,6 +110,16 @@ impl DaystromUpdatePhase {
     }
 }
 
+/// Display-safe English and German notes for one available Daystrom release.
+#[derive(Clone, Debug, PartialEq, Serialize, TS)]
+#[ts(export)]
+pub struct DaystromReleaseNotes {
+    /// English notes and compatibility fallback for every other language.
+    pub en: String,
+    /// German notes shown when the application interface uses German.
+    pub de: String,
+}
+
 /// Display-safe snapshot of Project Daystrom's update state.
 #[derive(Clone, Debug, PartialEq, Serialize, TS)]
 #[ts(export)]
@@ -118,8 +128,8 @@ pub struct DaystromUpdateStatus {
     pub phase: DaystromUpdatePhase,
     /// Available application version, if one was found.
     pub version: Option<String>,
-    /// Optional release notes from the configured update manifest.
-    pub notes: Option<String>,
+    /// Optional English and German release notes from the configured update manifest.
+    pub notes: Option<DaystromReleaseNotes>,
     /// Download completion percentage when the remote server reports a total size.
     pub download_progress: Option<u8>,
     /// Stable failure code for the latest visible check.
@@ -162,8 +172,19 @@ enum CheckTrigger {
 struct AvailableUpdate {
     /// Version announced by the manifest.
     version: String,
-    /// Optional release notes announced by the manifest.
-    notes: Option<String>,
+    /// Optional English and German release notes announced by the manifest.
+    notes: Option<DaystromReleaseNotes>,
+}
+
+/// Additive localized-notes contract carried in updater manifests for Daystrom 0.10.0 and newer.
+#[derive(Deserialize)]
+struct LocalizedReleaseNotesManifest {
+    /// Compatibility marker; published clients accept revisions greater than or equal to one.
+    schema: u8,
+    /// German plain-text notes.
+    de: String,
+    /// English plain-text notes, which must match the standard updater notes.
+    en: String,
 }
 
 /// Production rollout decision derived from SemVer and the release line's rollout anchor.
@@ -179,11 +200,37 @@ enum RolloutDecision {
 
 impl From<Update> for AvailableUpdate {
     fn from(update: Update) -> Self {
-        Self {
-            version: update.version,
-            notes: normalize_release_notes(update.body.as_deref()),
-        }
+        let notes = resolve_release_notes(update.body.as_deref(), &update.raw_json);
+        Self { version: update.version, notes }
     }
+}
+
+/// Resolve bilingual notes while retaining the standard English updater text as a safe fallback.
+fn resolve_release_notes(
+    english_notes: Option<&str>,
+    raw_manifest: &serde_json::Value,
+) -> Option<DaystromReleaseNotes> {
+    let en = normalize_release_notes(english_notes)?;
+    let fallback = DaystromReleaseNotes { de: en.clone(), en: en.clone() };
+    let Some(value) = raw_manifest.get("localized_notes") else {
+        return Some(fallback);
+    };
+    let Ok(localized) = serde_json::from_value::<LocalizedReleaseNotesManifest>(value.clone()) else {
+        return Some(fallback);
+    };
+    if localized.schema < 1 {
+        return Some(fallback);
+    }
+    let Some(localized_en) = normalize_release_notes(Some(&localized.en)) else {
+        return Some(fallback);
+    };
+    if localized_en != en {
+        return Some(fallback);
+    }
+    let Some(de) = normalize_release_notes(Some(&localized.de)) else {
+        return Some(fallback);
+    };
+    Some(DaystromReleaseNotes { en, de })
 }
 
 /// Normalize untrusted manifest notes before exposing them to the frontend.
@@ -680,11 +727,19 @@ mod tests {
         Version::parse(version).unwrap()
     }
 
+    /// Build bilingual notes for update-state transition tests.
+    fn release_notes() -> DaystromReleaseNotes {
+        DaystromReleaseNotes {
+            de: "Versionshinweise".to_string(),
+            en: "Release notes".to_string(),
+        }
+    }
+
     /// Build minimal metadata for pure transition tests.
     fn available(version: &str) -> AvailableUpdate {
         AvailableUpdate {
             version: version.to_string(),
-            notes: Some("Release notes".to_string()),
+            notes: Some(release_notes()),
         }
     }
 
@@ -775,7 +830,7 @@ mod tests {
         let previous = DaystromUpdateStatus {
             phase: DaystromUpdatePhase::Checking,
             version: Some("0.10.0".to_string()),
-            notes: Some("Release notes".to_string()),
+            notes: Some(release_notes()),
             dismissed: false,
             ..DaystromUpdateStatus::default()
         };
@@ -784,7 +839,7 @@ mod tests {
 
         assert_eq!(next.phase, DaystromUpdatePhase::Available);
         assert_eq!(next.version.as_deref(), Some("0.10.0"));
-        assert_eq!(next.notes.as_deref(), Some("Release notes"));
+        assert_eq!(next.notes.as_ref().map(|notes| notes.en.as_str()), Some("Release notes"));
         assert!(!next.dismissed);
         assert!(next.can_install);
         assert!(next.error.is_some());
@@ -824,6 +879,88 @@ mod tests {
         let notes = normalize_release_notes(Some("  <strong>Release</strong>\r\nLine\t2\u{0000}\u{202e}  "));
 
         assert_eq!(notes.as_deref(), Some("<strong>Release</strong>\nLine 2"));
+    }
+
+    #[test]
+    fn localized_release_notes_override_german_and_preserve_standard_english() {
+        let manifest = serde_json::json!({
+            "notes": "English notes",
+            "localized_notes": {
+                "schema": 1,
+                "de": "Deutsche Hinweise",
+                "en": "English notes"
+            }
+        });
+
+        let notes = resolve_release_notes(Some("English notes"), &manifest).unwrap();
+
+        assert_eq!(notes.en, "English notes");
+        assert_eq!(notes.de, "Deutsche Hinweise");
+    }
+
+    #[test]
+    fn localized_release_notes_ignore_additive_schema_one_fields() {
+        let manifest = serde_json::json!({
+            "localized_notes": {
+                "schema": 1,
+                "de": "Deutsche Hinweise",
+                "en": "English notes",
+                "future_locale": "Future notes"
+            }
+        });
+
+        let notes = resolve_release_notes(Some("English notes"), &manifest).unwrap();
+
+        assert_eq!(notes.en, "English notes");
+        assert_eq!(notes.de, "Deutsche Hinweise");
+    }
+
+    #[test]
+    fn newer_localized_release_notes_schema_preserves_compatible_german_notes() {
+        let manifest = serde_json::json!({
+            "localized_notes": {
+                "schema": 2,
+                "de": "Deutsche Hinweise",
+                "en": "English notes"
+            }
+        });
+
+        let notes = resolve_release_notes(Some("English notes"), &manifest).unwrap();
+
+        assert_eq!(notes.en, "English notes");
+        assert_eq!(notes.de, "Deutsche Hinweise");
+    }
+
+    #[test]
+    fn invalid_localized_release_notes_schema_falls_back_to_english() {
+        let manifest = serde_json::json!({
+            "localized_notes": {
+                "schema": 0,
+                "de": "Deutsche Hinweise",
+                "en": "English notes"
+            }
+        });
+
+        let notes = resolve_release_notes(Some("English notes"), &manifest).unwrap();
+
+        assert_eq!(notes.en, "English notes");
+        assert_eq!(notes.de, "English notes");
+    }
+
+    #[test]
+    fn legacy_and_malformed_localized_notes_fall_back_to_english() {
+        let legacy = resolve_release_notes(Some("English notes"), &serde_json::json!({})).unwrap();
+        let inconsistent = resolve_release_notes(
+            Some("English notes"),
+            &serde_json::json!({
+                "localized_notes": {"schema": 1, "de": "Deutsch", "en": "Different"}
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(legacy.de, "English notes");
+        assert_eq!(legacy.en, "English notes");
+        assert_eq!(inconsistent, legacy);
     }
 
     #[test]

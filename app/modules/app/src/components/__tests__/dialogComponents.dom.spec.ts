@@ -8,6 +8,7 @@ import DeleteAccountDialog from '../DeleteAccountDialog.vue';
 import NewAccountDialog from '../NewAccountDialog.vue';
 import RollbackDialog from '../RollbackDialog.vue';
 import SafetyNoticeDialog from '../SafetyNoticeDialog.vue';
+import {releaseNotesForLanguage} from '../updateDialog';
 import UpdateDialog from '../UpdateDialog.vue';
 
 /** Build a complete update status for rendering tests. */
@@ -304,11 +305,16 @@ describe('updateDialog', () => {
   it('renders update details, disabled installation, errors, and actions', async () => {
     const wrapper = mount(UpdateDialog, {
       props: {
-        status: updateStatus({notes: 'Release notes', can_install: false, error: 'update_download_failed'}),
+        status: updateStatus({
+          notes: {de: 'Versionshinweise', en: 'Release notes'},
+          can_install: false,
+          error: 'update_download_failed',
+        }),
         rollbackBusy: false,
       },
     });
 
+    expect(wrapper.get('.release-notes h3').text()).toBe('What\'s new');
     expect(wrapper.text()).toContain('Release notes');
     expect(wrapper.text()).toContain('Installation is disabled');
     expect(wrapper.text()).toContain('Could not download and verify');
@@ -322,6 +328,15 @@ describe('updateDialog', () => {
     await buttons[1]!.trigger('click');
     expect(wrapper.emitted('install')).toHaveLength(1);
     expect(wrapper.emitted('later')).toHaveLength(1);
+  });
+
+  it('selects German or English notes and uses English for the Easter-egg locale', () => {
+    const notes = {de: 'Versionshinweise', en: 'Release notes'};
+
+    expect(releaseNotesForLanguage(notes, 'de')).toBe('Versionshinweise');
+    expect(releaseNotesForLanguage(notes, 'en')).toBe('Release notes');
+    expect(releaseNotesForLanguage(notes, 'tlh')).toBe('Release notes');
+    expect(releaseNotesForLanguage(null, 'de')).toBeNull();
   });
 
   it.each([

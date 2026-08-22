@@ -1,4 +1,5 @@
 {
+  "releaseNotes": "Das ist neu",
   "restart": "Daystrom wird nach der Überprüfung neu gestartet. Ein laufendes Spiel bleibt geöffnet und der Daystrom-Mod verbindet sich automatisch erneut.",
   "confirming": "Update wird bestätigt…",
   "retaining": "Vorherige Version wird vorbereitet…",

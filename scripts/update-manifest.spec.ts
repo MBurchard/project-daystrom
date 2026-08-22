@@ -1,12 +1,43 @@
-import type {UpdateManifest} from './update-manifest.ts';
+import type {GenerateUpdateManifestOptions, ReleaseNotes, UpdateManifest} from './update-manifest.ts';
 import {createHash} from 'node:crypto';
 import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
-import {finalizeUpdateManifest, generateUpdateManifest, publishUpdateManifest} from './update-manifest.ts';
+import {
+  finalizeUpdateManifest,
+  generateUpdateManifest as generateUpdateManifestBase,
+  parseReleaseNotes,
+  publishUpdateManifest,
+  readReleaseNotes,
+  renderReleaseBody,
+  renderUpdateNotes,
+} from './update-manifest.ts';
 
 const temporaryDirectories: string[] = [];
+
+/** Bilingual notes supplied by manifest-generation tests. */
+const RELEASE_NOTES: ReleaseNotes = {
+  version: '0.9.0',
+  locales: {
+    de: {title: 'Das ist neu', changes: ['Erste Änderung', 'Zweite Änderung']},
+    en: {title: 'What is new', changes: ['First change', 'Second change']},
+  },
+};
+
+/**
+ * Generate a test manifest with the mandatory release notes included.
+ * @param options - Manifest options other than the shared test notes.
+ * @returns Generated update manifest.
+ */
+function generateUpdateManifest(
+  options: Omit<GenerateUpdateManifestOptions, 'releaseNotes'>,
+): UpdateManifest {
+  return generateUpdateManifestBase({
+    ...options,
+    releaseNotes: {...RELEASE_NOTES, version: options.version},
+  });
+}
 
 /**
  * Create a temporary release-assets directory populated with valid updater files.
@@ -43,6 +74,12 @@ describe('generateUpdateManifest', () => {
 
     expect(manifest).toEqual({
       version: '0.9.0',
+      notes: '• First change\n• Second change',
+      localized_notes: {
+        schema: 1,
+        de: '• Erste Änderung\n• Zweite Änderung',
+        en: '• First change\n• Second change',
+      },
       platforms: {
         'darwin-aarch64': {
           signature: 'mac signature',
@@ -63,6 +100,33 @@ describe('generateUpdateManifest', () => {
     expect(existsSync(join(assetsDirectory, 'Project.Daystrom.app.tar.gz.sig'))).toBe(true);
     expect(JSON.parse(readFileSync(join(assetsDirectory, 'latest.json'), 'utf8'))).toEqual(manifest);
     expect(readFileSync(join(assetsDirectory, 'SHA256SUMS'), 'utf8')).toContain('latest.json');
+  });
+
+  it('keeps standard notes English and embeds localized notes for new clients', () => {
+    const assetsDirectory = createAssetsDirectory();
+
+    const manifest = generateUpdateManifestBase({
+      assetsDirectory,
+      version: '0.10.0',
+      repository: 'MBurchard/project-daystrom',
+      tag: '0.10.0',
+      releaseNotes: {...RELEASE_NOTES, version: '0.10.0'},
+    });
+
+    expect(manifest.notes).toBe('• First change\n• Second change');
+    expect(manifest.localized_notes?.de).toBe('• Erste Änderung\n• Zweite Änderung');
+  });
+
+  it('rejects release notes for a different version', () => {
+    const assetsDirectory = createAssetsDirectory();
+
+    expect(() => generateUpdateManifestBase({
+      assetsDirectory,
+      version: '0.10.0',
+      repository: 'MBurchard/project-daystrom',
+      tag: '0.10.0',
+      releaseNotes: RELEASE_NOTES,
+    })).toThrow('Release notes version 0.9.0 does not match 0.10.0');
   });
 
   it('rejects a release tag that does not match the application version', () => {
@@ -151,6 +215,110 @@ describe('generateUpdateManifest', () => {
         platforms: {} as UpdateManifest['platforms'],
       },
     })).toThrow('Previous update manifest has no complete darwin-aarch64 platform');
+  });
+});
+
+describe('releaseNotes', () => {
+  it('provides valid checked-in notes for the current package version', () => {
+    const packageMetadata = JSON.parse(readFileSync('package.json', 'utf8')) as {version: string};
+
+    expect(readReleaseNotes(packageMetadata.version).version).toBe(packageMetadata.version);
+  });
+
+  it('validates and renders one shared source for the client and GitHub', () => {
+    const releaseNotes = parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {
+        de: {title: 'Das ist neu', changes: ['Erste Änderung', 'Zweite Änderung']},
+        en: {title: 'What is new', changes: ['First change', 'Second change']},
+      },
+    }), '0.10.0');
+
+    expect(renderUpdateNotes(releaseNotes.locales.en)).toBe('• First change\n• Second change');
+    expect(renderUpdateNotes(releaseNotes.locales.de)).toBe('• Erste Änderung\n• Zweite Änderung');
+    expect(renderReleaseBody(releaseNotes)).toBe(
+      '## What is new\n\n- First change\n- Second change\n\n' +
+      '## Das ist neu\n\n- Erste Änderung\n- Zweite Änderung\n',
+    );
+  });
+
+  it('rejects mismatched versions and incomplete content', () => {
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.1',
+      locales: RELEASE_NOTES.locales,
+    }), '0.10.0')).toThrow('Release notes version 0.10.1 does not match 0.10.0');
+
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {
+        de: {title: 'Das ist neu', changes: []},
+        en: {title: 'What is new', changes: []},
+      },
+    }), '0.10.0')).toThrow('Release notes locale de must contain 1-20 changes');
+  });
+
+  it('requires exactly German and English with matching change counts', () => {
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {en: RELEASE_NOTES.locales.en},
+    }), '0.10.0')).toThrow('Release notes locales must contain exactly de, en');
+
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {
+        de: {title: 'Das ist neu', changes: ['Änderung']},
+        en: {title: 'What is new', changes: ['First change', 'Second change']},
+      },
+    }), '0.10.0')).toThrow('German and English release notes must contain the same number of changes');
+  });
+
+  it('rejects unknown fields, duplicate changes, and multiline entries', () => {
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: RELEASE_NOTES.locales,
+      extra: true,
+    }), '0.10.0')).toThrow('Release notes must contain exactly locales, version');
+
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {
+        de: {title: 'Das ist neu', changes: ['Änderung', 'Änderung']},
+        en: RELEASE_NOTES.locales.en,
+      },
+    }), '0.10.0')).toThrow('Release notes locale de must not contain duplicate changes');
+
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {
+        de: RELEASE_NOTES.locales.de,
+        en: {title: 'What is new', changes: ['First line\nSecond line', 'Second change']},
+      },
+    }), '0.10.0')).toThrow('Release notes change en.1 must contain one line of display text');
+  });
+
+  it('rejects bidirectional formatting characters removed by published clients', () => {
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {
+        de: RELEASE_NOTES.locales.de,
+        en: {title: 'What is new', changes: ['First\u202E change', 'Second change']},
+      },
+    }), '0.10.0')).toThrow('Release notes change en.1 must contain one line of display text');
+  });
+
+  it('keeps each language within the limit understood by published clients', () => {
+    const longChanges = Array.from(
+      {length: 12},
+      (_, index) => `${index} ${'x'.repeat(176)}`,
+    );
+
+    expect(() => parseReleaseNotes(JSON.stringify({
+      version: '0.10.0',
+      locales: {
+        de: {title: 'Das ist neu', changes: longChanges},
+        en: {title: 'What is new', changes: longChanges},
+      },
+    }), '0.10.0')).toThrow('Release notes locale de exceeds 2000 characters');
   });
 });
 

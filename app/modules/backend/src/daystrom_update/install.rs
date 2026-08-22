@@ -347,6 +347,7 @@ pub(super) fn is_trusted_release_download_url(url: &tauri::Url, version: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daystrom_update::DaystromReleaseNotes;
 
     /// Build a GitHub release URL for validator tests.
     fn release_url(scheme: &str, repository: &str, suffix: &str) -> tauri::Url {
@@ -404,7 +405,10 @@ mod tests {
         let mut status = DaystromUpdateStatus {
             phase: DaystromUpdatePhase::Installing,
             version: Some("0.10.0".to_string()),
-            notes: Some("Release notes".to_string()),
+            notes: Some(DaystromReleaseNotes {
+                de: "Versionshinweise".to_string(),
+                en: "Release notes".to_string(),
+            }),
             download_progress: Some(100),
             error: None,
             dismissed: false,
@@ -416,7 +420,7 @@ mod tests {
 
         assert_eq!(status.phase, DaystromUpdatePhase::Available);
         assert_eq!(status.version.as_deref(), Some("0.10.0"));
-        assert_eq!(status.notes.as_deref(), Some("Release notes"));
+        assert_eq!(status.notes.as_ref().map(|notes| notes.en.as_str()), Some("Release notes"));
         assert_eq!(status.download_progress, None);
         assert_eq!(status.error, Some(UiErrorCode::UpdateInstallFailed));
         assert!(status.can_install);
