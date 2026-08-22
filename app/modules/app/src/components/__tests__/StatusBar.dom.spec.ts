@@ -72,6 +72,9 @@ function props(overrides: Record<string, unknown> = {}) {
     update: updateStatus(),
     rollback: rollbackStatus(),
     modConnectionMissing: false,
+    trackedGameStarting: false,
+    trackedGameRunning: false,
+    trackedGameEstablished: false,
     ...overrides,
   };
 }
@@ -182,6 +185,38 @@ describe('statusBar', () => {
     expect(wrapper.text()).toContain('Close the Scopely Launcher');
     await wrapper.setProps({status: gameStatus({launcher_running: true, launcher_started_by_us: true})});
     expect(wrapper.text()).toContain('has been started');
+  });
+
+  it('reports a tracked game as running only after its first mod handshake', async () => {
+    const wrapper = mount(StatusBar, {
+      props: props({
+        status: gameStatus({game_running: true}),
+        trackedGameStarting: true,
+        trackedGameRunning: true,
+      }),
+    });
+
+    expect(wrapper.text()).toContain('Game starting…');
+    expect(wrapper.text()).not.toContain('Game running');
+
+    await wrapper.setProps({trackedGameStarting: false, trackedGameEstablished: true});
+    expect(wrapper.text()).toContain('Game running');
+    expect(wrapper.text()).not.toContain('Game starting…');
+  });
+
+  it('prioritises running over starting when multiple tracked games have different states', () => {
+    const wrapper = mount(StatusBar, {
+      props: props({
+        status: gameStatus({game_running: true}),
+        trackedGameStarting: true,
+        trackedGameRunning: true,
+        trackedGameEstablished: true,
+      }),
+    });
+
+    expect(wrapper.text()).toContain('Game running');
+    expect(wrapper.text()).not.toContain('Game starting…');
+    expect(wrapper.text()).not.toContain('Game not running');
   });
 
   it('opens available Daystrom updates and hides dismissed ones', async () => {

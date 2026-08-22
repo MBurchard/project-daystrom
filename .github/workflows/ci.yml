@@ -54,8 +54,8 @@ jobs:
         run: pnpm lint:ci
       - name: Typecheck
         run: pnpm typecheck
-      - name: Run frontend tests
-        run: pnpm test:app:frontend
+      - name: Run frontend tests with coverage
+        run: pnpm test:app:frontend:coverage
       - name: Run tooling tests
         run: pnpm test:tooling
 

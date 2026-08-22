@@ -139,7 +139,7 @@ async fn client_loop(mut rx: mpsc::UnboundedReceiver<String>) {
 
                 // Restore process identity, request settings and re-announce the observed player state.
                 let mut initial_messages = Vec::with_capacity(5);
-                let profile = std::env::var(crate::logging::PROFILE_ENV).unwrap_or_default();
+                let profile = std::env::var(crate::profile_protocol::PROFILE_ENV_VAR).unwrap_or_default();
                 if !profile.is_empty()
                     && let Some(hello) = serialize_message("client.hello", client_hello_payload(&profile))
                 {

@@ -2,6 +2,7 @@
   "heading": "Accounts",
   "server": "Server {{server}}",
   "start": "Starten",
+  "starting": "Startet…",
   "running": "Läuft",
   "add": "Neuen Account starten",
   "reconnecting": "Verbindung zum laufenden Spiel wird wiederhergestellt…",

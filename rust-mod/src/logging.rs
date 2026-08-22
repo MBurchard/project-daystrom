@@ -11,15 +11,13 @@ use log::{Level, LevelFilter, Log, Metadata, Record};
 use serde::Deserialize;
 
 use crate::TAURI_IDENTIFIER;
+use crate::profile_protocol::{INITIAL_PROFILE_STEM, NEW_ACCOUNT_PROFILE_STEM, PROFILE_ENV_VAR};
 
 /// Number of days to keep archived log files.
 const MAX_LOG_AGE_DAYS: i64 = 30;
 
 /// Maximum number of bytes to read from the end of a log file when looking for the last timestamp.
 const TAIL_READ_SIZE: u64 = 4096;
-
-/// Environment variable that determines which profile the mod operates on.
-const PROFILE_ENV_VAR: &str = "DAYSTROM_PROFILE";
 
 /// Global logger instance, initialized once via `init()`.
 static LOGGER: ModLogger = ModLogger;
@@ -78,7 +76,7 @@ fn open_log_writer(dir: &Path, base_name: &str) -> Option<BufWriter<File>> {
 /// - `106_Nabor`: `"mod_106_Nabor"`
 fn initial_log_base_name() -> String {
     match std::env::var(PROFILE_ENV_VAR) {
-        Ok(val) if !val.is_empty() && val != "new_account" && val != "initial" => {
+        Ok(val) if !val.is_empty() && val != NEW_ACCOUNT_PROFILE_STEM && val != INITIAL_PROFILE_STEM => {
             format!("mod_{val}")
         }
         _ => "mod".to_string(),
@@ -411,9 +409,6 @@ pub fn rename_log(profile_stem: &str) {
         let _ = sender.send(LogMessage::Rename(new_name));
     }
 }
-
-/// The `DAYSTROM_PROFILE` environment variable name, re-exported for other modules.
-pub const PROFILE_ENV: &str = PROFILE_ENV_VAR;
 
 // ---- Tests ----------------------------------------------------------------
 

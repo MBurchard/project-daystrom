@@ -2,6 +2,7 @@ import type {DaystromRollbackStatus} from '@generated/DaystromRollbackStatus';
 import type {DaystromUpdateStatus} from '@generated/DaystromUpdateStatus';
 import type {GameStatus} from '@generated/GameStatus';
 import type {ProfileState} from '@generated/ProfileState';
+import {INITIAL_PROFILE_STEM, NEW_ACCOUNT_PROFILE_STEM} from '@app/profileProtocol';
 import {flushPromises, shallowMount} from '@vue/test-utils';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {nextTick, ref} from 'vue';
@@ -66,6 +67,7 @@ function profileState(): ProfileState {
   return {
     profiles: [],
     running_profiles: [],
+    starting_profiles: [],
     external_game_running: false,
     game_origin_pending: false,
     mod_connection_missing: false,
@@ -107,6 +109,7 @@ describe('app', () => {
     initGameState: vi.fn(),
     destroyGameState: vi.fn(),
     isProfileRunning: vi.fn(() => false),
+    isProfileStarting: vi.fn(() => false),
     initProfileState: vi.fn(),
     destroyProfileState: vi.fn(),
     initSettings: vi.fn(),
@@ -164,6 +167,7 @@ describe('app', () => {
     mockUseProfileState.mockReturnValue({
       profiles,
       isProfileRunning: actions.isProfileRunning,
+      isProfileStarting: actions.isProfileStarting,
       init: actions.initProfileState,
       destroy: actions.destroyProfileState,
     });
@@ -226,12 +230,50 @@ describe('app', () => {
       context: safetyContext.value,
       acknowledgementRequired: true,
     });
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(SafetyNoticeDialog).exists()).toBe(true);
     wrapper.findComponent(SafetyNoticeDialog).vm.$emit('acknowledge');
     expect(actions.acknowledgeSafetyNotice).toHaveBeenCalledOnce();
 
     safetyRequired.value = false;
     await nextTick();
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+  });
+
+  it('derives starting and established game status from profile snapshots', async () => {
+    const wrapper = shallowMount(App);
+
+    profiles.value = {
+      ...profileState(),
+      running_profiles: ['106_Nabor'],
+      starting_profiles: ['106_Nabor'],
+    };
+    await nextTick();
+    expect(wrapper.findComponent(StatusBar).props()).toMatchObject({
+      trackedGameStarting: true,
+      trackedGameEstablished: false,
+    });
+
+    profiles.value.starting_profiles = [];
+    await nextTick();
+    expect(wrapper.findComponent(StatusBar).props()).toMatchObject({
+      trackedGameStarting: false,
+      trackedGameEstablished: true,
+    });
+  });
+
+  it('allows a mod warning to interrupt a voluntary safety review', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+
+    wrapper.findComponent(AppHeader).vm.$emit('openSettings');
+    await nextTick();
+    wrapper.findComponent(SettingsView).vm.$emit('openSafetyNotice');
+    await nextTick();
+    profiles.value.mod_connection_missing = true;
+    await nextTick();
+
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
   });
 
   it('prioritizes the safety notice without interrupting protected operations', async () => {
@@ -289,10 +331,10 @@ describe('app', () => {
     const tabs = wrapper.findComponent(AccountTabs);
 
     tabs.vm.$emit('launch', 'test-profile');
-    tabs.vm.$emit('launch', 'initial');
+    tabs.vm.$emit('launch', INITIAL_PROFILE_STEM);
 
     expect(actions.launchGame).toHaveBeenNthCalledWith(1, 'test-profile');
-    expect(actions.launchGame).toHaveBeenNthCalledWith(2, 'initial');
+    expect(actions.launchGame).toHaveBeenNthCalledWith(2, INITIAL_PROFILE_STEM);
   });
 
   it('switches between accounts and settings while recovery remains a dialog', async () => {
@@ -312,6 +354,11 @@ describe('app', () => {
       dismissible: true,
     });
     expect(wrapper.findComponent(SafetyNoticeDialog).props('acknowledgementRequired')).toBe(false);
+    safetyRequired.value = true;
+    await nextTick();
+    safetyRequired.value = false;
+    await nextTick();
+    expect(wrapper.findComponent(SafetyNoticeDialog).exists()).toBe(true);
     wrapper.findComponent(AppDialog).vm.$emit('close');
     await nextTick();
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
@@ -455,7 +502,7 @@ describe('app', () => {
     wrapper.findComponent(NewAccountDialog).vm.$emit('confirm');
     await nextTick();
 
-    expect(actions.launchGame).toHaveBeenCalledWith('new_account');
+    expect(actions.launchGame).toHaveBeenCalledWith(NEW_ACCOUNT_PROFILE_STEM);
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
   });
 

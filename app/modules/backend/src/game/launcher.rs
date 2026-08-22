@@ -8,6 +8,7 @@ use std::process::Child;
 use std::process::{Command, Stdio};
 
 use super::GameInfo;
+use crate::profile_protocol::PROFILE_ENV_VAR;
 use crate::use_log;
 
 use_log!("Launcher");
@@ -68,8 +69,8 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
         .env("DYLD_LIBRARY_PATH", lib_dir);
     configure_independent_game_process(&mut cmd);
     if let Some(p) = profile {
-        log_info!("Setting DAYSTROM_PROFILE={p}");
-        cmd.env("DAYSTROM_PROFILE", p);
+        log_info!("Setting {PROFILE_ENV_VAR}={p}");
+        cmd.env(PROFILE_ENV_VAR, p);
     }
     let child = cmd.spawn().map_err(|e| {
         log_error!("Failed to spawn game process: {e}");
@@ -107,8 +108,8 @@ pub fn launch(game: &GameInfo, mod_library: &Path, profile: Option<&str>) -> Res
     cmd.current_dir(&game.install_dir);
     configure_independent_game_process(&mut cmd);
     if let Some(p) = profile {
-        log_info!("Setting DAYSTROM_PROFILE={p}");
-        cmd.env("DAYSTROM_PROFILE", p);
+        log_info!("Setting {PROFILE_ENV_VAR}={p}");
+        cmd.env(PROFILE_ENV_VAR, p);
     }
     let child = cmd.spawn().map_err(|e| {
         log_error!("Failed to spawn game process: {e}");

@@ -3,6 +3,7 @@ import type {ProfileInfo} from '@generated/ProfileInfo';
 import {resolveSelectedProfileStem} from '@app/components/accountTabs';
 import {useI18n} from '@app/i18n';
 import accountsDefaults from '@app/locales/en/accounts.json';
+import {INITIAL_PROFILE_STEM, NEW_ACCOUNT_PROFILE_STEM} from '@app/profileProtocol';
 import {computed, ref, watch} from 'vue';
 
 const props = defineProps<{
@@ -22,6 +23,8 @@ const props = defineProps<{
   profiles: ProfileInfo[];
   /** Determine whether one profile is currently running. */
   isProfileRunning: (stem: string) => boolean;
+  /** Determine whether one running profile is still within its initial handshake grace period. */
+  isProfileStarting: (stem: string) => boolean;
 }>();
 const emit = defineEmits<{
   launch: [profile: string];
@@ -51,6 +54,31 @@ function launchProfile(stem: string): void {
   selectProfile(stem);
   emit('launch', stem);
 }
+
+/**
+ * Return the translated launch-state label for one profile.
+ *
+ * @param stem - profile stem to inspect
+ * @returns the launch-state label
+ */
+function profileLaunchLabel(stem: string): string {
+  if (props.isProfileStarting(stem)) {
+    return t('starting');
+  }
+  return t(props.isProfileRunning(stem) ? 'running' : 'start');
+}
+
+/**
+ * Return the translated launch-state label for the initial account button.
+ *
+ * @returns the initial launch-state label
+ */
+function initialLaunchLabel(): string {
+  if (props.isProfileStarting(INITIAL_PROFILE_STEM)) {
+    return t('starting');
+  }
+  return t(props.isProfileRunning(INITIAL_PROFILE_STEM) ? 'running' : 'startNew');
+}
 </script>
 
 <template>
@@ -77,21 +105,30 @@ function launchProfile(stem: string): void {
             {{ profile.name }} · {{ t('server', { server: profile.server }) }}
           </button>
           <button class="account-start"
-              :class="{ running: props.isProfileRunning(profile.stem) }"
+              :class="{
+                running: props.isProfileRunning(profile.stem) && !props.isProfileStarting(profile.stem),
+                starting: props.isProfileStarting(profile.stem),
+              }"
               :disabled="!props.modDeployed
                 || props.actionPending
                 || props.isProfileRunning(profile.stem)
                 || launchBlocked"
               @click="launchProfile(profile.stem)">
-            <span v-if="props.isProfileRunning(profile.stem)" class="running-indicator" aria-hidden="true" />
-            {{ t(props.isProfileRunning(profile.stem) ? 'running' : 'start') }}
+            <span v-if="props.isProfileRunning(profile.stem)"
+                class="running-indicator"
+                :class="{ starting: props.isProfileStarting(profile.stem) }"
+                aria-hidden="true" />
+            {{ profileLaunchLabel(profile.stem) }}
           </button>
         </div>
       </div>
       <button class="account-tab add-account"
           :title="t('add')"
           :aria-label="t('add')"
-          :disabled="!props.modDeployed || props.actionPending || launchBlocked"
+          :disabled="!props.modDeployed
+            || props.actionPending
+            || props.isProfileRunning(NEW_ACCOUNT_PROFILE_STEM)
+            || launchBlocked"
           @click="emit('addAccount')">
         +
       </button>
@@ -139,9 +176,12 @@ function launchProfile(stem: string): void {
         </p>
       </div>
       <button v-if="props.installed"
-          :disabled="!props.canLaunchInitial || props.actionPending || launchBlocked"
-          @click="emit('launch', 'initial')">
-        {{ t('startNew') }}
+          :disabled="!props.canLaunchInitial
+            || props.actionPending
+            || props.isProfileRunning(INITIAL_PROFILE_STEM)
+            || launchBlocked"
+          @click="emit('launch', INITIAL_PROFILE_STEM)">
+        {{ initialLaunchLabel() }}
       </button>
     </div>
   </section>
@@ -236,6 +276,11 @@ function launchProfile(stem: string): void {
   opacity: 1;
 }
 
+.account-start.starting {
+  filter: none;
+  opacity: 0.8;
+}
+
 .account-start:hover:not(:disabled) {
   border-color: var(--action-primary-border-hover);
   background: var(--action-primary-surface-hover);
@@ -266,6 +311,11 @@ function launchProfile(stem: string): void {
   border-radius: 50%;
   background: var(--activity-indicator);
   box-shadow: var(--activity-shadow);
+}
+
+.running-indicator.starting {
+  background: var(--status-warning);
+  box-shadow: none;
 }
 
 .account-panel {

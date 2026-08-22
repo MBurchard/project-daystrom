@@ -20,6 +20,8 @@ export interface ProfileStateComposable {
   gameOriginPending: Readonly<Ref<boolean>>;
   /** Check whether a specific profile is currently running. */
   isProfileRunning: (stem: string) => boolean;
+  /** Check whether a running profile is still within its initial handshake grace period. */
+  isProfileStarting: (stem: string) => boolean;
   /** Register event listeners and load the initial state. Call from onMounted. */
   init: () => void;
   /** Unregister event listeners. Call from onUnmounted. */
@@ -29,6 +31,7 @@ export interface ProfileStateComposable {
 const DEFAULT_PROFILE_STATE: ProfileState = {
   profiles: [],
   running_profiles: [],
+  starting_profiles: [],
   external_game_running: false,
   game_origin_pending: false,
   mod_connection_missing: false,
@@ -60,6 +63,16 @@ export function useProfileState(): ProfileStateComposable {
    */
   function isProfileRunning(stem: string): boolean {
     return profiles.value.running_profiles.includes(stem);
+  }
+
+  /**
+   * Check whether a running profile is still within its initial handshake grace period.
+   *
+   * @param stem - profile stem (e.g. "106_Nabor")
+   * @returns whether the profile is still starting
+   */
+  function isProfileStarting(stem: string): boolean {
+    return profiles.value.starting_profiles.includes(stem);
   }
 
   /**
@@ -119,6 +132,7 @@ export function useProfileState(): ProfileStateComposable {
     externalGameRunning,
     gameOriginPending,
     isProfileRunning,
+    isProfileStarting,
     init,
     destroy,
   };

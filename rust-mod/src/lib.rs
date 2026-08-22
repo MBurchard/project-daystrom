@@ -13,6 +13,7 @@ mod hooks;
 mod il2cpp;
 #[cfg_attr(test, allow(dead_code))]
 mod logging;
+mod profile_protocol;
 mod profile_store;
 #[cfg_attr(test, allow(dead_code))]
 mod settings;
@@ -47,7 +48,7 @@ fn init() {
 
     // Without DAYSTROM_PROFILE the mod is transparent (no hooks, no logging).
     // The DLL proxy still forwards version.dll calls to the system DLL.
-    if std::env::var(logging::PROFILE_ENV).unwrap_or_default().is_empty() {
+    if std::env::var(profile_protocol::PROFILE_ENV_VAR).unwrap_or_default().is_empty() {
         return;
     }
 

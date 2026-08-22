@@ -250,9 +250,10 @@ async fn handle_client(
                 crate::game_state::update(&app_clone, |state| {
                     state.game_started_by_us = true;
                 });
-                let running_profiles = crate::process_origin::running_profiles();
-                crate::profile_state::update(&app_clone, |state| {
-                    state.running_profiles = running_profiles;
+                let process = crate::process_origin::tracked_games_snapshot();
+                crate::profile_state::update_from_process(&app_clone, process.revision, |state| {
+                    state.running_profiles = process.running_profiles;
+                    state.starting_profiles = process.starting_profiles;
                     state.external_game_running = false;
                     state.game_origin_pending = false;
                     state.mod_connection_missing = false;

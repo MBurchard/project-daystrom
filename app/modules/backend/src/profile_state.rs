@@ -44,6 +44,17 @@ struct TomlProfilSection {
     profile_type: Option<String>,
 }
 
+/// Internal ordering metadata excluded from frontend-visible state equality.
+#[derive(Clone, Copy, Debug, Default, Eq)]
+struct ProcessRevision(u64);
+
+impl PartialEq for ProcessRevision {
+    /// Revisions order competing updates but never represent a visible state change.
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
 /// State of all known profiles.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, TS)]
 #[ts(export)]
@@ -52,21 +63,29 @@ pub struct ProfileState {
     pub profiles: Vec<ProfileInfo>,
     /// Profile stems of game instances currently running (launched by Daystrom).
     pub running_profiles: Vec<String>,
+    /// Profile stems still waiting within their initial mod-handshake grace period.
+    pub starting_profiles: Vec<String>,
     /// Whether a game process is running that was NOT launched by Daystrom.
     pub external_game_running: bool,
     /// Whether Daystrom is waiting for a running game to restore its launch identity.
     pub game_origin_pending: bool,
     /// Whether a running game has not established a validated Daystrom mod connection.
     pub mod_connection_missing: bool,
+    /// Latest tracked-game revision applied to the backend-owned state.
+    #[serde(skip)]
+    #[ts(skip)]
+    process_revision: ProcessRevision,
 }
 
 /// Global profile state.
 static STATE: Mutex<ProfileState> = Mutex::new(ProfileState {
     profiles: Vec::new(),
     running_profiles: Vec::new(),
+    starting_profiles: Vec::new(),
     external_game_running: false,
     game_origin_pending: false,
     mod_connection_missing: false,
+    process_revision: ProcessRevision(0),
 });
 
 /// Return a snapshot of the current profile state.
@@ -80,6 +99,25 @@ pub fn update(app: &tauri::AppHandle, updater: impl FnOnce(&mut ProfileState)) {
         log_debug!("Profile state changed, emitting to frontend");
         let _ = app.emit("profile-status", payload);
     }
+}
+
+/// Apply process-derived state unless a newer tracked-game snapshot was already stored.
+pub fn update_from_process(app: &tauri::AppHandle, revision: u64, updater: impl FnOnce(&mut ProfileState)) -> bool {
+    let mut applied = false;
+    update(app, |state| {
+        applied = apply_process_update(state, revision, updater);
+    });
+    applied
+}
+
+/// Apply one process-derived update only when its source snapshot is not stale.
+fn apply_process_update(state: &mut ProfileState, revision: u64, updater: impl FnOnce(&mut ProfileState)) -> bool {
+    if revision < state.process_revision.0 {
+        return false;
+    }
+    updater(state);
+    state.process_revision = ProcessRevision(revision);
+    true
 }
 
 /// Scan the config directory for profile TOML files.
@@ -213,6 +251,62 @@ pub fn delete_local_profile(app: tauri::AppHandle, stem: String) -> Result<(), U
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_updates_reject_stale_snapshots() {
+        let mut state = ProfileState::default();
+        let mut stale_update_ran = false;
+
+        assert!(apply_process_update(&mut state, 2, |state| {
+            state.mod_connection_missing = false;
+            state.running_profiles = vec!["106_Nabor".to_string()];
+        }));
+        assert!(!apply_process_update(&mut state, 1, |state| {
+            stale_update_ran = true;
+            state.mod_connection_missing = true;
+            state.running_profiles = vec!["initial".to_string()];
+        }));
+
+        assert!(!stale_update_ran);
+        assert_eq!(state.running_profiles, vec!["106_Nabor"]);
+        assert!(!state.mod_connection_missing);
+        assert_eq!(state.process_revision.0, 2);
+    }
+
+    #[test]
+    fn process_revision_is_not_serialized() {
+        let state = ProfileState {
+            process_revision: ProcessRevision(7),
+            ..ProfileState::default()
+        };
+
+        let serialized = serde_json::to_value(state).unwrap();
+
+        assert!(serialized.get("process_revision").is_none());
+    }
+
+    #[test]
+    fn process_revision_does_not_change_profile_state_equality() {
+        let current = ProfileState::default();
+        let newer = ProfileState {
+            process_revision: ProcessRevision(1),
+            ..ProfileState::default()
+        };
+
+        assert_eq!(current, newer);
+    }
+
+    #[test]
+    fn process_revision_does_not_emit_a_changed_snapshot() {
+        let state = Mutex::new(ProfileState::default());
+
+        let changed = crate::state_update::update_if_changed(&state, |state| {
+            state.process_revision = ProcessRevision(1);
+        });
+
+        assert!(changed.is_none());
+        assert_eq!(state.lock().unwrap().process_revision.0, 1);
+    }
 
     /// Build a profile suitable for path-resolution tests.
     fn profile(stem: &str) -> ProfileInfo {
