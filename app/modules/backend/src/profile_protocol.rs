@@ -3,6 +3,7 @@
 //! Compatibility is checked by `scripts/profile-protocol.spec.ts`.
 
 /// Environment variable used to pass the selected profile to the injected mod.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) const PROFILE_ENV_VAR: &str = "DAYSTROM_PROFILE";
 
 /// Profile placeholder used while importing the first detected account.
