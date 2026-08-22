@@ -177,11 +177,20 @@ impl MonitorState {
     /// actions are needed, and updates internal state. Pure logic: no I/O, no side effects
     /// beyond `self`.
     fn tick(&mut self, game: bool, launcher: bool, installed: bool) -> Vec<MonitorAction> {
-        let api_recheck_due = self.last_api_check.elapsed() >= API_RECHECK_INTERVAL;
+        self.tick_at(game, launcher, installed, Instant::now())
+    }
+
+    /// Evaluate one monitoring cycle against an explicit clock reading.
+    ///
+    /// Separated from `tick` so the API recheck timer can be driven deterministically. `Instant`
+    /// is anchored to the system start, so a test cannot reliably construct a reading far enough
+    /// in the past. Passing the reference instant forward avoids that limitation entirely.
+    fn tick_at(&mut self, game: bool, launcher: bool, installed: bool, now: Instant) -> Vec<MonitorAction> {
+        let api_recheck_due = now.duration_since(self.last_api_check) >= API_RECHECK_INTERVAL;
         let actions = evaluate(self.prev_game, self.prev_launcher, game, launcher, installed, api_recheck_due);
 
         if actions.iter().any(|a| matches!(a, MonitorAction::RecheckUpdateApi)) {
-            self.last_api_check = Instant::now();
+            self.last_api_check = now;
         }
 
         self.prev_game = game;
@@ -569,31 +578,29 @@ mod tests {
     fn api_recheck_timer_resets_after_recheck() {
         let mut state = MonitorState::new(None);
 
-        // Force the timer to be "expired" (checked_sub avoids underflow on short-uptime Windows)
-        let expired = API_RECHECK_INTERVAL + Duration::from_secs(1);
-        let Some(past) = Instant::now().checked_sub(expired) else {
-            // System uptime too short to represent the interval; skip this test
-            return;
-        };
-        state.last_api_check = past;
+        // Advance the observed clock past the interval instead of backdating the timer.
+        let start = Instant::now();
+        let expired = start + API_RECHECK_INTERVAL + Duration::from_secs(1);
+        state.last_api_check = start;
 
         // Installed game + timer expired: triggers recheck.
-        let actions = state.tick(false, true, true);
+        let actions = state.tick_at(false, true, true, expired);
         assert!(actions.contains(&MonitorAction::RecheckUpdateApi));
 
-        // tick() reset the timer, so the next tick should NOT recheck
-        let actions = state.tick(false, true, true);
+        // tick_at() reset the timer, so the next tick should NOT recheck
+        let actions = state.tick_at(false, true, true, expired);
         assert!(!actions.contains(&MonitorAction::RecheckUpdateApi));
     }
 
     #[test]
     fn api_recheck_triggered_without_launcher() {
         let mut state = MonitorState::new(None);
-        let expired = API_RECHECK_INTERVAL + Duration::from_secs(1);
-        state.last_api_check = Instant::now().checked_sub(expired).unwrap_or(Instant::now());
+        let start = Instant::now();
+        let expired = start + API_RECHECK_INTERVAL + Duration::from_secs(1);
+        state.last_api_check = start;
 
         // Timer expired without launcher: recheck still runs.
-        let actions = state.tick(true, false, true);
+        let actions = state.tick_at(true, false, true, expired);
         assert!(actions.contains(&MonitorAction::RecheckUpdateApi));
     }
 
