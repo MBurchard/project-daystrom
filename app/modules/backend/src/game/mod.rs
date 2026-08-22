@@ -183,7 +183,7 @@ pub fn is_process_id_running(pid: u32) -> bool {
             }
             let wait_result = WaitForSingleObject(process, 0);
             CloseHandle(process);
-            return wait_result == WAIT_TIMEOUT;
+            wait_result == WAIT_TIMEOUT
         }
     }
 
