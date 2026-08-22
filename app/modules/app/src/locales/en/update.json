@@ -1,4 +1,5 @@
 {
+  "releaseNotes": "What's new",
   "restart": "Daystrom will restart after verification. A running game stays open, and its Daystrom mod reconnects automatically.",
   "confirming": "Confirming update…",
   "retaining": "Preparing the previous version…",

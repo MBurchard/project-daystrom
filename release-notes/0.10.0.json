@@ -1,0 +1,31 @@
+{
+  "version": "0.10.0",
+  "locales": {
+    "de": {
+      "title": "Das ist neu",
+      "changes": [
+        "Komplett überarbeitete, barriereärmere Oberfläche mit klaren Statusanzeigen und Dialogen",
+        "Deutsche und englische Benutzeroberfläche",
+        "Übersichtlicher Account-Arbeitsbereich und sicheres Löschen lokaler Accountdaten",
+        "Eigene Fensterleiste, einstellbare Skalierung der Daystrom-Oberfläche und aufgeräumtes macOS-Menü",
+        "Konfigurierbares Slider-Limit beim Tauschen von Transportermustern",
+        "Shop- und Raffineriepakete auch während ihrer Abklingzeit einsehen",
+        "Warnung, wenn STFC ohne den Daystrom-Mod läuft",
+        "Verbindliche Sicherheitshinweise mit plattformspezifischen Anleitungen zum Entfernen des Mods"
+      ]
+    },
+    "en": {
+      "title": "What's new",
+      "changes": [
+        "Completely redesigned, more accessible interface with clear status indicators and dialogues",
+        "German and English user interfaces",
+        "Clearer account workspace and safe deletion of local account data",
+        "Custom window chrome, adjustable scaling of the Daystrom interface, and a streamlined macOS menu",
+        "Configurable slider limit when exchanging Transporter Patterns",
+        "Inspect shop and refinery bundles even while they are on cooldown",
+        "Warning when STFC is running without the Daystrom mod",
+        "Mandatory safety notice with platform-specific instructions for removing the mod"
+      ]
+    }
+  }
+}

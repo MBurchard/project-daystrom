@@ -5,7 +5,7 @@
   "accountProtection": "Verknüpfe Deinen Spielaccount vor der Nutzung von Daystrom mit einer Scopely ID. So kannst Du den Zugang unabhängig von lokal gespeicherten Profilen und Anmeldedaten wiederherstellen.",
   "windowsRemoval": "Wenn Du Daystrom entfernen möchtest, beende zuerst das Spiel. Nutze anschließend in Daystrom „Mod entfernen“, bevor Du Project Daystrom über die Windows-Einstellungen deinstallierst.",
   "windowsManualRemoval": "Falls „Mod entfernen“ nicht funktioniert, kannst Du die Mod-Bibliothek manuell löschen:",
-  "macosRemoval": "Wenn Du Daystrom entfernen möchtest, beende zuerst das Spiel und verschiebe Project Daystrom anschließend in den Papierkorb. Daystrom hinterlässt unter macOS keine Mod-Bibliothek im Spielverzeichnis.",
+  "macosRemoval": "Wenn Du Daystrom entfernen möchtest, beende zuerst das Spiel und verschiebe Project Daystrom anschließend in den Papierkorb.",
   "cleanup": "Um auch gespeicherte Einstellungen, Zwischenspeicher und Logs zu entfernen, lösche diese Ordner:",
   "understood": "Ich habe diese Hinweise gelesen und verstanden.",
   "continue": "Daystrom verwenden",

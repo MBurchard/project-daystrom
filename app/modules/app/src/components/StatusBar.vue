@@ -52,9 +52,12 @@ const {errorText} = useUiError();
     <span v-else class="status-item fail">{{ t('notInstalled') }}</span>
 
     <button v-if="props.update.version && !props.update.dismissed"
-        class="status-item warn interactive"
+        class="status-item warn interactive segmented-status segmented-action"
         @click="emit('openUpdate')">
-      {{ t('daystromAvailable', { version: props.update.version }) }}
+      <span class="segmented-status-label">
+        {{ t('daystromAvailable', { version: props.update.version }) }}
+      </span>
+      <span class="forward-action" aria-hidden="true">›</span>
     </button>
     <span v-else-if="props.update.phase === 'checking'" class="status-item neutral">
       {{ t('checkingDaystrom') }}
@@ -142,9 +145,10 @@ const {errorText} = useUiError();
     <span v-if="props.status.launcher_running" class="status-item warn">{{ t('launcherRunning') }}</span>
 
     <button v-if="props.rollback.mod_restore_pending"
-        class="status-item warn interactive"
+        class="status-item warn interactive segmented-status segmented-action"
         @click="emit('openRollback')">
-      {{ t('modRestorePending') }}
+      <span class="segmented-status-label">{{ t('modRestorePending') }}</span>
+      <span class="forward-action" aria-hidden="true">›</span>
     </button>
   </section>
 

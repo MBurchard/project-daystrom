@@ -4,6 +4,8 @@ import {useUiError} from '@app/composables/useUiError';
 import {useI18n} from '@app/i18n';
 import globalDefaults from '@app/locales/en/global.json';
 import updateDefaults from '@app/locales/en/update.json';
+import {computed} from 'vue';
+import {releaseNotesForLanguage} from './updateDialog';
 
 const props = defineProps<{
   /** Backend-owned update state rendered without frontend policy decisions. */
@@ -17,15 +19,17 @@ const emit = defineEmits<{
   later: [];
 }>();
 
-const {t} = useI18n('update', {...updateDefaults, later: globalDefaults.later});
+const {language, t} = useI18n('update', {...updateDefaults, later: globalDefaults.later});
 const {errorText} = useUiError();
+const releaseNotes = computed(() => releaseNotesForLanguage(props.status.notes, language.value));
 </script>
 
 <template>
   <div class="update-dialog">
-    <p v-if="props.status.notes" class="release-notes">
-      {{ props.status.notes }}
-    </p>
+    <section v-if="releaseNotes" class="release-notes">
+      <h3>{{ t('releaseNotes') }}</h3>
+      <p>{{ releaseNotes }}</p>
+    </section>
     <p>
       {{ t('restart') }}
     </p>
@@ -72,11 +76,20 @@ const {errorText} = useUiError();
 }
 
 .release-notes {
-  max-height: 12rem;
   overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.release-notes h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.release-notes p {
+  max-height: 12rem;
+  margin: 0;
   overflow-y: auto;
   white-space: pre-wrap;
-  user-select: text;
 }
 
 .progress-row {

@@ -191,6 +191,7 @@ describe('statusBar', () => {
 
     await wrapper.setProps({update: updateStatus({phase: 'available', version: '0.10.1'})});
     const updateButton = wrapper.findAll('button').find(button => button.text().includes('Daystrom 0.10.1'))!;
+    expect(updateButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
     await updateButton.trigger('click');
     expect(wrapper.emitted('openUpdate')).toHaveLength(1);
 
@@ -218,6 +219,7 @@ describe('statusBar', () => {
 
     expect(wrapper.text()).toContain('STFC could not be started');
     const rollbackButton = wrapper.findAll('button').find(button => button.text().includes('Previous mod'))!;
+    expect(rollbackButton.get('.forward-action').attributes('aria-hidden')).toBe('true');
     await rollbackButton.trigger('click');
     expect(wrapper.emitted('openRollback')).toHaveLength(1);
   });

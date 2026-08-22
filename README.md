@@ -20,7 +20,9 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
 - **Multi-account support** on Windows and macOS
   - Each account gets its own TOML-based profile with isolated game settings
   - Custom PlayerPrefs interceptor redirects game settings into per-profile storage
-  - Switching accounts is a single click in the launcher, profiles are portable across platforms
+  - Dedicated account tabs separate selection, launch actions, and running state
+  - Local profiles and sign-in data can be deleted safely with explicit confirmation
+  - Profiles are portable across platforms
 - **Game enhancements** powered by the Rust mod
   - Configurable keyboard shortcuts with game-binding conflict detection
   - Adjustable UI scale (50–200%), applied live to the running game
@@ -34,14 +36,29 @@ with a custom hook engine (ARM64 + x86_64) that intercepts the game's IL2CPP run
     attack it without using the mouse
   - Configurable Main Action shortcut with support for keyboard keys and extra mouse buttons
   - Toast banner suppression with per-type opt-out (combat, station, armada, etc.)
+  - Configurable slider limits for Standard Recruit, Alliance Donations, and Transporter Patterns
+  - Shop and refinery bundles remain inspectable while they are on cooldown
   - Automatic STFC update detection via the Scopely update API
 - **Native cross-platform app** (Tauri 2 + Vue 3)
+  - English and German interface
+  - Adjustable scaling of the Daystrom interface using keyboard or mouse-wheel controls
   - Unified launcher: entitlement patching on macOS, DLL proxy injection on Windows
   - Process monitoring with automatic detection of game and launcher activity
+  - Visible warning when STFC is running without a connected Daystrom mod
   - System tray integration with minimize-to-tray and quit protection
   - Live WebSocket bridge that syncs settings to the running game in real time
-  - Signed Daystrom updates with explicit installation and staged rollout
+  - Signed Daystrom updates with explicit installation, staged rollout, and localized release notes
   - One-click rollback to the verified predecessor, including its bundled mod and settings
+
+## Safety and account protection
+
+Project Daystrom is an unofficial community project and is neither developed nor supported by Scopely. It modifies the
+game and loads its own code into the running game process. Game updates can therefore make Daystrom temporarily
+incompatible, and use is at your own risk.
+
+Link every game account to a Scopely ID before using Daystrom so access does not depend on local profiles or sign-in
+data. Daystrom shows the complete platform-specific safety and removal instructions on first use and makes them
+available again from Settings.
 
 ## Installation
 
@@ -52,11 +69,13 @@ Download the latest release for your platform from the
 - **Windows**: Download the `.exe` installer and run it. If Windows SmartScreen shows a warning, click
   "More info" and then "Run anyway" (the app is self-signed, not yet verified by Microsoft).
 
-After installation, launch Project Daystrom and click the play button to start the game with the mod.
+After installation, launch Project Daystrom, review the safety notice, and prepare the mod through the action in the
+status bar. To add the first account, start STFC through Daystrom and sign in to the intended Scopely account. Daystrom
+then adds its player profile as an account tab; use `Start` on that tab for later launches.
 
-Daystrom offers signed application updates in the main window and installs them only after confirmation. A running game
-remains open while Daystrom updates and reconnects. When a verified predecessor is available, the same window offers a
-one-click rollback.
+Daystrom shows localized release notes for signed application updates and installs them only after confirmation. A
+running game remains open while Daystrom updates, and its mod reconnects automatically after Daystrom restarts. When a
+verified predecessor is available, the same window offers a one-click rollback.
 
 ## Acknowledgements
 
@@ -81,7 +100,9 @@ project-daystrom/
 ├── tsconfig.base.json      # Shared TypeScript base config
 ├── scripts/                # Build and tooling scripts
 │   ├── build.ts            #   Mod + app build orchestration
+│   ├── update-manifest.ts  #   Release notes + updater manifest generation
 │   └── package.json        #   Script dependencies
+├── release-notes/          # Versioned German and English release notes
 ├── rust-mod/               # Daystrom game mod (Rust, cdylib)
 │   ├── src/hook/           #   Hook engine (inline hooks, ARM64 + x86_64)
 │   ├── src/hooks/          #   IL2CPP hook implementations
@@ -152,9 +173,9 @@ This compiles the mod for the current platform and copies the result to `app/res
 | `pnpm test:app:backend:coverage`           | Run backend tests with llvm-cov coverage              |
 | `pnpm check:mod:dump -- <paths>`           | Check IL2CPP dumps against the compatibility manifest |
 | `pnpm release:verify -- <macOS> <Windows>` | Require compatible platform dumps before release      |
-| `pnpm build`                               | Build everything (mod dylib → Tauri app)              |
-| `pnpm build:mod`                           | Build mod dylib and copy to `app/resources/mod/`      |
-| `pnpm build:app`                           | Build mod dylib + Tauri app bundle                    |
+| `pnpm build`                               | Build everything (mod library → Tauri app)            |
+| `pnpm build:mod`                           | Build mod library and copy to `app/resources/mod/`    |
+| `pnpm build:app`                           | Build mod library + Tauri app bundle                  |
 | `pnpm icons`                               | Generate Tauri icons from `resources/daystrom.png`    |
 | `pnpm dev`                                 | Build mod + start Tauri app with hot reload           |
 
@@ -169,8 +190,11 @@ This compiles the mod for the current platform and copies the result to `app/res
 ## Release maintenance
 
 Updater-enabled releases require Windows, Apple, and Tauri signing credentials. See
-[release-signing.md](docs/release-signing.md) for credential setup and [auto-update.md](docs/auto-update.md) for the
-release, update, rollout, and rollback contract.
+[release-signing.md](docs/release-signing.md) for credential setup and [releasing.md](docs/releasing.md) for the release
+process and manifest compatibility rules.
+
+Every release requires a reviewed `release-notes/<version>.json` containing German and English entries. Release
+automation validates this file and uses it for both the GitHub release body and the notes embedded in `latest.json`.
 
 ## App (Tauri + Vue 3 + Vite)
 
@@ -178,7 +202,7 @@ release, update, rollout, and rollback contract.
 
 Shared types between Rust backend and TypeScript frontend are auto-generated by
 [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Rust structs annotated with `#[derive(TS)]` produce
-TypeScript interfaces in `app/modules/app/src/generated/` whenever `pnpm test:app:backend` runs.
+TypeScript types in `app/modules/app/src/generated/` whenever `pnpm test:app:backend` runs.
 Rust doc comments are carried over as JSDoc.
 
 ```rust

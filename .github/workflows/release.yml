@@ -30,6 +30,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+
       - name: Resolve release metadata
         id: metadata
         env:
@@ -54,6 +59,11 @@ jobs:
           echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Validate and render release notes
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: node scripts/update-manifest.ts notes "$RELEASE_VERSION" release-body.md
+
       - name: Create or validate draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,6 +84,9 @@ jobs:
               echo "Draft $RELEASE_TAG targets $TARGET instead of $RELEASE_SHA" >&2
               exit 1
             fi
+            gh release edit "$RELEASE_TAG" \
+              --title "Project Daystrom $RELEASE_VERSION" \
+              --notes-file release-body.md
           else
             if gh api "repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
               echo "Tag $RELEASE_TAG already exists without a matching draft release" >&2
@@ -83,7 +96,7 @@ jobs:
               --draft \
               --target "$RELEASE_SHA" \
               --title "Project Daystrom $RELEASE_VERSION" \
-              --notes "Release candidate for Project Daystrom $RELEASE_VERSION."
+              --notes-file release-body.md
           fi
 
   build-macos:

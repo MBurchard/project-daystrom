@@ -26,7 +26,7 @@ The public key is embedded in `app/modules/backend/tauri.conf.json`. Release pac
 signed by its matching private key. Losing the private key or password prevents existing installations from trusting
 future updates; rotation therefore requires a migration release signed by the previous key.
 
-The trust model and release invariants are documented in [auto-update.md](auto-update.md).
+The release process and manifest compatibility rules are documented in [releasing.md](releasing.md).
 
 ## Windows certificate
 

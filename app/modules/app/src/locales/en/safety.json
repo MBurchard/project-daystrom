@@ -5,7 +5,7 @@
   "accountProtection": "Before using Daystrom, link your game account to a Scopely ID. This helps you recover access independently of locally stored profiles and sign-in data.",
   "windowsRemoval": "If you want to remove Daystrom, close the game first. Then use “Remove mod” in Daystrom before uninstalling Project Daystrom in Windows Settings.",
   "windowsManualRemoval": "If “Remove mod” does not work, you can delete the mod library manually:",
-  "macosRemoval": "If you want to remove Daystrom, close the game first, then move Project Daystrom to the Bin. Daystrom does not leave a mod library in the game directory on macOS.",
+  "macosRemoval": "If you want to remove Daystrom, close the game first, then move Project Daystrom to the Bin.",
   "cleanup": "To also remove saved settings, caches, and logs, delete these folders:",
   "understood": "I have read and understood these notes.",
   "continue": "Use Daystrom",

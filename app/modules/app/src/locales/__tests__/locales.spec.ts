@@ -110,6 +110,10 @@ describe('locales', () => {
     }
   });
 
+  it('keeps the mandatory Klingon safety notice in understandable English', () => {
+    expect(tlhSafety).toEqual(enSafety);
+  });
+
   it('translates every configured toast-banner type', () => {
     const configuredTypes = Object.values(bannerCategories).flat().sort();
     expect(Object.keys(enToast).sort()).toEqual(configuredTypes);
