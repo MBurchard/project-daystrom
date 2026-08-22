@@ -8,6 +8,7 @@ use std::process::Child;
 use std::process::{Command, Stdio};
 
 use super::GameInfo;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::profile_protocol::PROFILE_ENV_VAR;
 use crate::use_log;
 
