@@ -3,6 +3,8 @@
   "server": "Server {{server}}",
   "start": "yItagh",
   "starting": "taghlI'…",
+  "startFailed": "taghlu'DI' Qagh",
+  "statusUnclear": "Dotlh Sovbe'lu'",
   "running": "QaptaH",
   "add": "Account chu' yItagh",
   "reconnecting": "QaptaHbogh QujvaD rarqa'…",

@@ -13,6 +13,8 @@
   "installMod": "Install mod",
   "removeMod": "Remove mod",
   "gameStarting": "Game starting…",
+  "gameStartFailed": "Game start failed",
+  "gameStatusUnclear": "Game status unclear",
   "gameRunning": "Game running",
   "gameNotRunning": "Game not running",
   "launcherRunning": "Scopely Launcher running",

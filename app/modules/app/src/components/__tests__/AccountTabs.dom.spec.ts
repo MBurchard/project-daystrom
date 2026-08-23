@@ -21,6 +21,8 @@ function props(overrides: Partial<InstanceType<typeof AccountTabs>['$props']> = 
     profiles: PROFILES,
     isProfileRunning: () => false,
     isProfileStarting: () => false,
+    isProfileStartFailed: () => false,
+    isProfileStatusUnclear: () => false,
     ...overrides,
   };
 }
@@ -70,7 +72,7 @@ describe('accountTabs', () => {
     expect(wrapper.findAll('.account-start')[1]!.classes()).toContain('running');
   });
 
-  it('shows the intermediate state until the mod handshake is confirmed', () => {
+  it('shows the intermediate state until the game UI is ready', () => {
     const wrapper = mount(AccountTabs, {
       props: props({
         isProfileRunning: stem => stem === '1_TestAlpha',
@@ -153,7 +155,51 @@ describe('accountTabs', () => {
     expect(wrapper.get('.empty-account button').text()).toBe('Starting…');
   });
 
-  it('stops labelling an unconfirmed initial launch as starting after its grace period', () => {
+  it('labels a known account when its game UI startup failed', () => {
+    const wrapper = mount(AccountTabs, {
+      props: props({
+        isProfileRunning: stem => stem === '1_TestAlpha',
+        isProfileStartFailed: stem => stem === '1_TestAlpha',
+      }),
+    });
+
+    expect(wrapper.findAll('.account-start')[0]!.text()).toContain('Start failed');
+    expect(wrapper.findAll('.account-start')[0]!.classes()).toContain('failed');
+  });
+
+  it('labels known and initial accounts when their game status is unclear', async () => {
+    const wrapper = mount(AccountTabs, {
+      props: props({
+        isProfileRunning: stem => stem === '1_TestAlpha',
+        isProfileStatusUnclear: stem => stem === '1_TestAlpha',
+      }),
+    });
+
+    expect(wrapper.findAll('.account-start')[0]!.text()).toContain('Status unclear');
+    expect(wrapper.findAll('.account-start')[0]!.classes()).toContain('unclear');
+
+    await wrapper.setProps({
+      profiles: [],
+      isProfileRunning: stem => stem === INITIAL_PROFILE_STEM,
+      isProfileStatusUnclear: stem => stem === INITIAL_PROFILE_STEM,
+    });
+    expect(wrapper.get('.empty-account button').text()).toBe('Status unclear');
+  });
+
+  it('labels an initial launch as failed after its UI startup deadline', () => {
+    const wrapper = mount(AccountTabs, {
+      props: props({
+        profiles: [],
+        isProfileRunning: stem => stem === INITIAL_PROFILE_STEM,
+        isProfileStartFailed: stem => stem === INITIAL_PROFILE_STEM,
+      }),
+    });
+
+    expect(wrapper.get('.empty-account button').text()).toBe('Start failed');
+    expect(wrapper.get('.empty-account button').attributes('disabled')).toBeDefined();
+  });
+
+  it('labels a ready initial launch as running until its account profile is resolved', () => {
     const wrapper = mount(AccountTabs, {
       props: props({
         profiles: [],
@@ -162,7 +208,6 @@ describe('accountTabs', () => {
     });
 
     expect(wrapper.get('.empty-account button').text()).toBe('Running');
-    expect(wrapper.get('.empty-account button').attributes('disabled')).toBeDefined();
   });
 
   it.each([

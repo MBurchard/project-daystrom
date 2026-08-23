@@ -6,6 +6,7 @@ use std::fmt;
 pub const USER_PROFILE: &str = "user-profile";
 pub const PLAYER_PREFS: &str = "player-prefs";
 pub const UI_SCALE: &str = "ui-scale";
+pub const UI_READY: &str = "ui-ready";
 pub const HOTKEYS: &str = "hotkeys";
 pub const REWARD_HOTKEYS: &str = "reward-hotkeys";
 pub const MAIN_ACTION: &str = "main-action";
@@ -24,6 +25,7 @@ pub const FEATURES: &[&str] = &[
     USER_PROFILE,
     PLAYER_PREFS,
     UI_SCALE,
+    UI_READY,
     HOTKEYS,
     REWARD_HOTKEYS,
     MAIN_ACTION,
@@ -454,6 +456,17 @@ pub const SYMBOLS: &[SymbolSpec] = &[
         "ShortcutsManager",
         &["_actions"],
         "InputActionAsset",
+        Requirement::Required,
+    ),
+    method(
+        UI_READY,
+        ASSEMBLY_CSHARP,
+        "Digit.Client.UI",
+        "ScreenManager",
+        &["Update", "LateUpdate"],
+        "void",
+        &[],
+        false,
         Requirement::Required,
     ),
     method(

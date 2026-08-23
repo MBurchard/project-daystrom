@@ -13,6 +13,8 @@
   "installMod": "Mod installieren",
   "removeMod": "Mod entfernen",
   "gameStarting": "Spiel startet…",
+  "gameStartFailed": "Spielstart fehlgeschlagen",
+  "gameStatusUnclear": "Spielstatus unklar",
   "gameRunning": "Spiel läuft",
   "gameNotRunning": "Spiel läuft nicht",
   "launcherRunning": "Scopely Launcher läuft",

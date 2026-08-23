@@ -56,6 +56,10 @@ export interface GameState {
   openUpdater: () => void;
   /** Launch the game with the mod injected. Optionally specify a profile. */
   launchGame: (profile?: string) => void;
+  /** Terminate tracked game processes whose UI startup deadline expired. */
+  terminateFailedGameStarts: () => void;
+  /** Terminate Daystrom-owned starts that never established their first mod connection. */
+  terminateUnconfirmedGameStarts: () => void;
   /** Register event listeners and load the initial state. Call from onMounted. */
   init: () => void;
   /** Unregister event listeners. Call from onUnmounted. */
@@ -162,6 +166,18 @@ export function useGameState(): GameState {
       });
   }
 
+  /** Terminate tracked STFC processes whose UI startup deadline expired. */
+  function terminateFailedGameStarts(): void {
+    log.debug('User clicked Terminate failed game starts');
+    runAction('terminate_failed_game_starts');
+  }
+
+  /** Terminate Daystrom-owned starts that never established their first mod connection. */
+  function terminateUnconfirmedGameStarts(): void {
+    log.debug('User clicked Terminate unconfirmed game starts');
+    runAction('terminate_unconfirmed_game_starts');
+  }
+
   // ---- Lifecycle --------------------------------------------------------------------
 
   /**
@@ -237,6 +253,8 @@ export function useGameState(): GameState {
     removeMod,
     openUpdater,
     launchGame,
+    terminateFailedGameStarts,
+    terminateUnconfirmedGameStarts,
     init,
     destroy,
   };

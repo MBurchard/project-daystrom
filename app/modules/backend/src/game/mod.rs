@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;
+#[cfg(not(target_os = "windows"))]
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]
 use sha2::{Digest, Sha256};
@@ -18,6 +20,9 @@ use crate::use_log;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Maximum time to wait for a requested process termination to complete.
+const PROCESS_TERMINATION_TIMEOUT_MS: u32 = 5_000;
 
 /// Cached full path to the Scopely launcher executable (Windows only).
 #[cfg(target_os = "windows")]
@@ -196,6 +201,77 @@ pub fn is_process_id_running(pid: u32) -> bool {
         let Ok(pid) = i32::try_from(pid) else { return false };
         // SAFETY: Signal zero performs an existence check without sending a signal.
         unsafe { kill(pid, 0) == 0 }
+    }
+}
+
+/// Terminate one process by its exact operating-system identifier.
+pub fn terminate_process_id(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::c_void;
+
+        const PROCESS_TERMINATE: u32 = 0x0000_0001;
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const WAIT_OBJECT_0: u32 = 0x0000_0000;
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
+            fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
+            fn WaitForSingleObject(object: *mut c_void, milliseconds: u32) -> u32;
+            fn CloseHandle(object: *mut c_void) -> i32;
+        }
+
+        // SAFETY: The handle is opened with termination and synchronisation rights, checked before
+        // use, waited on after termination, and closed exactly once.
+        unsafe {
+            let process = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid);
+            if process.is_null() {
+                return false;
+            }
+            let terminated = TerminateProcess(process, 1) != 0
+                && WaitForSingleObject(process, PROCESS_TERMINATION_TIMEOUT_MS) == WAIT_OBJECT_0;
+            CloseHandle(process);
+            terminated
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        const SIGKILL: i32 = 9;
+        const WNOHANG: i32 = 1;
+        unsafe extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+            fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+        }
+
+        let Ok(pid) = i32::try_from(pid) else { return false };
+        // SAFETY: `pid` is validated and SIGKILL requests termination of that exact process.
+        if unsafe { kill(pid, SIGKILL) } != 0 {
+            return false;
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(u64::from(PROCESS_TERMINATION_TIMEOUT_MS));
+        loop {
+            let mut status = 0;
+            // SAFETY: `status` points to valid writable memory. `waitpid` also detects and reaps the
+            // process when it is a child of this backend; otherwise it returns immediately.
+            if unsafe { waitpid(pid, &raw mut status, WNOHANG) } == pid {
+                return true;
+            }
+            // SAFETY: Signal zero only checks whether the exact PID still exists.
+            if unsafe { kill(pid, 0) } != 0 {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 

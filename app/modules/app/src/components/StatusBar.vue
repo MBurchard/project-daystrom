@@ -26,12 +26,16 @@ const props = defineProps<{
   rollback: DaystromRollbackStatus;
   /** Whether a running game has no active Daystrom mod connection. */
   modConnectionMissing: boolean;
-  /** Whether a Daystrom-tracked game is completing its first mod handshake. */
+  /** Whether a Daystrom-tracked game is waiting for its first ready UI frame. */
   trackedGameStarting: boolean;
   /** Whether any Daystrom-tracked game process is running. */
   trackedGameRunning: boolean;
-  /** Whether any tracked game is running outside its initial handshake grace period. */
+  /** Whether any tracked game has a ready UI. */
   trackedGameEstablished: boolean;
+  /** Whether a tracked game failed to report a ready game UI in time. */
+  trackedGameFailed: boolean;
+  /** Whether UI readiness cannot be observed for a tracked game. */
+  trackedGameStatusUnclear: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -42,6 +46,8 @@ const emit = defineEmits<{
   removeMod: [];
   openGameUpdater: [];
   openModWarning: [];
+  openGameStartWarning: [];
+  openGameStatusUnclear: [];
 }>();
 
 const {t} = useI18n('status', statusDefaults);
@@ -151,9 +157,23 @@ const {errorText} = useUiError();
       {{ t('gameRunning') }}
     </span>
     <span v-else-if="props.trackedGameStarting" class="status-item warn">{{ t('gameStarting') }}</span>
-    <span v-else-if="props.status.installed" class="status-item neutral">
+    <span v-else-if="props.status.installed && !props.modConnectionMissing && !props.trackedGameRunning"
+        class="status-item neutral">
       {{ t('gameNotRunning') }}
     </span>
+
+    <button v-if="props.trackedGameFailed"
+        class="status-item fail interactive segmented-status segmented-action"
+        @click="emit('openGameStartWarning')">
+      <span class="segmented-status-label">{{ t('gameStartFailed') }}</span>
+      <span class="status-segment" aria-hidden="true">›</span>
+    </button>
+    <button v-if="props.trackedGameStatusUnclear"
+        class="status-item warn interactive segmented-status segmented-action"
+        @click="emit('openGameStatusUnclear')">
+      <span class="segmented-status-label">{{ t('gameStatusUnclear') }}</span>
+      <span class="status-segment" aria-hidden="true">›</span>
+    </button>
 
     <span v-if="props.status.launcher_running" class="status-item warn">{{ t('launcherRunning') }}</span>
 

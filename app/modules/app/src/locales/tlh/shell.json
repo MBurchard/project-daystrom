@@ -1,6 +1,12 @@
 {
   "modConnectionTitle": "Daystrom mod Hutlhbogh STFC QaptaH",
-  "modConnectionBody": "Daystrom mod rarghach tu'lu'be'. Qujvam poH mod mIw lo'laHbe'lu'. STFC yISoQmoH, ghIq Daystrom yIlo'taHvIS yItaghqa'.",
+  "modConnectionBody": "Daystrom mod rarghach tu'lu'be'. Qaghbogh Qujmey poH mod mIw lo'laHbe'lu'. Qaghbogh STFC Qujmey yISoQmoH, ghIq Daystrom yIlo'taHvIS tItaghqa'.",
+  "gameStartFailedTitle": "STFC taghlu'DI' Qagh",
+  "gameStartFailedBody": "Daystrom lo'taHvIS taghlu'bogh wa' STFC Quj Daq lIHbe'. latlh QaptaHbogh Qujmey SoQmoHbe'lu'. Qagh qaSqa'chugh Daystrom mod yIjomqa' 'ej STFC chu'qu' yI'ol.",
+  "gameStatusUnclearTitle": "Quj Dotlh Sovbe'lu'",
+  "gameStatusUnclearBody": "STFC Quj Daq Qap'a' 'e' SovlaHbe' Daystrom. Quj Daystrom mod je QaplaHtaH.",
+  "terminateFailedGame": "Qaghbogh Qujmey yISoQmoH",
+  "closeGameStartHelp": "yISoQmoH",
   "settings": "DuHmey",
   "closeWindow": "Daystrom yISoQmoH",
   "addAccount": "Account yIchel",

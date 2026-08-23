@@ -23,8 +23,12 @@ const props = defineProps<{
   profiles: ProfileInfo[];
   /** Determine whether one profile is currently running. */
   isProfileRunning: (stem: string) => boolean;
-  /** Determine whether one running profile is still within its initial handshake grace period. */
+  /** Determine whether one running profile is waiting for its first ready UI frame. */
   isProfileStarting: (stem: string) => boolean;
+  /** Determine whether one profile failed to report a ready game UI in time. */
+  isProfileStartFailed: (stem: string) => boolean;
+  /** Determine whether UI readiness cannot be observed for one profile. */
+  isProfileStatusUnclear: (stem: string) => boolean;
 }>();
 const emit = defineEmits<{
   launch: [profile: string];
@@ -62,6 +66,12 @@ function launchProfile(stem: string): void {
  * @returns the launch-state label
  */
 function profileLaunchLabel(stem: string): string {
+  if (props.isProfileStartFailed(stem)) {
+    return t('startFailed');
+  }
+  if (props.isProfileStatusUnclear(stem)) {
+    return t('statusUnclear');
+  }
   if (props.isProfileStarting(stem)) {
     return t('starting');
   }
@@ -74,6 +84,12 @@ function profileLaunchLabel(stem: string): string {
  * @returns the initial launch-state label
  */
 function initialLaunchLabel(): string {
+  if (props.isProfileStartFailed(INITIAL_PROFILE_STEM)) {
+    return t('startFailed');
+  }
+  if (props.isProfileStatusUnclear(INITIAL_PROFILE_STEM)) {
+    return t('statusUnclear');
+  }
   if (props.isProfileStarting(INITIAL_PROFILE_STEM)) {
     return t('starting');
   }
@@ -106,8 +122,13 @@ function initialLaunchLabel(): string {
           </button>
           <button class="account-start"
               :class="{
-                running: props.isProfileRunning(profile.stem) && !props.isProfileStarting(profile.stem),
+                running: props.isProfileRunning(profile.stem)
+                  && !props.isProfileStarting(profile.stem)
+                  && !props.isProfileStartFailed(profile.stem)
+                  && !props.isProfileStatusUnclear(profile.stem),
                 starting: props.isProfileStarting(profile.stem),
+                failed: props.isProfileStartFailed(profile.stem),
+                unclear: props.isProfileStatusUnclear(profile.stem),
               }"
               :disabled="!props.modDeployed
                 || props.actionPending
@@ -116,7 +137,11 @@ function initialLaunchLabel(): string {
               @click="launchProfile(profile.stem)">
             <span v-if="props.isProfileRunning(profile.stem)"
                 class="running-indicator"
-                :class="{ starting: props.isProfileStarting(profile.stem) }"
+                :class="{
+                  starting: props.isProfileStarting(profile.stem),
+                  failed: props.isProfileStartFailed(profile.stem),
+                  unclear: props.isProfileStatusUnclear(profile.stem),
+                }"
                 aria-hidden="true" />
             {{ profileLaunchLabel(profile.stem) }}
           </button>
@@ -281,6 +306,18 @@ function initialLaunchLabel(): string {
   opacity: 0.8;
 }
 
+.account-start.unclear {
+  color: var(--status-warning);
+  filter: none;
+  opacity: 1;
+}
+
+.account-start.failed {
+  color: var(--status-danger);
+  filter: none;
+  opacity: 1;
+}
+
 .account-start:hover:not(:disabled) {
   border-color: var(--action-primary-border-hover);
   background: var(--action-primary-surface-hover);
@@ -315,6 +352,16 @@ function initialLaunchLabel(): string {
 
 .running-indicator.starting {
   background: var(--status-warning);
+  box-shadow: none;
+}
+
+.running-indicator.unclear {
+  background: var(--status-warning);
+  box-shadow: none;
+}
+
+.running-indicator.failed {
+  background: var(--status-danger);
   box-shadow: none;
 }
 

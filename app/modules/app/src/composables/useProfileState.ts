@@ -20,8 +20,12 @@ export interface ProfileStateComposable {
   gameOriginPending: Readonly<Ref<boolean>>;
   /** Check whether a specific profile is currently running. */
   isProfileRunning: (stem: string) => boolean;
-  /** Check whether a running profile is still within its initial handshake grace period. */
+  /** Check whether a running profile is waiting for its first ready UI frame. */
   isProfileStarting: (stem: string) => boolean;
+  /** Check whether a profile did not report a ready game UI before its startup deadline. */
+  isProfileStartFailed: (stem: string) => boolean;
+  /** Check whether UI readiness cannot be observed for a running profile. */
+  isProfileStatusUnclear: (stem: string) => boolean;
   /** Register event listeners and load the initial state. Call from onMounted. */
   init: () => void;
   /** Unregister event listeners. Call from onUnmounted. */
@@ -32,9 +36,13 @@ const DEFAULT_PROFILE_STATE: ProfileState = {
   profiles: [],
   running_profiles: [],
   starting_profiles: [],
+  ready_profiles: [],
+  failed_profiles: [],
+  unclear_profiles: [],
   external_game_running: false,
   game_origin_pending: false,
   mod_connection_missing: false,
+  can_terminate_unconfirmed_start: false,
 };
 
 /**
@@ -66,13 +74,33 @@ export function useProfileState(): ProfileStateComposable {
   }
 
   /**
-   * Check whether a running profile is still within its initial handshake grace period.
+   * Check whether a running profile is waiting for its first ready UI frame.
    *
    * @param stem - profile stem (e.g. "106_Nabor")
    * @returns whether the profile is still starting
    */
   function isProfileStarting(stem: string): boolean {
     return profiles.value.starting_profiles.includes(stem);
+  }
+
+  /**
+   * Check whether a specific profile failed to report a ready game UI in time.
+   *
+   * @param stem - profile stem to inspect
+   * @returns whether the profile's UI startup deadline expired
+   */
+  function isProfileStartFailed(stem: string): boolean {
+    return profiles.value.failed_profiles.includes(stem);
+  }
+
+  /**
+   * Check whether UI readiness cannot be observed for a running profile.
+   *
+   * @param stem - profile stem to inspect
+   * @returns whether the profile's game status is unclear
+   */
+  function isProfileStatusUnclear(stem: string): boolean {
+    return profiles.value.unclear_profiles.includes(stem);
   }
 
   /**
@@ -133,6 +161,8 @@ export function useProfileState(): ProfileStateComposable {
     gameOriginPending,
     isProfileRunning,
     isProfileStarting,
+    isProfileStartFailed,
+    isProfileStatusUnclear,
     init,
     destroy,
   };

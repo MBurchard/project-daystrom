@@ -355,6 +355,34 @@ describe('useGameState', () => {
         );
       });
     });
+
+    describe('terminateFailedGameStarts', () => {
+      it('runs the failed-start termination command', async () => {
+        captureListeners();
+        mockInvoke.mockResolvedValue(undefined);
+        const state = useGameState();
+
+        state.terminateFailedGameStarts();
+        expect(state.actionPending.value).toBe(true);
+        await vi.waitFor(() => expect(state.actionPending.value).toBe(false));
+
+        expect(mockInvoke).toHaveBeenCalledWith('terminate_failed_game_starts');
+      });
+    });
+
+    describe('terminateUnconfirmedGameStarts', () => {
+      it('runs the unconfirmed-start termination command', async () => {
+        captureListeners();
+        mockInvoke.mockResolvedValue(undefined);
+        const state = useGameState();
+
+        state.terminateUnconfirmedGameStarts();
+        expect(state.actionPending.value).toBe(true);
+        await vi.waitFor(() => expect(state.actionPending.value).toBe(false));
+
+        expect(mockInvoke).toHaveBeenCalledWith('terminate_unconfirmed_game_starts');
+      });
+    });
   });
 
   // ---- Event Listeners --------------------------------------------------------------
