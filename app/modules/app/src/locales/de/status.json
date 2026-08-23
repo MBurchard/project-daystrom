@@ -25,6 +25,8 @@
   "checkingDaystrom": "Daystrom-Updates werden geprüft…",
   "daystromCheckFailed": "Daystrom-Updateprüfung fehlgeschlagen",
   "modRestorePending": "Wechsel zur vorherigen Mod-Version ausstehend",
+  "reconnecting": "Verbindung zum laufenden Spiel wird wiederhergestellt…",
+  "externalGame": "Das Spiel wurde extern gestartet. Schließe es, um einen Account über Daystrom zu starten.",
   "launcherStarted": "Der Scopely Launcher wurde gestartet. Aktualisiere dort das Spiel und schließe danach den Launcher. Starte das Spiel nicht über den Scopely Launcher, sondern über Daystrom.",
   "closeLauncher": "Schließe den Scopely Launcher, um fortzufahren. Starte das Spiel nicht dort, sondern über Daystrom."
 }

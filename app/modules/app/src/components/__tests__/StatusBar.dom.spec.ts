@@ -72,6 +72,8 @@ function props(overrides: Record<string, unknown> = {}) {
     update: updateStatus(),
     rollback: rollbackStatus(),
     modConnectionMissing: false,
+    externalGameRunning: false,
+    gameOriginPending: false,
     trackedGameStarting: false,
     trackedGameRunning: false,
     trackedGameEstablished: false,
@@ -188,6 +190,22 @@ describe('statusBar', () => {
     expect(wrapper.text()).toContain('Close the Scopely Launcher');
     await wrapper.setProps({status: gameStatus({launcher_running: true, launcher_started_by_us: true})});
     expect(wrapper.text()).toContain('has been started');
+  });
+
+  it('prioritises origin recovery over the external-game notice', async () => {
+    const wrapper = mount(StatusBar, {
+      props: props({externalGameRunning: true, gameOriginPending: true}),
+    });
+
+    expect(wrapper.get('.status-notice').text()).toContain('Reconnecting to the running game');
+    expect(wrapper.text()).not.toContain('started externally');
+    await wrapper.setProps({gameOriginPending: false});
+    expect(wrapper.get('.status-notice').text()).toContain('started externally');
+
+    await wrapper.setProps({status: gameStatus({launcher_running: true})});
+    expect(wrapper.findAll('.status-notice')).toHaveLength(1);
+    expect(wrapper.get('.status-notice').findAll('p')).toHaveLength(2);
+    expect(wrapper.get('.status-notice').text()).toContain('Close the Scopely Launcher');
   });
 
   it('reports a tracked game as running only after its first ready UI frame', async () => {

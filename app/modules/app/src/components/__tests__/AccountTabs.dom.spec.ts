@@ -227,15 +227,4 @@ describe('accountTabs', () => {
     expect(wrapper.text()).toContain('STFC is not installed');
     expect(wrapper.find('.empty-account button').exists()).toBe(false);
   });
-
-  it('prioritises reconnection over the external-game warning', async () => {
-    const wrapper = mount(AccountTabs, {
-      props: props({externalGameRunning: true, gameOriginPending: true}),
-    });
-
-    expect(wrapper.text()).toContain('Reconnecting to the running game');
-    expect(wrapper.text()).not.toContain('started externally');
-    await wrapper.setProps({gameOriginPending: false});
-    expect(wrapper.text()).toContain('started externally');
-  });
 });

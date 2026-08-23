@@ -26,6 +26,10 @@ const props = defineProps<{
   rollback: DaystromRollbackStatus;
   /** Whether a running game has no active Daystrom mod connection. */
   modConnectionMissing: boolean;
+  /** Whether a game launched outside Daystrom blocks account launches. */
+  externalGameRunning: boolean;
+  /** Whether Daystrom is restoring the origin of a running game. */
+  gameOriginPending: boolean;
   /** Whether a Daystrom-tracked game is waiting for its first ready UI frame. */
   trackedGameStarting: boolean;
   /** Whether any Daystrom-tracked game process is running. */
@@ -188,12 +192,24 @@ const {errorText} = useUiError();
   <p v-if="props.actionError" class="message error">
     {{ errorText(props.actionError) }}
   </p>
-  <p v-if="props.status.launcher_started_by_us" class="message info">
-    {{ t('launcherStarted') }}
-  </p>
-  <p v-else-if="props.status.launcher_running" class="message info">
-    {{ t('closeLauncher') }}
-  </p>
+  <div v-if="props.gameOriginPending
+         || props.externalGameRunning
+         || props.status.launcher_started_by_us
+         || props.status.launcher_running"
+      class="message info status-notice">
+    <p v-if="props.gameOriginPending">
+      {{ t('reconnecting') }}
+    </p>
+    <p v-else-if="props.externalGameRunning">
+      {{ t('externalGame') }}
+    </p>
+    <p v-if="props.status.launcher_started_by_us">
+      {{ t('launcherStarted') }}
+    </p>
+    <p v-else-if="props.status.launcher_running">
+      {{ t('closeLauncher') }}
+    </p>
+  </div>
 </template>
 
 <style scoped>
@@ -348,5 +364,18 @@ button.status-segment:hover:not(:disabled) {
 
 .info {
   color: var(--status-info);
+}
+
+.status-notice {
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--status-info);
+}
+
+.status-notice p {
+  margin: 0;
+}
+
+.status-notice p + p {
+  margin-top: 0.5rem;
 }
 </style>

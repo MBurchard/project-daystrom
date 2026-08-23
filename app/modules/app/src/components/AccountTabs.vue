@@ -159,13 +159,6 @@ function initialLaunchLabel(): string {
       </button>
     </div>
 
-    <div v-if="props.gameOriginPending" class="account-message">
-      {{ t('reconnecting') }}
-    </div>
-    <div v-else-if="props.externalGameRunning" class="account-message">
-      {{ t('external') }}
-    </div>
-
     <div v-if="selectedProfile"
         :id="`account-panel-${selectedProfile.stem}`"
         class="account-panel"
@@ -436,11 +429,5 @@ function initialLaunchLabel(): string {
 .empty-account button {
   margin-left: auto;
   padding: 0.45rem 1.25rem;
-}
-
-.account-message {
-  padding: 0.65rem 0.8rem;
-  border: 1px solid var(--status-info);
-  color: var(--status-info);
 }
 </style>
