@@ -13,6 +13,8 @@
   "installMod": "mod yIjom",
   "removeMod": "mod yIteq",
   "gameStarting": "Quj taghlI'…",
+  "gameStartFailed": "Quj taghlu'DI' Qagh",
+  "gameStatusUnclear": "Quj Dotlh Sovbe'lu'",
   "gameRunning": "Quj QaptaH",
   "gameNotRunning": "Quj Qapbe'",
   "launcherRunning": "Scopely Launcher QaptaH",

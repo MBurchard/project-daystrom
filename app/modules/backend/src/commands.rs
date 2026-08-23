@@ -403,13 +403,36 @@ pub fn launch_game(app: tauri::AppHandle, profile: Option<String>) -> Result<(),
     crate::process_origin::register_launch(child, profile_stem);
     crate::process_origin::mark_game_started();
     let process = crate::process_origin::tracked_games_snapshot();
-    crate::profile_state::update_from_process(&app, process.revision, |status| {
-        status.running_profiles = process.running_profiles;
-        status.starting_profiles = process.starting_profiles;
-    });
+    crate::profile_state::update_from_process(&app, process);
     crate::game_state::update(&app, |s| {
         s.game_started_by_us = true;
     });
+    Ok(())
+}
+
+/// Terminate tracked STFC processes that did not report a ready game UI in time.
+#[tauri::command]
+pub async fn terminate_failed_game_starts(app: tauri::AppHandle) -> Result<(), UiErrorCode> {
+    terminate_game_starts(app, crate::process_origin::terminate_failed_starts).await
+}
+
+/// Terminate Daystrom-owned STFC processes that never established their first mod connection.
+#[tauri::command]
+pub async fn terminate_unconfirmed_game_starts(app: tauri::AppHandle) -> Result<(), UiErrorCode> {
+    terminate_game_starts(app, crate::process_origin::terminate_unconfirmed_starts).await
+}
+
+/// Run one blocking tracked-start termination and publish the resulting profile state.
+async fn terminate_game_starts(app: tauri::AppHandle, terminate: fn() -> bool) -> Result<(), UiErrorCode> {
+    let terminated = tauri::async_runtime::spawn_blocking(terminate).await.map_err(|error| {
+        log_warn!("Game-start termination task failed: {error}");
+        UiErrorCode::GameTerminationFailed
+    })?;
+    if !terminated {
+        return Err(UiErrorCode::GameTerminationFailed);
+    }
+    let process = crate::process_origin::tracked_games_snapshot();
+    crate::profile_state::update_from_process(&app, process);
     Ok(())
 }
 

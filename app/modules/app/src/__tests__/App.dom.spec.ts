@@ -68,9 +68,13 @@ function profileState(): ProfileState {
     profiles: [],
     running_profiles: [],
     starting_profiles: [],
+    ready_profiles: [],
+    failed_profiles: [],
+    unclear_profiles: [],
     external_game_running: false,
     game_origin_pending: false,
     mod_connection_missing: false,
+    can_terminate_unconfirmed_start: false,
   };
 }
 
@@ -106,10 +110,13 @@ describe('app', () => {
     removeMod: vi.fn(),
     openUpdater: vi.fn(),
     launchGame: vi.fn(),
+    terminateFailedGameStarts: vi.fn(),
+    terminateUnconfirmedGameStarts: vi.fn(),
     initGameState: vi.fn(),
     destroyGameState: vi.fn(),
     isProfileRunning: vi.fn(() => false),
     isProfileStarting: vi.fn(() => false),
+    isProfileStartFailed: vi.fn(() => false),
     initProfileState: vi.fn(),
     destroyProfileState: vi.fn(),
     initSettings: vi.fn(),
@@ -161,6 +168,8 @@ describe('app', () => {
       removeMod: actions.removeMod,
       openUpdater: actions.openUpdater,
       launchGame: actions.launchGame,
+      terminateFailedGameStarts: actions.terminateFailedGameStarts,
+      terminateUnconfirmedGameStarts: actions.terminateUnconfirmedGameStarts,
       init: actions.initGameState,
       destroy: actions.destroyGameState,
     });
@@ -168,6 +177,7 @@ describe('app', () => {
       profiles,
       isProfileRunning: actions.isProfileRunning,
       isProfileStarting: actions.isProfileStarting,
+      isProfileStartFailed: actions.isProfileStartFailed,
       init: actions.initProfileState,
       destroy: actions.destroyProfileState,
     });
@@ -241,7 +251,7 @@ describe('app', () => {
     expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
   });
 
-  it('derives starting and established game status from profile snapshots', async () => {
+  it('derives starting, failed, unclear, and established game status from profile snapshots', async () => {
     const wrapper = shallowMount(App);
 
     profiles.value = {
@@ -252,13 +262,36 @@ describe('app', () => {
     await nextTick();
     expect(wrapper.findComponent(StatusBar).props()).toMatchObject({
       trackedGameStarting: true,
+      trackedGameFailed: false,
+      trackedGameStatusUnclear: false,
       trackedGameEstablished: false,
     });
 
     profiles.value.starting_profiles = [];
+    profiles.value.failed_profiles = ['106_Nabor'];
     await nextTick();
     expect(wrapper.findComponent(StatusBar).props()).toMatchObject({
       trackedGameStarting: false,
+      trackedGameFailed: true,
+      trackedGameStatusUnclear: false,
+      trackedGameEstablished: false,
+    });
+
+    profiles.value.failed_profiles = [];
+    profiles.value.unclear_profiles = ['106_Nabor'];
+    await nextTick();
+    expect(wrapper.findComponent(StatusBar).props()).toMatchObject({
+      trackedGameFailed: false,
+      trackedGameStatusUnclear: true,
+      trackedGameEstablished: false,
+    });
+
+    profiles.value.unclear_profiles = [];
+    profiles.value.ready_profiles = ['106_Nabor'];
+    await nextTick();
+    expect(wrapper.findComponent(StatusBar).props()).toMatchObject({
+      trackedGameFailed: false,
+      trackedGameStatusUnclear: false,
       trackedGameEstablished: true,
     });
   });
@@ -419,6 +452,13 @@ describe('app', () => {
     await nextTick();
     expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
     expect(wrapper.findComponent(AppDialog).text()).toContain('There is no connection to the Daystrom mod');
+    expect(wrapper.findComponent(AppDialog).text()).not.toContain('End affected games');
+
+    profiles.value.can_terminate_unconfirmed_start = true;
+    await nextTick();
+    const terminate = wrapper.findAll('button').find(button => button.text().includes('End affected games'))!;
+    await terminate.trigger('click');
+    expect(actions.terminateUnconfirmedGameStarts).toHaveBeenCalledOnce();
 
     wrapper.findComponent(AppDialog).vm.$emit('close');
     await nextTick();
@@ -434,6 +474,62 @@ describe('app', () => {
     profiles.value.mod_connection_missing = true;
     await nextTick();
     expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC is running without the Daystrom mod');
+  });
+
+  it('opens failed-start guidance and terminates the affected game', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+    profiles.value.failed_profiles = ['106_Nabor'];
+    await nextTick();
+
+    wrapper.findComponent(StatusBar).vm.$emit('openGameStartWarning');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('STFC did not finish starting');
+    expect(wrapper.findComponent(AppDialog).text()).toContain('did not report a ready game interface');
+    expect(wrapper.findComponent(AppDialog).text()).toContain('Other running game instances will not be ended');
+
+    const terminate = wrapper.findAll('button').find(button => button.text().includes('End affected games'))!;
+    await terminate.trigger('click');
+    expect(actions.terminateFailedGameStarts).toHaveBeenCalledOnce();
+
+    const close = wrapper.findAll('button').find(button => button.text() === 'Close')!;
+    await close.trigger('click');
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(StatusBar).vm.$emit('openGameStartWarning');
+    await nextTick();
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    profiles.value.failed_profiles = [];
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+  });
+
+  it('opens and dismisses guidance for an unclear game status', async () => {
+    const wrapper = shallowMount(App, {global: {renderStubDefaultSlot: true}});
+    profiles.value.unclear_profiles = ['106_Nabor'];
+    await nextTick();
+
+    wrapper.findComponent(StatusBar).vm.$emit('openGameStatusUnclear');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).props('title')).toBe('Game status unclear');
+    expect(wrapper.findComponent(AppDialog).text()).toContain('cannot determine whether the game interface is ready');
+
+    wrapper.findComponent(AppDialog).vm.$emit('close');
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(StatusBar).vm.$emit('openGameStatusUnclear');
+    await nextTick();
+    await wrapper.get('button').trigger('click');
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
+
+    wrapper.findComponent(StatusBar).vm.$emit('openGameStatusUnclear');
+    await nextTick();
+    profiles.value.unclear_profiles = [];
+    await nextTick();
+    expect(wrapper.findComponent(AppDialog).exists()).toBe(false);
   });
 
   it('interrupts and resumes an ordinary dialogue for missing-mod guidance', async () => {

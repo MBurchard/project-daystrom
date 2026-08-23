@@ -36,9 +36,13 @@ function makeProfileState(name: string): ProfileState {
     }],
     running_profiles: [],
     starting_profiles: [],
+    ready_profiles: [],
+    failed_profiles: [],
+    unclear_profiles: [],
     external_game_running: false,
     game_origin_pending: false,
     mod_connection_missing: false,
+    can_terminate_unconfirmed_start: false,
   };
 }
 
@@ -124,6 +128,8 @@ describe('useProfileState', () => {
     const current = makeProfileState('Current');
     current.running_profiles = ['411_Current'];
     current.starting_profiles = ['411_Current'];
+    current.failed_profiles = ['411_Failed'];
+    current.unclear_profiles = ['411_Unclear'];
     current.external_game_running = true;
     current.game_origin_pending = true;
     current.mod_connection_missing = true;
@@ -135,11 +141,15 @@ describe('useProfileState', () => {
 
     expect(state.hasProfiles.value).toBe(true);
     expect(state.externalGameRunning.value).toBe(true);
+    expect(state.isProfileStartFailed('411_Failed')).toBe(true);
+    expect(state.isProfileStatusUnclear('411_Unclear')).toBe(true);
     expect(state.gameOriginPending.value).toBe(true);
     expect(state.isProfileRunning('411_Current')).toBe(true);
     expect(state.isProfileRunning('411_Other')).toBe(false);
     expect(state.isProfileStarting('411_Current')).toBe(true);
     expect(state.isProfileStarting('411_Other')).toBe(false);
+    expect(state.isProfileStartFailed('411_Failed')).toBe(true);
+    expect(state.isProfileStartFailed('411_Other')).toBe(false);
   });
 
   it('logs listener and snapshot failures', async () => {

@@ -6,6 +6,7 @@
 //! Reconnects automatically with exponential backoff.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -33,6 +34,12 @@ struct WsMessage {
 /// Channel sender for outgoing messages, accessible from sync hook code.
 static SENDER: OnceLock<mpsc::UnboundedSender<String>> = OnceLock::new();
 
+/// Whether the game has completed at least one `ScreenManager` UI frame.
+static UI_READY: AtomicBool = AtomicBool::new(false);
+
+/// Unknown, unavailable, or available state of the game UI readiness hook.
+static UI_READY_CAPABILITY: AtomicU8 = AtomicU8::new(0);
+
 /// Serialize one protocol message for the WebSocket transport.
 ///
 /// Returns `None` only when the JSON payload cannot be serialized.
@@ -52,6 +59,16 @@ fn client_hello_payload(profile: &str) -> serde_json::Value {
     })
 }
 
+/// Serialize the persistent game UI readiness announcement.
+fn client_ready_message() -> Option<String> {
+    serialize_message("client.ready", serde_json::json!({}))
+}
+
+/// Serialize the persistent game UI readiness capability announcement.
+fn client_capabilities_message(supported: bool) -> Option<String> {
+    serialize_message("client.capabilities", serde_json::json!({"uiReady": supported}))
+}
+
 /// Send a JSON message to Daystrom via WebSocket.
 ///
 /// Safe to call from any thread. Messages are queued if the connection is not yet established.
@@ -61,6 +78,27 @@ pub fn send(msg_type: &str, payload: serde_json::Value) {
         && let Some(json) = serialize_message(msg_type, payload)
     {
         let _ = tx.send(json);
+    }
+}
+
+/// Persist and announce that the game completed its first UI frame.
+pub fn mark_ui_ready() {
+    if !UI_READY.swap(true, Ordering::SeqCst)
+        && let Some(tx) = SENDER.get()
+        && let Some(ready) = client_ready_message()
+    {
+        let _ = tx.send(ready);
+    }
+}
+
+/// Persist and announce whether this game build supports UI readiness observation.
+pub fn set_ui_ready_supported(supported: bool) {
+    let capability = if supported { 2 } else { 1 };
+    UI_READY_CAPABILITY.store(capability, Ordering::SeqCst);
+    if let Some(tx) = SENDER.get()
+        && let Some(message) = client_capabilities_message(supported)
+    {
+        let _ = tx.send(message);
     }
 }
 
@@ -138,12 +176,23 @@ async fn client_loop(mut rx: mpsc::UnboundedReceiver<String>) {
                 let (mut sink, mut source) = ws.split();
 
                 // Restore process identity, request settings and re-announce the observed player state.
-                let mut initial_messages = Vec::with_capacity(5);
+                let mut initial_messages = Vec::with_capacity(6);
                 let profile = std::env::var(crate::profile_protocol::PROFILE_ENV_VAR).unwrap_or_default();
                 if !profile.is_empty()
                     && let Some(hello) = serialize_message("client.hello", client_hello_payload(&profile))
                 {
                     initial_messages.push(hello);
+                }
+                let capability = UI_READY_CAPABILITY.load(Ordering::SeqCst);
+                if capability != 0
+                    && let Some(message) = client_capabilities_message(capability == 2)
+                {
+                    initial_messages.push(message);
+                }
+                if UI_READY.load(Ordering::SeqCst)
+                    && let Some(ready) = client_ready_message()
+                {
+                    initial_messages.push(ready);
                 }
                 if let Some(request) = serialize_message("settings.request", serde_json::json!({})) {
                     initial_messages.push(request);
@@ -295,5 +344,21 @@ mod tests {
                 "profile": "106_Nabor",
             })
         );
+    }
+
+    #[test]
+    fn client_ready_uses_a_connection_lifecycle_message() {
+        let message: serde_json::Value = serde_json::from_str(&client_ready_message().unwrap()).unwrap();
+
+        assert_eq!(message["type"], "client.ready");
+        assert_eq!(message["payload"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn client_capabilities_reports_ui_readiness_support() {
+        let message: serde_json::Value = serde_json::from_str(&client_capabilities_message(false).unwrap()).unwrap();
+
+        assert_eq!(message["type"], "client.capabilities");
+        assert_eq!(message["payload"], serde_json::json!({"uiReady": false}));
     }
 }

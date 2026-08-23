@@ -75,6 +75,8 @@ function props(overrides: Record<string, unknown> = {}) {
     trackedGameStarting: false,
     trackedGameRunning: false,
     trackedGameEstablished: false,
+    trackedGameFailed: false,
+    trackedGameStatusUnclear: false,
     ...overrides,
   };
 }
@@ -170,6 +172,7 @@ describe('statusBar', () => {
     const warning = wrapper.findAll('button').find(button => button.text().includes('Mod not active'))!;
     expect(warning.get('.status-segment').attributes('aria-hidden')).toBe('true');
     expect(wrapper.find('.mod-reinstall').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('Game not running');
     await warning.trigger('click');
 
     expect(wrapper.emitted('openModWarning')).toHaveLength(1);
@@ -187,7 +190,7 @@ describe('statusBar', () => {
     expect(wrapper.text()).toContain('has been started');
   });
 
-  it('reports a tracked game as running only after its first mod handshake', async () => {
+  it('reports a tracked game as running only after its first ready UI frame', async () => {
     const wrapper = mount(StatusBar, {
       props: props({
         status: gameStatus({game_running: true}),
@@ -204,6 +207,37 @@ describe('statusBar', () => {
     expect(wrapper.text()).not.toContain('Game starting…');
   });
 
+  it('opens guidance when a tracked game misses its UI startup deadline', async () => {
+    const wrapper = mount(StatusBar, {
+      props: props({
+        status: gameStatus({game_running: true}),
+        trackedGameFailed: true,
+        trackedGameRunning: true,
+      }),
+    });
+
+    const failure = wrapper.findAll('button').find(button => button.text().includes('Game start failed'))!;
+    expect(failure.get('.status-segment').attributes('aria-hidden')).toBe('true');
+    await failure.trigger('click');
+
+    expect(wrapper.emitted('openGameStartWarning')).toHaveLength(1);
+  });
+
+  it('opens guidance when game UI readiness cannot be observed', async () => {
+    const wrapper = mount(StatusBar, {
+      props: props({
+        status: gameStatus({game_running: true}),
+        trackedGameStatusUnclear: true,
+        trackedGameRunning: true,
+      }),
+    });
+
+    const unclear = wrapper.findAll('button').find(button => button.text().includes('Game status unclear'))!;
+    await unclear.trigger('click');
+
+    expect(wrapper.emitted('openGameStatusUnclear')).toHaveLength(1);
+  });
+
   it('prioritises running over starting when multiple tracked games have different states', () => {
     const wrapper = mount(StatusBar, {
       props: props({
@@ -217,6 +251,24 @@ describe('statusBar', () => {
     expect(wrapper.text()).toContain('Game running');
     expect(wrapper.text()).not.toContain('Game starting…');
     expect(wrapper.text()).not.toContain('Game not running');
+  });
+
+  it('keeps every relevant multi-account status visible alongside a running game', () => {
+    const wrapper = mount(StatusBar, {
+      props: props({
+        status: gameStatus({game_running: true}),
+        trackedGameStarting: true,
+        trackedGameRunning: true,
+        trackedGameEstablished: true,
+        trackedGameFailed: true,
+        trackedGameStatusUnclear: true,
+      }),
+    });
+
+    expect(wrapper.text()).toContain('Game running');
+    expect(wrapper.text()).toContain('Game start failed');
+    expect(wrapper.text()).toContain('Game status unclear');
+    expect(wrapper.text()).not.toContain('Game starting…');
   });
 
   it('opens available Daystrom updates and hides dismissed ones', async () => {

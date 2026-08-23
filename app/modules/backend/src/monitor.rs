@@ -94,7 +94,7 @@ struct ModConnectionSnapshot {
     game_running: bool,
     mod_expected: bool,
     tracked_game: bool,
-    expired_unconfirmed_tracked_game: bool,
+    expired_unconfirmed_game: bool,
     disconnected_confirmed_game: bool,
 }
 
@@ -165,9 +165,7 @@ impl MonitorState {
 
     /// Report a missing runtime mod connection after the applicable grace period expires.
     fn is_mod_connection_missing(&mut self, snapshot: ModConnectionSnapshot, now: Instant) -> bool {
-        let startup_missing =
-            snapshot.game_running && snapshot.mod_expected && snapshot.expired_unconfirmed_tracked_game;
-
+        let startup_missing = snapshot.game_running && snapshot.mod_expected && snapshot.expired_unconfirmed_game;
         let reconnect_missing = snapshot.game_running
             && snapshot.mod_expected
             && (snapshot.disconnected_confirmed_game || !snapshot.tracked_game);
@@ -175,12 +173,12 @@ impl MonitorState {
             self.mod_connection_reconnect_deadline = None;
         }
 
-        let reconnect_expired = reconnect_missing
-            && now
-                >= *self
-                    .mod_connection_reconnect_deadline
-                    .get_or_insert(now + MOD_CONNECTION_RECONNECT_GRACE);
-        startup_missing || reconnect_expired
+        startup_missing
+            || reconnect_missing
+                && now
+                    >= *self
+                        .mod_connection_reconnect_deadline
+                        .get_or_insert(now + MOD_CONNECTION_RECONNECT_GRACE)
     }
 
     /// Evaluate one monitoring cycle and return the actions to execute.
@@ -391,15 +389,13 @@ fn run_loop(app: tauri::AppHandle) {
                     game_running: game,
                     mod_expected,
                     tracked_game: process.tracked_game,
-                    expired_unconfirmed_tracked_game: process.expired_unconfirmed_game,
+                    expired_unconfirmed_game: process.expired_unconfirmed_game,
                     disconnected_confirmed_game: process.disconnected_confirmed_game,
                 },
                 now,
             );
-            if crate::profile_state::update_from_process(&app, process.revision, |s| {
+            if crate::profile_state::update_from_process_with(&app, process, |s| {
                 mod_connection_became_missing = mod_connection_missing && !s.mod_connection_missing;
-                s.running_profiles = process.running_profiles;
-                s.starting_profiles = process.starting_profiles;
                 s.external_game_running = origin == GameOrigin::External;
                 s.game_origin_pending = origin == GameOrigin::Pending;
                 s.mod_connection_missing = mod_connection_missing;
@@ -668,22 +664,33 @@ mod tests {
     }
 
     #[test]
-    fn expired_initial_mod_connection_is_reported_immediately() {
+    fn confirmed_start_failure_does_not_report_a_missing_mod() {
         let now = Instant::now();
         let mut state = MonitorState::new(None);
-        let waiting = ModConnectionSnapshot {
+        let failed = ModConnectionSnapshot {
             game_running: true,
             mod_expected: true,
             tracked_game: true,
             ..ModConnectionSnapshot::default()
         };
-        let expired = ModConnectionSnapshot {
-            expired_unconfirmed_tracked_game: true,
-            ..waiting
+
+        assert!(!state.is_mod_connection_missing(failed, now));
+        assert!(!state.is_mod_connection_missing(failed, now + MOD_CONNECTION_RECONNECT_GRACE));
+    }
+
+    #[test]
+    fn unconfirmed_start_reports_a_missing_mod_after_startup_grace() {
+        let now = Instant::now();
+        let mut state = MonitorState::new(None);
+        let missing = ModConnectionSnapshot {
+            game_running: true,
+            mod_expected: true,
+            tracked_game: true,
+            expired_unconfirmed_game: true,
+            ..ModConnectionSnapshot::default()
         };
 
-        assert!(!state.is_mod_connection_missing(waiting, now));
-        assert!(state.is_mod_connection_missing(expired, now));
+        assert!(state.is_mod_connection_missing(missing, now));
     }
 
     #[test]
@@ -708,8 +715,8 @@ mod tests {
             game_running: true,
             mod_expected: true,
             tracked_game: true,
+            expired_unconfirmed_game: false,
             disconnected_confirmed_game: true,
-            ..ModConnectionSnapshot::default()
         };
         let connected = ModConnectionSnapshot {
             disconnected_confirmed_game: false,
@@ -738,7 +745,6 @@ mod tests {
             ModConnectionSnapshot {
                 mod_expected: true,
                 tracked_game: true,
-                expired_unconfirmed_tracked_game: true,
                 ..ModConnectionSnapshot::default()
             },
             now,

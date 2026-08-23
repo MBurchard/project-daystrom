@@ -1,6 +1,12 @@
 {
   "modConnectionTitle": "STFC läuft ohne Daystrom-Mod",
-  "modConnectionBody": "Es besteht keine Verbindung zum Daystrom-Mod. Die Mod-Funktionen stehen in dieser Spielsitzung nicht zur Verfügung. Beende STFC und starte es anschließend über Daystrom neu.",
+  "modConnectionBody": "Es besteht keine Verbindung zum Daystrom-Mod. Die Mod-Funktionen stehen in den betroffenen Spielsitzungen nicht zur Verfügung. Beende die betroffenen STFC-Instanzen und starte sie anschließend über Daystrom neu.",
+  "gameStartFailedTitle": "STFC konnte den Start nicht abschließen",
+  "gameStartFailedBody": "Mindestens eine über Daystrom gestartete STFC-Instanz hat keine betriebsbereite Spieloberfläche gemeldet. Andere laufende Spielinstanzen werden nicht beendet. Wenn das wieder passiert, installiere den Daystrom-Mod neu und prüfe, ob STFC auf dem aktuellen Stand ist.",
+  "gameStatusUnclearTitle": "Spielstatus unklar",
+  "gameStatusUnclearBody": "Daystrom kann bei dieser STFC-Version nicht erkennen, ob die Spieloberfläche bereits bereit ist. Das Spiel und die Mod-Funktionen können trotzdem normal funktionieren.",
+  "terminateFailedGame": "Betroffene Spiele beenden",
+  "closeGameStartHelp": "Schließen",
   "settings": "Einstellungen",
   "closeWindow": "Daystrom schließen",
   "addAccount": "Account hinzufügen",

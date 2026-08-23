@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use ts_rs::TS;
 
+use crate::process_origin::TrackedGamesSnapshot;
 use crate::ui_error::UiErrorCode;
 use crate::use_log;
 
@@ -63,14 +64,22 @@ pub struct ProfileState {
     pub profiles: Vec<ProfileInfo>,
     /// Profile stems of game instances currently running (launched by Daystrom).
     pub running_profiles: Vec<String>,
-    /// Profile stems still waiting within their initial mod-handshake grace period.
+    /// Profile stems still waiting for their first completed game UI frame.
     pub starting_profiles: Vec<String>,
+    /// Profile stems whose game UI has reported readiness.
+    pub ready_profiles: Vec<String>,
+    /// Profile stems whose game UI did not become ready before the startup deadline.
+    pub failed_profiles: Vec<String>,
+    /// Profile stems whose game UI readiness cannot be observed by the connected mod.
+    pub unclear_profiles: Vec<String>,
     /// Whether a game process is running that was NOT launched by Daystrom.
     pub external_game_running: bool,
     /// Whether Daystrom is waiting for a running game to restore its launch identity.
     pub game_origin_pending: bool,
     /// Whether a running game has not established a validated Daystrom mod connection.
     pub mod_connection_missing: bool,
+    /// Whether an unconfirmed Daystrom-owned start can be terminated from the mod warning.
+    pub can_terminate_unconfirmed_start: bool,
     /// Latest tracked-game revision applied to the backend-owned state.
     #[serde(skip)]
     #[ts(skip)]
@@ -82,9 +91,13 @@ static STATE: Mutex<ProfileState> = Mutex::new(ProfileState {
     profiles: Vec::new(),
     running_profiles: Vec::new(),
     starting_profiles: Vec::new(),
+    ready_profiles: Vec::new(),
+    failed_profiles: Vec::new(),
+    unclear_profiles: Vec::new(),
     external_game_running: false,
     game_origin_pending: false,
     mod_connection_missing: false,
+    can_terminate_unconfirmed_start: false,
     process_revision: ProcessRevision(0),
 });
 
@@ -101,13 +114,36 @@ pub fn update(app: &tauri::AppHandle, updater: impl FnOnce(&mut ProfileState)) {
     }
 }
 
-/// Apply process-derived state unless a newer tracked-game snapshot was already stored.
-pub fn update_from_process(app: &tauri::AppHandle, revision: u64, updater: impl FnOnce(&mut ProfileState)) -> bool {
+/// Apply one complete tracked-game snapshot unless a newer snapshot was already stored.
+pub(crate) fn update_from_process(app: &tauri::AppHandle, process: TrackedGamesSnapshot) -> bool {
+    update_from_process_with(app, process, |_| {})
+}
+
+/// Apply one complete tracked-game snapshot together with caller-owned derived state.
+pub(crate) fn update_from_process_with(
+    app: &tauri::AppHandle,
+    process: TrackedGamesSnapshot,
+    updater: impl FnOnce(&mut ProfileState),
+) -> bool {
+    let revision = process.revision;
     let mut applied = false;
     update(app, |state| {
-        applied = apply_process_update(state, revision, updater);
+        applied = apply_process_update(state, revision, |state| {
+            apply_tracked_games_snapshot(state, process);
+            updater(state);
+        });
     });
     applied
+}
+
+/// Copy every frontend-visible tracked-game field from one consistent snapshot.
+fn apply_tracked_games_snapshot(state: &mut ProfileState, process: TrackedGamesSnapshot) {
+    state.running_profiles = process.running_profiles;
+    state.starting_profiles = process.starting_profiles;
+    state.ready_profiles = process.ready_profiles;
+    state.failed_profiles = process.failed_profiles;
+    state.unclear_profiles = process.unclear_profiles;
+    state.can_terminate_unconfirmed_start = process.terminable_unconfirmed_start;
 }
 
 /// Apply one process-derived update only when its source snapshot is not stale.
@@ -251,6 +287,32 @@ pub fn delete_local_profile(app: tauri::AppHandle, stem: String) -> Result<(), U
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tracked_snapshot_fields_are_applied_together() {
+        let mut state = ProfileState::default();
+        let process = TrackedGamesSnapshot {
+            revision: 7,
+            running_profiles: vec!["106_Running".to_string()],
+            starting_profiles: vec!["107_Starting".to_string()],
+            ready_profiles: vec!["108_Ready".to_string()],
+            failed_profiles: vec!["109_Failed".to_string()],
+            unclear_profiles: vec!["110_Unclear".to_string()],
+            tracked_game: true,
+            expired_unconfirmed_game: true,
+            terminable_unconfirmed_start: true,
+            disconnected_confirmed_game: true,
+        };
+
+        apply_tracked_games_snapshot(&mut state, process);
+
+        assert_eq!(state.running_profiles, vec!["106_Running"]);
+        assert_eq!(state.starting_profiles, vec!["107_Starting"]);
+        assert_eq!(state.ready_profiles, vec!["108_Ready"]);
+        assert_eq!(state.failed_profiles, vec!["109_Failed"]);
+        assert_eq!(state.unclear_profiles, vec!["110_Unclear"]);
+        assert!(state.can_terminate_unconfirmed_start);
+    }
 
     #[test]
     fn process_updates_reject_stale_snapshots() {

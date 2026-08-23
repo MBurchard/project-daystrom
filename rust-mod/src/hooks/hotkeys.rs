@@ -381,6 +381,7 @@ extern "C" fn hook_update(this: *mut Il2CppObject) {
         let original: UpdateFn = unsafe { std::mem::transmute(orig_ptr) };
         unsafe { original(this) };
     }
+    crate::ws_client::mark_ui_ready();
 }
 
 // ---- Reward AboutToShow hooks ---------------------------------------------
@@ -826,6 +827,8 @@ fn reload_game_bindings() {
 /// Hooks Input.GetKeyDownInt for key detection and consumption, tracks all GenericRewardsScreenViewController
 /// subclasses for ESC collection, installs main action hooks, and hooks ScreenManager.Update() for per-frame key checks.
 pub fn install(api: &Il2CppApi) {
+    let ui_ready_supported = compatibility::is_enabled(manifest::UI_READY) && install_update_hook(api);
+    crate::ws_client::set_ui_ready_supported(ui_ready_supported);
     if !compatibility::is_enabled(manifest::HOTKEYS) {
         return;
     }
@@ -839,7 +842,6 @@ pub fn install(api: &Il2CppApi) {
         install_widget_collect_tracking(api);
     }
     super::main_action::install(api);
-    install_update_hook(api);
 }
 
 /// Post-hook `ShortcutsManager.InitializeActions()` to parse default bindings and resolve `LoadBindings()`
@@ -1113,13 +1115,13 @@ fn install_widget_collect_tracking(api: &Il2CppApi) {
 ///
 /// Falls back to `LateUpdate()` if `Update` is not found (Update may not appear in the IL2CPP dump if it's
 /// compiler-generated).
-fn install_update_hook(api: &Il2CppApi) {
+fn install_update_hook(api: &Il2CppApi) -> bool {
     if !ORIGINAL_UPDATE.load(Relaxed).is_null() {
-        return;
+        return true;
     }
 
     let Some(class) = resolver::resolve_class(api, "Assembly-CSharp", "Digit.Client.UI", "ScreenManager") else {
-        return;
+        return false;
     };
 
     // Try Update first, fall back to LateUpdate.
@@ -1130,7 +1132,7 @@ fn install_update_hook(api: &Il2CppApi) {
         ("LateUpdate", p)
     } else {
         error!(target: "Hotkeys", "Neither Update nor LateUpdate found on ScreenManager");
-        return;
+        return false;
     };
 
     match engine::install_hook("Hotkeys", ptr, hook_update as *const ()) {
@@ -1140,9 +1142,11 @@ fn install_update_hook(api: &Il2CppApi) {
                 target: "Hotkeys",
                 "Hotkeys hook installed (ScreenManager.{name})"
             );
+            true
         }
         Err(e) => {
             error!(target: "Hotkeys", "Failed to hook ScreenManager.{name}: {e}");
+            false
         }
     }
 }

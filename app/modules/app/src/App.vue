@@ -33,7 +33,8 @@ import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
 type ActiveView = 'accounts' | 'settings';
 
 /** Dialogues that can temporarily cover the main interaction layer. */
-type ActiveDialog = 'update' | 'rollback' | 'new-account' | 'delete-account' | 'mod-connection' | 'safety-notice';
+type ActiveDialog = 'update' | 'rollback' | 'new-account' | 'delete-account' | 'mod-connection' |
+  'game-start-failed' | 'game-status-unclear' | 'safety-notice';
 
 const activeView = ref<ActiveView>('accounts');
 const dialogQueue = useDialogQueue<ActiveDialog>();
@@ -57,6 +58,8 @@ const {
   removeMod,
   openUpdater,
   launchGame,
+  terminateFailedGameStarts,
+  terminateUnconfirmedGameStarts,
   init: initGameState,
   destroy: destroyGameState,
 } = useGameState();
@@ -65,19 +68,26 @@ const {
   profiles,
   isProfileRunning,
   isProfileStarting,
+  isProfileStartFailed,
+  isProfileStatusUnclear,
   init: initProfileState,
   destroy: destroyProfileState,
 } = useProfileState();
 
-/** Whether at least one Daystrom-tracked game is still completing its first mod handshake. */
+/** Whether at least one Daystrom-tracked game is waiting for its first ready UI frame. */
 const trackedGameStarting = computed(() => profiles.value.starting_profiles.length > 0);
+
+/** Whether at least one Daystrom-tracked game missed its game UI startup deadline. */
+const trackedGameFailed = computed(() => profiles.value.failed_profiles.length > 0);
+
+/** Whether at least one tracked game's UI readiness cannot be observed. */
+const trackedGameStatusUnclear = computed(() => profiles.value.unclear_profiles.length > 0);
 
 /** Whether at least one Daystrom-tracked game process is running. */
 const trackedGameRunning = computed(() => profiles.value.running_profiles.length > 0);
 
-/** Whether at least one tracked game is running outside its initial handshake grace period. */
-const trackedGameEstablished = computed(() => profiles.value.running_profiles
-  .some(stem => !profiles.value.starting_profiles.includes(stem)));
+/** Whether at least one tracked game has a ready UI. */
+const trackedGameEstablished = computed(() => profiles.value.ready_profiles.length > 0);
 
 const {init: initSettings} = useSettings();
 
@@ -123,6 +133,18 @@ watch(
   },
 );
 
+watch(trackedGameFailed, (failed) => {
+  if (!failed) {
+    dialogQueue.cancel('game-start-failed');
+  }
+});
+
+watch(trackedGameStatusUnclear, (unclear) => {
+  if (!unclear) {
+    dialogQueue.cancel('game-status-unclear');
+  }
+});
+
 watch(safetyNoticeRequired, (required) => {
   if (required) {
     openDialog('safety-notice');
@@ -147,21 +169,36 @@ function dialogInterruptibility(dialog: ActiveDialog): (() => boolean) | undefin
   }
 }
 
+/** Build the live validity rule for a dialogue backed by changing application state. */
+function dialogValidity(dialog: ActiveDialog): (() => boolean) | undefined {
+  switch (dialog) {
+    case 'mod-connection':
+      return () => profiles.value.mod_connection_missing;
+    case 'game-start-failed':
+      return () => trackedGameFailed.value;
+    case 'game-status-unclear':
+      return () => trackedGameStatusUnclear.value;
+    case 'safety-notice':
+      return () => safetyNoticeRequired.value || safetyNoticeReview.value;
+    default:
+      return undefined;
+  }
+}
+
 /** Queue one application-level dialogue without displacing the current user flow. */
 function openDialog(dialog: ActiveDialog): void {
   const mandatorySafetyNotice = dialog === 'safety-notice' && safetyNoticeRequired.value;
+  const highPriority = dialog === 'mod-connection' || dialog === 'game-start-failed';
   dialogQueue.request({
     id: dialog,
     priority: mandatorySafetyNotice ?
       DIALOG_PRIORITY.critical :
-      dialog === 'mod-connection' ? DIALOG_PRIORITY.high : DIALOG_PRIORITY.normal,
-    canInterrupt: dialog === 'mod-connection' || mandatorySafetyNotice,
+      highPriority ?
+        DIALOG_PRIORITY.high :
+        DIALOG_PRIORITY.normal,
+    canInterrupt: dialog === 'mod-connection' || dialog === 'game-start-failed' || mandatorySafetyNotice,
     isInterruptible: dialogInterruptibility(dialog),
-    isValid: dialog === 'mod-connection' ?
-        () => profiles.value.mod_connection_missing :
-      dialog === 'safety-notice' ?
-          () => safetyNoticeRequired.value || safetyNoticeReview.value :
-        undefined,
+    isValid: dialogValidity(dialog),
   });
 }
 
@@ -289,13 +326,17 @@ onUnmounted(() => {
           :tracked-game-starting="trackedGameStarting"
           :tracked-game-running="trackedGameRunning"
           :tracked-game-established="trackedGameEstablished"
+          :tracked-game-failed="trackedGameFailed"
+          :tracked-game-status-unclear="trackedGameStatusUnclear"
           @open-update="openDialog('update')"
           @open-rollback="openDialog('rollback')"
           @check-update="checkDaystromUpdate"
           @install-mod="installMod"
           @remove-mod="removeMod"
           @open-game-updater="openUpdater"
-          @open-mod-warning="openDialog('mod-connection')" />
+          @open-mod-warning="openDialog('mod-connection')"
+          @open-game-start-warning="openDialog('game-start-failed')"
+          @open-game-status-unclear="openDialog('game-status-unclear')" />
 
       <SettingsView v-if="activeView === 'settings'"
           :rollback-version="daystromRollback.version"
@@ -313,6 +354,8 @@ onUnmounted(() => {
           :profiles="profiles.profiles"
           :is-profile-running="isProfileRunning"
           :is-profile-starting="isProfileStarting"
+          :is-profile-start-failed="isProfileStartFailed"
+          :is-profile-status-unclear="isProfileStatusUnclear"
           @launch="handleLaunch"
           @add-account="openDialog('new-account')"
           @delete-account="openDeleteAccount" />
@@ -358,6 +401,34 @@ onUnmounted(() => {
         :title="t('modConnectionTitle')"
         @close="closeDialog('mod-connection')">
       <p>{{ t('modConnectionBody') }}</p>
+      <button v-if="profiles.can_terminate_unconfirmed_start"
+          :disabled="actionPending"
+          @click="terminateUnconfirmedGameStarts">
+        {{ t('terminateFailedGame') }}
+      </button>
+    </AppDialog>
+
+    <AppDialog v-if="activeDialog === 'game-start-failed'"
+        :title="t('gameStartFailedTitle')"
+        @close="closeDialog('game-start-failed')">
+      <p>{{ t('gameStartFailedBody') }}</p>
+      <div class="game-start-failed-actions">
+        <button :disabled="actionPending" @click="terminateFailedGameStarts">
+          {{ t('terminateFailedGame') }}
+        </button>
+        <button :disabled="actionPending" @click="closeDialog('game-start-failed')">
+          {{ t('closeGameStartHelp') }}
+        </button>
+      </div>
+    </AppDialog>
+
+    <AppDialog v-if="activeDialog === 'game-status-unclear'"
+        :title="t('gameStatusUnclearTitle')"
+        @close="closeDialog('game-status-unclear')">
+      <p>{{ t('gameStatusUnclearBody') }}</p>
+      <button :disabled="actionPending" @click="closeDialog('game-status-unclear')">
+        {{ t('closeGameStartHelp') }}
+      </button>
     </AppDialog>
 
     <AppDialog v-if="activeDialog === 'safety-notice'"
@@ -423,6 +494,13 @@ main {
 button,
 input {
   font: inherit;
+}
+
+.game-start-failed-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
 }
 
 input,

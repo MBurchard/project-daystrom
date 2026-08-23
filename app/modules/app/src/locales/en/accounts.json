@@ -3,6 +3,8 @@
   "server": "Server {{server}}",
   "start": "Start",
   "starting": "Starting…",
+  "startFailed": "Start failed",
+  "statusUnclear": "Status unclear",
   "running": "Running",
   "add": "Start a new account",
   "reconnecting": "Reconnecting to the running game…",

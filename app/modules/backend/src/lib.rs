@@ -27,7 +27,10 @@ mod ui_error;
 mod ui_zoom;
 mod websocket;
 
-use commands::{get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod};
+use commands::{
+    get_cached_game_status, launch_game, launch_updater, prepare_mod, remove_mod, terminate_failed_game_starts,
+    terminate_unconfirmed_game_starts,
+};
 use daystrom_update::{
     check_for_daystrom_update, dismiss_daystrom_update, get_cached_daystrom_rollback_status,
     get_cached_daystrom_update_status, install_daystrom_update, restore_previous_daystrom_version,
@@ -460,6 +463,8 @@ pub fn run() {
             prepare_mod,
             remove_mod,
             launch_game,
+            terminate_failed_game_starts,
+            terminate_unconfirmed_game_starts,
             check_for_daystrom_update,
             dismiss_daystrom_update,
             install_daystrom_update,

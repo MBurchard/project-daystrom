@@ -9,6 +9,7 @@
   "mod_removal_failed": "Der Daystrom-Mod konnte nicht entfernt werden. Details stehen im Log.",
   "launcher_unavailable": "Der Scopely Launcher konnte nicht geöffnet werden.",
   "game_launch_failed": "STFC konnte nicht gestartet werden. Details stehen im Log.",
+  "game_termination_failed": "STFC konnte nicht beendet werden. Schließe das Spiel manuell.",
   "profile_not_found": "Dieses lokale Accountprofil existiert nicht mehr.",
   "profile_deletion_failed": "Die lokalen Accountdaten konnten nicht gelöscht werden. Details stehen im Log.",
   "update_check_failed": "Daystrom-Updates konnten nicht geprüft werden. Versuche es später erneut.",

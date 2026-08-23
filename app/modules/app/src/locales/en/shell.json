@@ -1,6 +1,12 @@
 {
   "modConnectionTitle": "STFC is running without the Daystrom mod",
-  "modConnectionBody": "There is no connection to the Daystrom mod. Mod features are unavailable for this game session. Close STFC, then start it again through Daystrom.",
+  "modConnectionBody": "There is no connection to the Daystrom mod. Mod features are unavailable for the affected game sessions. End the affected STFC instances, then start them again through Daystrom.",
+  "gameStartFailedTitle": "STFC did not finish starting",
+  "gameStartFailedBody": "At least one STFC instance started through Daystrom did not report a ready game interface. Other running game instances will not be ended. If this happens again, reinstall the Daystrom mod and check that STFC is up to date.",
+  "gameStatusUnclearTitle": "Game status unclear",
+  "gameStatusUnclearBody": "Daystrom cannot determine whether the game interface is ready with this STFC version. The game and mod features may still work normally.",
+  "terminateFailedGame": "End affected games",
+  "closeGameStartHelp": "Close",
   "settings": "Settings",
   "closeWindow": "Close Daystrom",
   "addAccount": "Add account",

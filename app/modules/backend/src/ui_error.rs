@@ -29,6 +29,8 @@ pub enum UiErrorCode {
     LauncherUnavailable,
     /// STFC could not be launched.
     GameLaunchFailed,
+    /// A game process with a failed UI startup could not be terminated.
+    GameTerminationFailed,
     /// The selected local player profile no longer exists.
     ProfileNotFound,
     /// The selected local player profile could not be deleted.

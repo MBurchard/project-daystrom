@@ -52,6 +52,25 @@ struct ClientHello {
     profile: String,
 }
 
+/// Runtime capabilities announced after the mod has attempted hook installation.
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ClientCapabilities {
+    /// Whether the mod can observe the first completed game UI frame.
+    ui_ready: bool,
+}
+
+/// Connection-scoped lifecycle messages that affect tracked game readiness.
+#[derive(Debug, PartialEq)]
+enum ClientLifecycle {
+    /// Mod identity sent immediately after connecting.
+    Hello(ClientHello),
+    /// Capabilities discovered after IL2CPP hook installation.
+    Capabilities(ClientCapabilities),
+    /// Confirmation that the game completed its first UI frame.
+    Ready,
+}
+
 // ---- Server state ----------------------------------------------------------
 
 /// Broadcast channel for outgoing messages (Daystrom -> Mod).
@@ -239,27 +258,59 @@ async fn handle_client(
     let recv_task = async move {
         while let Some(Ok(msg)) = source.next().await {
             if let Message::Text(text) = msg
-                && let Some(hello) = handle_incoming(&app_clone, &text)
+                && let Some(lifecycle) = handle_incoming(&app_clone, &text)
             {
                 let mut registered_pid = recv_client_pid.lock().await;
-                if registered_pid.is_some_and(|pid| pid != hello.pid) {
-                    log_warn!("Client {peer} attempted to change its game PID");
-                    continue;
+                match lifecycle {
+                    ClientLifecycle::Hello(hello) => {
+                        if registered_pid.is_some_and(|pid| pid != hello.pid) {
+                            log_warn!("Client {peer} attempted to change its game PID");
+                            continue;
+                        }
+                        crate::process_origin::register_reconnected_launch(
+                            hello.pid,
+                            hello.profile.clone(),
+                            connection_id,
+                        );
+                        crate::game_state::update(&app_clone, |state| {
+                            state.game_started_by_us = true;
+                        });
+                        *registered_pid = Some(hello.pid);
+                        log_info!("Restored Daystrom game tracking: PID {}, profile {}", hello.pid, hello.profile);
+                    }
+                    ClientLifecycle::Ready => {
+                        let Some(pid) = *registered_pid else {
+                            log_warn!("Client {peer} reported UI readiness before its identity");
+                            continue;
+                        };
+                        if !crate::process_origin::register_ui_ready(pid, connection_id) {
+                            log_warn!("Client {peer} could not confirm UI readiness for PID {pid}");
+                            continue;
+                        }
+                        log_info!("Game UI ready: PID {pid}");
+                    }
+                    ClientLifecycle::Capabilities(capabilities) => {
+                        let Some(pid) = *registered_pid else {
+                            log_warn!("Client {peer} reported capabilities before its identity");
+                            continue;
+                        };
+                        if !crate::process_origin::register_ui_ready_capability(
+                            pid,
+                            connection_id,
+                            capabilities.ui_ready,
+                        ) {
+                            log_warn!("Client {peer} could not register capabilities for PID {pid}");
+                            continue;
+                        }
+                        log_info!("Game UI readiness capability: PID {pid}, supported={}", capabilities.ui_ready);
+                    }
                 }
-                crate::process_origin::register_reconnected_launch(hello.pid, hello.profile.clone(), connection_id);
-                crate::game_state::update(&app_clone, |state| {
-                    state.game_started_by_us = true;
-                });
                 let process = crate::process_origin::tracked_games_snapshot();
-                crate::profile_state::update_from_process(&app_clone, process.revision, |state| {
-                    state.running_profiles = process.running_profiles;
-                    state.starting_profiles = process.starting_profiles;
+                crate::profile_state::update_from_process_with(&app_clone, process, |state| {
                     state.external_game_running = false;
                     state.game_origin_pending = false;
                     state.mod_connection_missing = false;
                 });
-                *registered_pid = Some(hello.pid);
-                log_info!("Restored Daystrom game tracking: PID {}, profile {}", hello.pid, hello.profile);
             }
         }
     };
@@ -303,11 +354,16 @@ fn parse_client_hello(payload: serde_json::Value) -> Result<ClientHello, String>
     Ok(hello)
 }
 
+/// Parse the runtime capabilities discovered after mod hook installation.
+fn parse_client_capabilities(payload: serde_json::Value) -> Result<ClientCapabilities, String> {
+    serde_json::from_value(payload).map_err(|error| error.to_string())
+}
+
 /// Process an incoming JSON message from the mod.
 ///
 /// Some message types (e.g. `settings.request`) are handled directly, all others are emitted as Tauri events,
 /// so other backend modules and the frontend can react.
-fn handle_incoming(app: &tauri::AppHandle, text: &str) -> Option<ClientHello> {
+fn handle_incoming(app: &tauri::AppHandle, text: &str) -> Option<ClientLifecycle> {
     let msg: WsMessage = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
@@ -320,9 +376,23 @@ fn handle_incoming(app: &tauri::AppHandle, text: &str) -> Option<ClientHello> {
 
     if msg.msg_type == "client.hello" {
         return match parse_client_hello(msg.payload) {
-            Ok(hello) => Some(hello),
+            Ok(hello) => Some(ClientLifecycle::Hello(hello)),
             Err(error) => {
                 log_warn!("Invalid client.hello message: {error}");
+                None
+            }
+        };
+    }
+
+    if msg.msg_type == "client.ready" {
+        return Some(ClientLifecycle::Ready);
+    }
+
+    if msg.msg_type == "client.capabilities" {
+        return match parse_client_capabilities(msg.payload) {
+            Ok(capabilities) => Some(ClientLifecycle::Capabilities(capabilities)),
+            Err(error) => {
+                log_warn!("Invalid client.capabilities message: {error}");
                 None
             }
         };
@@ -412,6 +482,13 @@ mod tests {
     #[test]
     fn client_hello_rejects_missing_profile() {
         assert!(parse_client_hello(serde_json::json!({"pid": 4242, "profile": ""})).is_err());
+    }
+
+    #[test]
+    fn client_capabilities_reports_ui_readiness_support() {
+        let capabilities = parse_client_capabilities(serde_json::json!({"uiReady": false})).unwrap();
+
+        assert_eq!(capabilities, ClientCapabilities { ui_ready: false });
     }
 
     // -- Port file --
