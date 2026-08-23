@@ -7,8 +7,6 @@
   "statusUnclear": "Status unklar",
   "running": "Läuft",
   "add": "Neuen Account starten",
-  "reconnecting": "Verbindung zum laufenden Spiel wird wiederhergestellt…",
-  "external": "Das Spiel wurde extern gestartet. Schließe es, um einen Account über Daystrom zu starten.",
   "none": "Kein Account erkannt",
   "notInstalled": "STFC ist nicht installiert",
   "first": "Starte STFC über Daystrom, um den ersten Account hinzuzufügen.",

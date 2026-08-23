@@ -25,6 +25,8 @@
   "checkingDaystrom": "Checking Daystrom updates…",
   "daystromCheckFailed": "Daystrom update check failed",
   "modRestorePending": "Previous mod version pending",
+  "reconnecting": "Reconnecting to the running game…",
+  "externalGame": "The game was started externally. Close it to launch an account through Daystrom.",
   "launcherStarted": "The Scopely Launcher has been started. Update the game there, then close the launcher. Do not start the game from the Scopely Launcher; use Daystrom instead.",
   "closeLauncher": "Close the Scopely Launcher to continue. Do not start the game from there; use Daystrom instead."
 }
